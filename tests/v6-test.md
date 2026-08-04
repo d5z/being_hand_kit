@@ -1,0 +1,1 @@
+issue5 content write test
