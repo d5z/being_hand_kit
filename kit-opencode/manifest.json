@@ -1,40 +1,70 @@
 {
   "name": "opencode",
-  "version": "1.0.0",
-  "description": "opencode agent || file exploration, code generation, task execution",
-  "command": ["node", "server.mjs"],
+  "version": "1.0.1",
+  "description": "opencode agent - file exploration, code generation, task execution via MCP",
+  "command": [
+    "node",
+    "server.mjs"
+  ],
   "tools": [
     {
       "name": "opencode_run",
       "description": "Run opencode agent in a directory with a task prompt",
-      "inputSchema": {
+      "params": {
         "type": "object",
         "properties": {
-          "prompt": { "type": "string", "description": "Task description" },
-          "directory": { "type": "string", "description": "Working directory (absolute path)" },
-          "model": { "type": "string", "description": "Model name, default: opencode/deepseek-v4-flash-free" },
-          "timeout": { "type": "number", "description": "Timeout in seconds (default 120)" }
+          "prompt": {
+            "type": "string",
+            "description": "Task description for opencode agent"
+          },
+          "directory": {
+            "type": "string",
+            "description": "Working directory (absolute path)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model name, default: opencode/deepseek-v4-flash-free"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Timeout in seconds (default 120)"
+          }
         },
-        "required": ["prompt"]
+        "required": [
+          "prompt"
+        ]
       }
     },
     {
       "name": "opencode_models",
       "description": "List available opencode models",
-      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+      "params": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   ],
   "provision": {
-    "runtime": { "name": "node", "version": ">=18" },
+    "runtime": {
+      "name": "node",
+      "version": ">=18"
+    },
     "deps": [
-      { "name": "@modelcontextprotocol/sdk", "type": "npm", "description": "MCP SDK for stdio server", "install_hint": "npm install @modelcontextprotocol/sdk", "required": true }
+      {
+        "name": "@modelcontextprotocol/sdk",
+        "type": "npm",
+        "description": "MCP SDK for stdio server",
+        "install_hint": "npm install @modelcontextprotocol/sdk",
+        "required": true
+      }
     ],
     "post_install": "npm install --production"
   },
   "lifecycle": {
     "onInstall": {
-      "description": "Detect if opencode is installed",
-      "check": "which opencode || echo missing"
+      "description": "Detect if opencode is installed globally",
+      "check": "command -v opencode || echo missing"
     }
   }
 }
