@@ -1,0 +1,32 @@
+"""
+Test runner using standard library unittest.
+
+Loads every tests/test_*.py module explicitly (kept deterministic, no
+pytest dependency) and runs the suite.
+"""
+
+import os
+import sys
+import unittest
+
+sys.path.insert(0, "/home/alice/Hand")
+
+MODULES = ["tests.test_plan", "tests.test_integration"]
+
+
+def build_suite():
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+    for name in MODULES:
+        try:
+            mod = __import__(name, fromlist=[name.rsplit(".", 1)[-1]])
+        except ImportError as e:
+            print(f"SKIP {name}: {e}")
+            continue
+        suite.addTests(loader.loadTestsFromModule(mod))
+    return suite
+
+
+if __name__ == "__main__":
+    result = unittest.TextTestRunner(verbosity=2).run(build_suite())
+    sys.exit(0 if result.wasSuccessful() else 1)

@@ -7,3 +7,4 @@ build/
 .grove/
 *.tar.gz
 *.bundle
+kit-opencode/node_modules/

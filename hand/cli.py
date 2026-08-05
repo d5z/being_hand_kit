@@ -16,7 +16,7 @@ Examples:
 """
 
 import sys
-from hand.router import route_see, route_do
+from hand.router import route_see, route_do, route_plan
 from hand.place.detect import detect_place, open_place
 from hand.session import get_session, reset_session
 
@@ -64,6 +64,23 @@ def cli():
         result = route_do(action)
         _print_result(result)
     
+    elif command == "plan":
+        if len(sys.argv) < 3:
+            print("Usage: hand plan <goal>")
+            sys.exit(1)
+        goal = " ".join(sys.argv[2:])
+        print(f"→ planning: {goal}")
+        from hand.plan.engine import PlanningEngine
+        engine = PlanningEngine(model="opencode/deepseek-v4-flash")
+        result = engine.plan(goal)
+        if result.ok:
+            print(f"  ✓ {result.summary}")
+        else:
+            err = result.error or "planning returned no steps"
+            print(f"  ✗ {err}")
+        for s in result.steps:
+            print(f"  [{s.kind}] {s.action}")
+
     elif command == "reset":
         reset_session()
         print("→ session reset")
@@ -77,7 +94,7 @@ def cli():
     
     else:
         print(f"Unknown command: {command}")
-        print("Try: open, see, do, where, reset")
+        print("Try: open, see, do, plan, where, reset")
         sys.exit(1)
 
 

@@ -208,6 +208,74 @@ def route_screenshot(place: Optional[Place] = None) -> dict:
     }
 
 
+# ── Plan ─────────────────────────────────────────────────────────────
+
+def route_plan(goal: str, steps: Optional[list] = None) -> dict:
+    """
+    Plan and execute a natural-language goal.
+
+    When steps is None, uses PlanningEngine to decompose the goal into
+    ordered Hand primitives.  Iterates steps, dispatching each to
+    route_open / route_see / route_do, and collects a trace on the
+    session.  After every 'do' a 'see' is automatically inserted for
+    closed-loop verification.
+
+    Returns a summary dict with the full trace.
+    """
+    from hand.plan.engine import PlanningEngine
+
+    session = get_session()
+    session.clear_plan_trace()
+    trace: list[dict] = session.plan_trace
+
+    if steps is None:
+        engine = PlanningEngine()
+        result = engine.plan(goal)
+        if not result.ok and not result.steps:
+            return {"error": "planning failed", "details": result.error}
+        steps = [(s.kind, s.action, s.raw) for s in result.steps]
+
+    for kind, action, raw in steps:
+        entry = {"kind": kind, "action": action, "raw": raw}
+        try:
+            if kind == "open":
+                res = route_open(action)
+                entry["result"] = res
+                trace.append(entry)
+            elif kind == "see":
+                res = route_see()
+                entry["result"] = res
+                trace.append(entry)
+            elif kind == "do":
+                res = route_do(action)
+                entry["result"] = res
+                trace.append(entry)
+                # auto-insert see after every do
+                see_res = route_see()
+                trace.append({"kind": "see", "action": "", "result": see_res})
+            elif kind == "done":
+                entry["summary"] = raw.get("summary", "")
+                entry["result"] = {"ok": True}
+                trace.append(entry)
+                break
+            elif kind == "error":
+                entry["result"] = {"error": action}
+                trace.append(entry)
+                break
+            else:
+                entry["result"] = {"error": f"unknown step kind: {kind}"}
+                trace.append(entry)
+        except Exception as e:
+            entry["result"] = {"error": str(e)}
+            trace.append(entry)
+
+    return {
+        "plan": "ok",
+        "goal": goal,
+        "trace": trace,
+    }
+
+
 # ── Utility: see + do combined ──────────────────────────────────────
 
 def see_and_do(action: str, place: Optional[Place] = None) -> dict:

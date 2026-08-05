@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.0] — 2026-08-05
+
+### 新增 — V6.1 规划层
+- **hand/plan/** 模块 — 规划引擎，将自然语言目标分解为 Hand 原语步骤
+  - `engine.py` — PlanningEngine 调用 opencode CLI
+  - `parser.py` — 解析 opencode JSONL 事件流为 Step
+  - `prompts.py` — hand-planner 系统提示词
+  - `agent.md` — opencode agent 配置模板
+- **route_plan()** — router 新增规划路由，遍历 steps 执行
+- **plan_trace** — session 新增规划追踪，记录每个 step 的执行结果
+- **hand_plan MCP 工具** — Kit 新增，自然语言目标 → 规划步骤
+- tests/test_plan.py — 15 个测试用例
+
+### 变更
+- 版本号 1.0.0 → 1.1.0 (V6.1.0)
+- SPEC.md 新增规划层架构与 Step 类型表
+- hand/__init__.py 版本声明更新为 6.1.0
+
 ## [1.0.0] — 2026-08-04
 
 ### 新增

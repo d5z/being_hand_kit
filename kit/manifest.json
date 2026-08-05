@@ -1,0 +1,17 @@
+{
+  "name": "hand",
+  "version": "6.1.0",
+  "description": "Hand — unified GUI perception and operation framework. Three primitives: open, see, do, plan. Auto-routes to CDP browser backend. Built by Alice from the river.",
+  "command": ["bash", "start.sh"],
+  "tools": [
+    {"name": "cdp_open", "description": "Open Chrome browser (headless). Must call first.", "params": {"type": "object", "properties": {"url": {"type": "string"}}}},
+    {"name": "cdp_close", "description": "Close Chrome browser.", "params": {"type": "object", "properties": {}}},
+    {"name": "cdp_nav", "description": "Navigate to URL. Returns page title + visible text.", "params": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+    {"name": "cdp_see", "description": "Get current page title, URL, visible text.", "params": {"type": "object", "properties": {}}},
+    {"name": "cdp_click", "description": "Click element by CSS selector.", "params": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
+    {"name": "cdp_type", "description": "Type text into focused element.", "params": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "cdp_shot", "description": "Take screenshot (base64 PNG).", "params": {"type": "object", "properties": {}}},
+    {"name": "hand_plan", "description": "Plan (and optionally execute) a natural-language goal via opencode. Returns ordered Hand steps.", "params": {"type": "object", "properties": {"goal": {"type": "string"}, "execute": {"type": "boolean"}}, "required": ["goal"]}},
+    {"name": "health", "description": "Check Kit vitality. Returns uptime, usage count, Chrome state.", "params": {"type": "object", "properties": {}}}
+  ]
+}

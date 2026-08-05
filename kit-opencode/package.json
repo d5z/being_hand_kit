@@ -1,0 +1,11 @@
+{
+  "name": "opencode",
+  "version": "1.0.0",
+  "description": "opencode agent kit",
+  "main": "server.mjs",
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}

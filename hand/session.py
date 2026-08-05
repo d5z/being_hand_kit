@@ -27,6 +27,7 @@ class Session:
     screenshot_path: Optional[str] = None   # last screenshot path
     ocr_result: Optional[dict] = None       # last OCR result
     dom_ref: Optional[str] = None           # CDP node reference
+    plan_trace: list = field(default_factory=list)  # trace of route_plan steps
     created_at: float = field(default_factory=time.time)
 
     def clear(self):
@@ -35,6 +36,10 @@ class Session:
         self.screenshot_path = None
         self.ocr_result = None
         self.dom_ref = None
+
+    def clear_plan_trace(self):
+        """Clear the plan trace list."""
+        self.plan_trace.clear()
 
     def touch(self):
         """Update heartbeat timestamp."""
