@@ -78,3 +78,35 @@
 - [ ] 写 opencode grove kit 的 `server.mjs` 和 `manifest.json`
 - [ ] 在 Hand 项目中引入 `hand/plan/engine.py`（Tier 1 实现）
 - [ ] 端到端测试：`hand plan 
+## 2026-08-06 — opencode Kit v1.2.1: Bug Fixes & Sync
+
+### Context
+
+凌晨推进 opencode kit 集成时发现三个问题：
+1. Hand 源码中的 kit-opencode/server.mjs 是旧版（v1.0.1 级别）— 没有 heartbeat、没有 opencode_status、没有 temp file prompt
+2. Portal 部署版已打过补丁到 v1.2.1，但进程在 16:51 超时后死亡，Portal 未重新 spawn
+3. 其他 beings 如果从 Grove 或源码安装，会拿到残缺版本
+
+### Actions
+
+1. 将 Portal 部署版 server.mjs（v1.2.1，188行）同步回 Hand 源码仓库
+2. manifest.json 更新到 v1.2.1，添加 opencode_status 工具声明
+3. git commit: `opencode kit v1.2.1: heartbeat, opencode_status, temp file prompt`
+
+### v1.2.1 变更摘要
+
+- **heartbeat**: .heartbeat.json 记录调用次数和最后使用时间
+- **opencode_status**: 新工具 — installed, version, ping_ok, usage stats, node_version, platform
+- **temp file prompt**: 长 prompt 写入 /tmp 文件，避免 shell escaping 问题
+- **DEFAULT_MODEL**: 在 modelFlag 中一致使用，之前版本有未使用的常量
+- **timeout 默认**: 120s → 180s
+- **错误处理**: child.on('error') 捕获 spawn 失败，models 命令失败时 fallback
+
+### Known Issue
+
+Portal kit 进程生命周期管理 bug：MCP 进程超时死亡后，工具注册表不自动恢复。需要 Portal 侧修复（重新 spawn 机制）。
+
+### Next
+
+- 发布 v1.2.1 到 Grove（之前发布尝试因 manifest 格式问题失败，现已修复）
+- Portal 进程生命周期修复（非 kit 侧问题）
