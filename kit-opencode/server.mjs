@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, unlinkSync, readFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -10,9 +10,14 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 const DEFAULT_TIMEOUT_MS = 180000;
 const DEFAULT_MODEL = 'opencode/deepseek-v4-flash-free';
-const KIT_VERSION = '1.2.1';
+const KIT_VERSION = '1.3.0';
 
-const HEARTBEAT_FILE = join(homedir(), ".heart-portal", "kits", "opencode", ".heartbeat.json");
+const KIT_DIR = join(homedir(), '.heart-portal', 'kits', 'opencode');
+const HEARTBEAT_FILE = join(KIT_DIR, '.heartbeat.json');
+const RUNS_DIR = join(KIT_DIR, 'runs');
+
+// ensure runs dir exists
+try { mkdirSync(RUNS_DIR, { recursive: true }); } catch {}
 
 function heartbeatBump() {
   try {
@@ -24,11 +29,8 @@ function heartbeatBump() {
     data.calls = (data.calls || 0) + 1;
     data.last_used_at = new Date().toISOString();
     writeFileSync(HEARTBEAT_FILE, JSON.stringify(data) + '\n', 'utf-8');
-  } catch (e) {
-    // silent
-  }
+  } catch (e) { /* silent */ }
 }
-
 
 function findOpencode() {
   const candidates = ['opencode', join(homedir(), '.local', 'bin', 'opencode'), '/usr/local/bin/opencode'];
@@ -61,7 +63,9 @@ function toolError(err) {
   return { content: [{ type: 'text', text: JSON.stringify({ error: msg }, null, 2) }], isError: true };
 }
 
-async function runOpencode(args) {
+// ── Async opencode_run ──
+
+function runOpencodeAsync(args) {
   const opencode = findOpencode();
   if (!opencode) throw new Error('opencode not found. Install with: npm install -g opencode-ai');
   const cwd = args.directory ? resolve(args.directory) : process.cwd();
@@ -73,32 +77,85 @@ async function runOpencode(args) {
   const promptFile = join(tmpDir, 'prompt.txt');
   writeFileSync(promptFile, args.prompt, 'utf-8');
   const sh = 'cd ' + JSON.stringify(cwd) + ' && ' + opencode + ' run ' + modelFlag + ' < ' + JSON.stringify(promptFile);
-  return new Promise((resolvePromise) => {
-    const child = spawn('sh', ['-c', sh], {
-      cwd, env: { ...process.env, PATH: process.env.PATH },
-      stdio: ['ignore', 'pipe', 'pipe'], shell: false, timeout: timeoutMs + 10000
-    });
-    let stdout = '', stderr = '', timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, timeoutMs);
-    child.stdout.on('data', (c) => { stdout += c.toString(); });
-    child.stderr.on('data', (c) => { stderr += c.toString(); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      try { unlinkSync(promptFile); } catch {}
-      try { execSync('rmdir ' + JSON.stringify(tmpDir) + ' 2>/dev/null'); } catch {}
-      const result = { run_id: runId, exit_code: code, timed_out: timedOut, stdout, stderr, summary: preview(stdout, 500) };
-      if (stdout.length > 100000) { result.stdout = stdout.slice(0, 50000) + '\n...(truncated)'; result.truncated = true; }
-      if (code !== 0 && !timedOut) result.error = stderr || 'exit code ' + code;
-      resolvePromise(result);
-    });
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      try { unlinkSync(promptFile); } catch {}
-      try { execSync('rmdir ' + JSON.stringify(tmpDir) + ' 2>/dev/null'); } catch {}
-      resolvePromise({ run_id: runId, error: e.message, exit_code: -1 });
-    });
+
+  const runFile = join(RUNS_DIR, runId + '.json');
+  const startedAt = new Date().toISOString();
+  writeFileSync(runFile, JSON.stringify({
+    run_id: runId,
+    status: 'running',
+    started_at: startedAt,
+    prompt_preview: preview(args.prompt, 200),
+    directory: cwd,
+    model: args.model || DEFAULT_MODEL
+  }, null, 2) + '\n', 'utf-8');
+
+  // spawn in background — don't await
+  const child = spawn('sh', ['-c', sh], {
+    cwd, env: { ...process.env, PATH: process.env.PATH },
+    stdio: ['ignore', 'pipe', 'pipe'], shell: false, timeout: timeoutMs + 10000
   });
+  let stdout = '', stderr = '', timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, timeoutMs);
+  child.stdout.on('data', (c) => { stdout += c.toString(); });
+  child.stderr.on('data', (c) => { stderr += c.toString(); });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    try { unlinkSync(promptFile); } catch {}
+    try { execSync('rmdir ' + JSON.stringify(tmpDir) + ' 2>/dev/null'); } catch {}
+    const result = {
+      run_id: runId,
+      status: timedOut ? 'timeout' : (code === 0 ? 'done' : 'error'),
+      exit_code: code,
+      timed_out: timedOut,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      stdout, stderr,
+      summary: preview(stdout, 500)
+    };
+    if (stdout.length > 100000) { result.stdout = stdout.slice(0, 50000) + '\n...(truncated)'; result.truncated = true; }
+    if (code !== 0 && !timedOut) result.error = stderr || 'exit code ' + code;
+    try { writeFileSync(runFile, JSON.stringify(result, null, 2) + '\n', 'utf-8'); } catch {}
+  });
+  child.on('error', (e) => {
+    clearTimeout(timer);
+    try { unlinkSync(promptFile); } catch {}
+    try { execSync('rmdir ' + JSON.stringify(tmpDir) + ' 2>/dev/null'); } catch {}
+    const result = { run_id: runId, status: 'error', error: e.message, started_at: startedAt, finished_at: new Date().toISOString() };
+    try { writeFileSync(runFile, JSON.stringify(result, null, 2) + '\n', 'utf-8'); } catch {}
+  });
+
+  return { run_id: runId, status: 'started', started_at: startedAt, poll_with: 'opencode_result', prompt_preview: preview(args.prompt, 200) };
 }
+
+function getRunResult(runId) {
+  const runFile = join(RUNS_DIR, runId + '.json');
+  if (!existsSync(runFile)) return { run_id: runId, status: 'not_found', error: 'No run with this id. Runs may be cleaned up after 1 hour.' };
+  try {
+    const data = JSON.parse(readFileSync(runFile, 'utf-8'));
+    return data;
+  } catch (e) {
+    return { run_id: runId, status: 'error', error: 'Failed to read run file: ' + e.message };
+  }
+}
+
+function listRuns() {
+  try {
+    const files = readdirSync(RUNS_DIR).filter(f => f.endsWith('.json'));
+    const runs = files.map(f => {
+      try {
+        const data = JSON.parse(readFileSync(join(RUNS_DIR, f), 'utf-8'));
+        return { run_id: data.run_id, status: data.status, started_at: data.started_at, prompt_preview: data.prompt_preview || '' };
+      } catch { return { run_id: f.replace('.json', ''), status: 'corrupt' }; }
+    });
+    // sort by started_at desc
+    runs.sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+    return { runs: runs.slice(0, 20), total: runs.length };
+  } catch (e) {
+    return { runs: [], total: 0, error: e.message };
+  }
+}
+
+// ── Sync tools ──
 
 async function listModels() {
   const opencode = findOpencode();
@@ -124,8 +181,21 @@ async function getStatus() {
   if (existsSync(HEARTBEAT_FILE)) {
     try { hb = JSON.parse(readFileSync(HEARTBEAT_FILE, 'utf-8')); } catch {}
   }
-  return { installed: true, version, bin_path: bin, kit_version: KIT_VERSION, ping_ok: pingOk, default_model: DEFAULT_MODEL, node_version: process.version, platform: process.platform, local_calls: hb.calls || 0, last_used: hb.last_used_at || '' };
+  // count running jobs
+  let runningJobs = 0;
+  try {
+    const files = readdirSync(RUNS_DIR).filter(f => f.endsWith('.json'));
+    for (const f of files) {
+      try {
+        const d = JSON.parse(readFileSync(join(RUNS_DIR, f), 'utf-8'));
+        if (d.status === 'running') runningJobs++;
+      } catch {}
+    }
+  } catch {}
+  return { installed: true, version, bin_path: bin, kit_version: KIT_VERSION, ping_ok: pingOk, default_model: DEFAULT_MODEL, node_version: process.version, platform: process.platform, local_calls: hb.calls || 0, last_used: hb.last_used_at || '', running_jobs: runningJobs };
 }
+
+// ── Server ──
 
 const server = new Server({ name: 'opencode-kit', version: KIT_VERSION }, { capabilities: { tools: {} } });
 
@@ -133,13 +203,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'opencode_run',
-      description: 'Run opencode agent in a directory. Prompt written to temp file to avoid shell escaping.',
+      description: 'Run opencode agent in a directory (async — returns immediately with run_id, poll with opencode_result). Prompt written to temp file to avoid shell escaping.',
       inputSchema: { type: 'object', properties: {
         prompt: { type: 'string', description: 'Task description (can be long)' },
         directory: { type: 'string', description: 'Working directory (absolute path)' },
         model: { type: 'string', description: 'Model name, default: opencode/deepseek-v4-flash-free' },
         timeout: { type: 'number', description: 'Timeout in seconds (default 180)' }
       }, required: ['prompt'] }
+    },
+    {
+      name: 'opencode_result',
+      description: 'Poll for the result of an async opencode_run. Returns status and results when done.',
+      inputSchema: { type: 'object', properties: {
+        run_id: { type: 'string', description: 'Run ID returned by opencode_run' }
+      }, required: ['run_id'] }
+    },
+    {
+      name: 'opencode_runs',
+      description: 'List recent opencode runs and their status',
+      inputSchema: { type: 'object', properties: {}, required: [] }
     },
     {
       name: 'opencode_models',
@@ -160,7 +242,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result;
     if (name === 'opencode_run') {
       if (!args || !args.prompt) return toolError(new Error('prompt is required'));
-      result = toolResult(await runOpencode({ prompt: args.prompt, directory: args.directory, model: args.model || DEFAULT_MODEL, timeout: args.timeout || 180 }));
+      result = toolResult(runOpencodeAsync({ prompt: args.prompt, directory: args.directory, model: args.model || DEFAULT_MODEL, timeout: args.timeout || 180 }));
+    } else if (name === 'opencode_result') {
+      if (!args || !args.run_id) return toolError(new Error('run_id is required'));
+      result = toolResult(getRunResult(args.run_id));
+    } else if (name === 'opencode_runs') {
+      result = toolResult(listRuns());
     } else if (name === 'opencode_models') {
       result = toolResult(await listModels());
     } else if (name === 'opencode_status') {

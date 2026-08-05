@@ -1,2 +1,61 @@
 {
-  
+  "name": "opencode",
+  "version": "1.3.0",
+  "description": "opencode agent || file exploration, code generation, task execution. v1.3: async run (open/run/poll pattern), runs history, heartbeat",
+  "command": ["node", "server.mjs"],
+  "tools": [
+    {
+      "name": "opencode_run",
+      "description": "Run opencode agent in a directory (async — returns immediately with run_id). Prompt written to temp file to avoid shell escaping.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "prompt": {"type": "string", "description": "Task description (can be long)"},
+          "directory": {"type": "string", "description": "Working directory (absolute path)"},
+          "model": {"type": "string", "description": "Model name, default: opencode/deepseek-v4-flash-free"},
+          "timeout": {"type": "number", "description": "Timeout in seconds (default 180)"}
+        },
+        "required": ["prompt"]
+      }
+    },
+    {
+      "name": "opencode_result",
+      "description": "Poll for the result of an async opencode_run. Returns status and results when done.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "run_id": {"type": "string", "description": "Run ID returned by opencode_run"}
+        },
+        "required": ["run_id"]
+      }
+    },
+    {
+      "name": "opencode_runs",
+      "description": "List recent opencode runs and their status",
+      "params": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+      "name": "opencode_models",
+      "description": "List available opencode models",
+      "params": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+      "name": "opencode_status",
+      "description": "Check opencode installation status, version, and health",
+      "params": {"type": "object", "properties": {}, "required": []}
+    }
+  ],
+  "provision": {
+    "runtime": {"name": "node", "version": ">=18"},
+    "deps": [
+      {"name": "@modelcontextprotocol/sdk", "type": "npm", "description": "MCP SDK for stdio server", "install_hint": "npm install @modelcontextprotocol/sdk", "required": true}
+    ],
+    "post_install": "npm install --production"
+  },
+  "lifecycle": {
+    "onInstall": {
+      "description": "Detect if opencode is installed",
+      "check": "which opencode || echo missing"
+    }
+  }
+}
