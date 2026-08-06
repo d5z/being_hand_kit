@@ -11,6 +11,10 @@ import subprocess
 from dataclasses import dataclass, field
 
 from .parser import Step, parse_events
+from .prompts import HAND_PLANNER_SYSTEM_PROMPT, _build_prompt, _goal_met, _last_summary
+
+# Sentinel to distinguish "not provided" from explicit None
+_UNSET = object()
 
 
 # Known locations to search for opencode binary
@@ -45,14 +49,14 @@ class PlanningResult:
 class PlanningEngine:
     """Convert a natural-language goal into ordered Hand steps via opencode."""
 
-    def __init__(self, cwd=".", model=None, agent="hand-planner", system_prompt=None,
-                 timeout=300, opencode_bin=None):
+    def __init__(self, cwd=".", model=None, agent="build", system_prompt=None,
+                 timeout=300, opencode_bin=_UNSET):
         self.cwd = cwd
         self.model = model
         self.agent = agent
         self.system_prompt = system_prompt
         self.timeout = timeout
-        self.opencode_bin = opencode_bin or _find_opencode()
+        self.opencode_bin = _find_opencode() if opencode_bin is _UNSET else opencode_bin
 
     # -- public API -----------------------------------------------------
 
@@ -103,41 +107,3 @@ class PlanningEngine:
 
 
 # ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
-
-HAND_PLANNER_SYSTEM_PROMPT = """\
-You are hand-planner, the planning brain of Hand (a GUI perception/action framework).
-You DO NOT touch the screen. You plan steps and Hand executes them.
-
-Available Hand primitives:
-  open <target>   app name | https://URL | file path
-  see             perceive current place
-  do <action>     semantic intent ("\u65b0\u5efa\u7b14\u8bb0") or shortcut ("Cmd+N")
-
-Rules:
-1. Emit exactly one JSON object per message, no prose.
-2. Prefer keystrokes over clicks for desktop apps.
-3. If a see shows failure, retry or replan.
-4. When the goal is met, emit {"step": "done", "summary": "your summary"}.
-5. Never invent UI elements.
-"""
-
-
-def _build_prompt(goal: str, context: dict, sp: str | None = None) -> str:
-    sys = sp or HAND_PLANNER_SYSTEM_PROMPT
-    ctx = "\n".join(f"  {k}: {v}" for k, v in (context or {}).items())
-    ctx_block = f"Context:\n{ctx}\n\n" if context else ""
-    return f"{sys}\n\n{ctx_block}Goal: {goal}\n"
-
-
-def _goal_met(steps) -> bool:
-    return any(s.kind == "done" for s in steps)
-
-
-def _last_summary(steps) -> str:
-    for s in reversed(steps):
-        if s.kind == "done":
-            # model may use action or summary field
-            return s.raw.get("summary", "") or s.raw.get("action", "") or s.action
-    return ""

@@ -63,9 +63,9 @@ whole thing still ships as a Grove Kit.
 | `hand/plan/engine.py` | `PlanningEngine` class — spawns/attaches opencode, feeds goals, collects steps |
 | `hand/plan/prompts.py` | System prompt + tool contract handed to the opencode agent (Hand primitives, place types, output schema) |
 | `hand/plan/parser.py` | Parses `opencode run --format json` event stream into ordered `Step` objects |
-| `hand/plan/agent.md` | Custom opencode agent definition `hand-planner` (see §5) |
+| `hand/plan/agent.md` | Design doc — NOT auto-loaded (engine uses `build` agent + custom prompt) |
 | `tests/test_plan.py` | Unit tests for parser + a dry-run engine test (no screen needed) |
-| `hand/kit/hand-plan-manifest.json` | Companion Grove manifest for the planning tool (v1.1.0) |
+| `hand/kit/hand-plan-manifest.json` | ⏳ PENDING — Companion Grove manifest for the planning tool (v1.1.0) |
 
 ### Modified files
 
@@ -73,7 +73,7 @@ whole thing still ships as a Grove Kit.
 |---|---|
 | `hand/router.py` | Add `route_plan(goal, steps=None)` — turns a goal or explicit step list into `see`/`do` dispatches; loops with verify; collects a trace |
 | `hand/session.py` | Add `plan_trace: list` field to `Session` (audit trail of steps + results); reuse `clear()` to reset it |
-| `hand/cli.py` | Add `hand plan <goal>` command; stream step progress to terminal |
+| `hand/cli.py` | ✅ DONE — `hand plan <goal>` command; stream step progress to terminal |
 | `hand/__init__.py` | Bump `__version__` to `6.1.0`; document `plan` primitive in docstring |
 | `SPEC.md` | Add `plan/` to module topology + dependency matrix; add `plan` to MCP tool list |
 | `ROADMAP.md` | Promote "planning engine" into V6.1 next-step milestone |
@@ -89,7 +89,8 @@ hand/
 │   ├── __init__.py
 │   ├── engine.py
 │   ├── prompts.py
-│   └── parser.py
+│   ├── parser.py
+│   └── agent.md          # design doc (not auto-loaded)
 ├── perception/          # unchanged
 ├── action/              # unchanged
 └── kit/                 # + hand-plan manifest
@@ -115,7 +116,7 @@ class Step:
     raw: dict
 
 class PlanningEngine:
-    def __init__(self, cwd=".", model=None, agent="hand-planner", timeout=300):
+    def __init__(self, cwd=".", model=None, agent="build", timeout=300):
         self.cwd, self.model, self.agent, self.timeout = cwd, model, agent, timeout
         self.session_id = os.environ.get("OPENCODE_PLAN_SESSION")
 
@@ -214,24 +215,18 @@ def parse_events(stdout: str) -> list[Step]:
 
 ---
 
-## 5. Custom opencode Agent (`hand/plan/agent.md`)
 
-Registered so `--agent hand-planner` resolves. Kept tiny and hand-only.
+## 5. Agent Strategy (revised 2026-08-06)
 
-```markdown
-# hand-planner
+The planning engine uses opencode's built-in `build` agent (the only agent
+available in the current opencode version) with a custom system prompt
+injected from `hand/plan/prompts.py`. The `build` agent has full tool
+permissions; the system prompt constrains it to planning-only behavior.
 
-Hand's planning brain. Plans sequences of GUI operations; never executes them.
-- Tools: none beyond message output (steps are parsed from JSON text).
-- Model: default or `-m provider/model` (e.g. high-reasoning variant).
-- Session: resume with `-s` so cross-call context persists in `hand/session`.
-- System prompt injected from `hand/plan/prompts.py`.
-```
+`hand/plan/agent.md` is retained as a design document describing the
+intended agent shape, but it is **not** auto-loaded by opencode.
 
-(If Tier 3 ships, replace "none" with the Hand MCP tool set.)
-
----
-
+(If Tier 3 ships, the agent will be registered with Hand's MCP tool set.)
 ## 6. User Experience
 
 ### Happy path

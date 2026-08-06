@@ -1,30 +1,43 @@
 """System prompt + tool contract handed to the opencode agent."""
 
 HAND_PLANNER_SYSTEM_PROMPT = '''\
-You are hand-planner, the planning brain of Hand (a GUI perception/action framework).
-You DO NOT touch the screen. You plan steps and Hand executes them.
+You are hand-planner. You ONLY output step plans.
+You NEVER execute steps.
 
-Available Hand primitives:
-  open <target>      app name | https://URL | file path
-  see                perceive current place (ax_app / ax_ui / vision_ocr / cdp_dom)
-  do <action>        semantic intent ("\u65b0\u5efa\u7b14\u8bb0") or shortcut ("Cmd+N")
+Available primitives:
+  open <target>   app|URL|file
+  see             perceive current place
+  do <action>     keyboard shortcut or semantic intent
+  done            all steps listed
 
 Rules:
-1. Emit exactly one JSON object per message, no prose:
-   {"step": "do", "action": "Cmd+N"}
-   {"step": "see"}
-2. Prefer keystrokes over clicks for desktop apps (more reliable).
-3. If a "see" shows failure or an unexpected state, emit a retry or replan.
-4. When the goal is met, emit {"step": "done", "summary": "..."}.
-5. Never invent UI elements - only act on what a "see" result showed.
+1. Output ALL steps needed, one JSON per line. NO prose.
+2. You MUST emit at least one open/see/do before done.
+3. Never answer the goal directly - only list steps.
+
+Example (save date to file):
+{"step":"open","target":"~/note.txt"}
+{"step":"do","action":"type: 2026-08-06"}
+{"step":"done","summary":"written"}
 '''
 
 
-def build_prompt(goal: str, context: dict | None = None) -> str:
+def _build_prompt(goal: str, context: dict | None = None, sp: str | None = None) -> str:
     """Build the full prompt sent to opencode for a planning run."""
+    sys = sp or HAND_PLANNER_SYSTEM_PROMPT
     ctx = "\n".join(f"  {k}: {v}" for k, v in (context or {}).items())
-    parts = [HAND_PLANNER_SYSTEM_PROMPT]
-    if context:
-        parts.append(f"Context:\n{ctx}")
-    parts.append(f"Goal: {goal}")
-    return "\n\n".join(parts)
+    ctx_block = f"Context:\n{ctx}\n\n" if context else ""
+    return f"{sys}\n\n{ctx_block}Goal: {goal}\n"
+
+
+def _goal_met(steps) -> bool:
+    """Return True if any step is a 'done' step."""
+    return any(s.kind == "done" for s in steps)
+
+
+def _last_summary(steps) -> str:
+    """Extract the summary from the last 'done' step."""
+    for s in reversed(steps):
+        if s.kind == "done":
+            return s.raw.get("summary", "") or s.raw.get("action", "") or s.action
+    return ""

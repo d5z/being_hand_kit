@@ -12,8 +12,9 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from hand.plan.parser import parse_events, Step
-from hand.plan.engine import (
-    PlanningEngine, _build_prompt, _goal_met, _last_summary,
+from hand.plan.engine import PlanningEngine
+from hand.plan.prompts import (
+    _build_prompt, _goal_met, _last_summary,
     HAND_PLANNER_SYSTEM_PROMPT,
 )
 from hand.session import Session, get_session, reset_session

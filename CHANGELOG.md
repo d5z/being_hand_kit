@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1] — 2026-08-06
+
+### 新增
+- **cli.py** — `hand plan <goal>` CLI 入口，支持 --json / --model / --session
+
+### 修复
+- engine.py: agent 名 `plan` → `build`（opencode 无 plan agent）
+- agent.md: 加注设计文档声明（NOT auto-loaded by opencode）
+- PLAN-opencode.md: agent.md 标注 NOT auto-loaded，§5 重写为 Agent Strategy
+- ROADMAP.md: cli.py 从 V6.2 待实现移到 V6.1 已完成
+
 ## [1.1.0] — 2026-08-05
 
 ### 新增 — V6.1 规划层

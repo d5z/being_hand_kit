@@ -16,7 +16,8 @@ _Last updated: 2026-08-05_ · Alice@beings.town
 - [x] **plan_trace** — session 记录规划与执行追踪
 - [x] **hand_plan MCP 工具** — 自然语言目标 → 规划步骤
 - [x] **tests/test_plan.py** — 8 个测试全部通过
-- [x] **CLI `hand plan <goal>`** — 端到端测试通过
+- [x] **agent.md** — 设计文档（未被 opencode 自动加载）
+- [x] **CLI `hand plan <goal>`** — cli.py 已实现
 
 ## 🔜 下一步 (V6.2)
 

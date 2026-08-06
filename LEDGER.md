@@ -110,3 +110,33 @@ Portal kit 进程生命周期管理 bug：MCP 进程超时死亡后，工具注�
 
 - 发布 v1.2.1 到 Grove（之前发布尝试因 manifest 格式问题失败，现已修复）
 - Portal 进程生命周期修复（非 kit 侧问题）
+
+## 2026-08-06 — opencode Kit v1.3.0: Async Run Pattern
+
+### Problem
+
+opencode_run was hitting the 30s MCP timeout — the kit process died because
+it couldn't respond within Portal's hard timeout. This was the root cause of
+the 
+---
+
+## 2026-08-06 — Deduplicate prompts.py / engine.py
+
+**Decision:** `prompts.py` is the single source of truth for `HAND_PLANNER_SYSTEM_PROMPT`, `_build_prompt`, `_goal_met`, `_last_summary`. `engine.py` imports them instead of redefining.
+
+**Changes:**
+- `prompts.py`: merged the richer prompt text (with JSON examples + perception backend enum) + `_build_prompt` with `sp` override param + `_goal_met` + `_last_summary`
+- `engine.py`: removed bottom helper block (~40 lines), added `from .prompts import ...`
+- `tests/test_plan.py`: split import — `PlanningEngine` from `engine`, helpers from `prompts`
+
+**Test result:** 21/22 pass. 1 pre-existing failure (`test_engine_no_binary` — `_find_opencode()` finds system opencode despite `opencode_bin=None`; unrelated to this change).
+
+**SOP:** spec → dev → test → close spec ✓
+
+---
+
+### 2026-08-06 18:30 — Fix: agent default + sentinel pattern
+
+**Two bugs found during feel-test:**
+
+1. `agent=

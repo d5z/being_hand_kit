@@ -21,7 +21,7 @@ hand/
 │   ├── engine.py        # PlanningEngine — 子进程调用 opencode CLI
 │   ├── parser.py        # 解析 --format json 事件流 → 有序 Step
 │   ├── prompts.py       # hand-planner 系统提示词与输出契约
-│   └── agent.md         # hand-planner opencode agent 定义
+│   └── agent.md         # 设计文档（未被 opencode 自动加载）
 ├── perception/          # 感知层
 │   ├── __init__.py
 │   ├── cdp_snapshot.py  # CDP 截图
@@ -58,7 +58,7 @@ hand/
 | V5 | 2026-06 | ✅ 稳定 | 纯CDP浏览器控制，1054行 |
 | V6-alpha | 2026-07 | ✅ 稳定 | 统一框架，多感知通道 |
 | V6.0.0 | 2026-08-04 | 🚀 发布 | Grove Kit v1.0.0 |
-| V6.1.0 | 2026-08-05 | 🚀 发布 | opencode 规划引擎 + `hand plan` |
+| V6.1.0 | 2026-08-05 | 🚀 发布 | opencode 规划引擎（CLI `hand plan` 已实现） |
 
 ## 核心设计原则
 
@@ -78,13 +78,13 @@ Hand Kit v6.1.0 提供 9 个 MCP 工具：
 - `cdp_close` — 关闭页面
 - `ax_ui_see` — AX UI 树查看
 - `vision_ocr_see` — OCR 文字识别
-- `hand_plan` — 自然语言目标规划（opencode engine）
+- `hand_plan` — 自然语言目标规划（opencode engine，CLI `hand plan` 已实现）
 - `health` — Kit 存活与用量检查
 
 ## 规划层 (plan/)
 
-`hand plan <goal>` 把 Being 的自然语言目标交给 opencode（`hand-planner`
-agent），agent 只输出有序的 Hand 原语（`{"step": "do", ...}`），Hand 沿
+`hand plan <goal>` 把 Being 的自然语言目标交给 opencode（`build` agent
++ 自定义 system prompt），agent 只输出有序的 Hand 原语（`{"step": "do", ...}`），Hand 沿
 router 逐条执行并在 `session.plan_trace` 记录轨迹。规划与执行分离：
 planning 只输出步骤，从不触碰屏幕。
 

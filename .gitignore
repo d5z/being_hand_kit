@@ -8,3 +8,5 @@ build/
 *.tar.gz
 *.bundle
 kit-opencode/node_modules/
+.opencode/
+*.opencode-session.json

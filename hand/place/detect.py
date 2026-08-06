@@ -35,8 +35,12 @@ def open_place(target: str) -> Place:
     if target.startswith("http://") or target.startswith("https://"):
         # Try CDP navigate first (reuse existing tab)
         try:
-            from hand.perception.cdp_core import list_pages, resolve_page, cdp_connect, cdp_call, _init_domains
+            from hand.perception.cdp_core import list_pages, resolve_page, cdp_connect, cdp_call, _init_domains, _json_get
             pages = list_pages()
+            if not pages:
+                import urllib.request as _ur; _req = _ur.Request("http://localhost:9222/json/new?url=" + target, method="PUT", data=b""); _ur.urlopen(_req, timeout=10)
+                time.sleep(2)
+                pages = list_pages()
             if pages:
                 idx, page = resolve_page(None, pages)
                 ws = cdp_connect(page['webSocketDebuggerUrl'])
@@ -48,7 +52,6 @@ def open_place(target: str) -> Place:
         except Exception:
             pass
         # Fallback: open in browser (new tab)
-        subprocess.run(["open", target], capture_output=True, timeout=10)
         time.sleep(2)
         return Place(type="browser", identifier=target)
 

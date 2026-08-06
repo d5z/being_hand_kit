@@ -129,5 +129,5 @@ def _find_step_objects(text: str) -> list[dict]:
 
 def _to_step(obj: dict) -> Step:
     kind = obj.get("step", "error")
-    action = obj.get("action", "") or obj.get("summary", "") or ""
+    action = obj.get("action", "") or obj.get("summary", "") or obj.get("target", "") or obj.get("path", "") or obj.get("url", "") or ""
     return Step(kind=kind, action=action, raw=obj)

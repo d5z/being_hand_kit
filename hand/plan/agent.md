@@ -1,3 +1,8 @@
+<!--
+  NOTE: This file is a design document. It is NOT auto-loaded by opencode.
+  The planning engine uses the &quot;build&quot; agent + a custom system prompt
+  injected from hand/plan/prompts.py. See PLAN-opencode.md §5 for details.
+-->
 # hand-planner
 
 Hand's planning brain. Plans sequences of GUI operations; never executes them.
