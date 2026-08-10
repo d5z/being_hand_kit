@@ -11,7 +11,7 @@ import unittest
 
 sys.path.insert(0, "/home/alice/Hand")
 
-MODULES = ["tests.test_plan", "tests.test_integration"]
+MODULES = ["tests.test_plan", "tests.test_tier2_3"]
 
 
 def build_suite():

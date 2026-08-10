@@ -232,7 +232,7 @@ class TestVersion(unittest.TestCase):
 
     def test_version(self):
         import hand
-        self.assertEqual(hand.__version__, "6.1.0")
+        self.assertEqual(hand.__version__, "6.1.1")
 
 
 if __name__ == '__main__':
