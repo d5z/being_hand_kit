@@ -1,40 +1,43 @@
 # Roadmap
-_Last updated: 2026-08-10_ Alice@beings.town
 
-## DONE (V6.1.x)
+_Last updated: 2026-08-10 15:36 +08:00_ - Alice@beings.town_
 
-- [x] CDP screenshot + actions
-- [x] macOS AX UI perception
-- [x] Vision OCR
-- [x] Modular architecture (perception/action/router/session)
-- [x] Grove Kit packaging + manifest
-- [x] Git version management
-- [x] SPEC / CHANGELOG / ROADMAP docs
-- [x] Planning layer (plan/) - opencode CLI
-- [x] route_plan() - router executes step sequence
-- [x] plan_trace - session records planning+execution
-- [x] hand_plan MCP tool
-- [x] tests/test_plan.py (8 pass)
-- [x] CLI hand plan <goal> (cli.py, E2E verified)
-- [x] opencode installed (local/bin)
-- [x] Grove publish (Judy bundle API, v6.1.1)
+---
 
-## NEXT (V6.2)
+## Version v6.2.0 - Current
 
-- [ ] Planning Tier 2 - streaming execution (plan+act interleaved)
-- [ ] Cross-platform (Linux X11/Wayland perception)
-- [ ] Action layer extension (drag, right-click, keyboard shortcuts)
+_**Tier 1 (Base)**
+- [✅ Align doc topology to actual code] (v6.1.1b, 2026-08-10)
+- [✅ Hand plan <goal> CSC] (v6.1.0)
+- [✅ Planning Engine] (v6.1.0)
+- [✅ Router with plan_trace] (v6.1.0)
 
-## MID (V6.3 - V7)
+_**Tier 2 (Streaming)**
+- [✅ StreamingEngine (opencode server + SSE)] (v6.2.0)
+- [✅ route_plan_stream()] (v6.2.0)
+- [✅ Tier2 prompt] (v6.2.0)
 
-- [ ] Planning Tier 3 - failure retry + adaptive replan
-- [ ] Multi-monitor support
-- [ ] Action replay + script recording
-- [ ] Element-level coordinate matching
-- [ ] Non-browser app operation (native windows)
+_**Tier 3 (Recovery)**
+- [✅ recovery.py (RECOVERY_SYSTEM_PROMPT + build_recovery_prompt()] (v6.2.0)
+- [✅ route_plan() with max_recoveries=3 param] (v6.2.0)
 
-## Long-term Vision
+_**Tier 4 (MCP-native)**
+- [❡ Opencode as MCP tool] (no subprocess/SSE)
 
-- Hand becomes default GUI interaction layer for Beings Town
-- Any Being installs and uses it, zero config
-- From seeing screens to understanding interfaces to autonomous operation
+_**Tier 5 (Proactive Self-Healing)**
+- [❡ Step failure prediction(detect patterns before execution)
+- [❡ Multi-modal planning (decide plan vs recovery resources)
+
+_**Tier 6 (Ecosystem Learning)**
+- [✁ Being goals as plan templates
+* [❡ Cross-being shared plan library
+
+## Released Versions
+
+| Version | Date | Notes |
+| V6.2.0 | 2026-08-10 | Tier 2 (streaming) + Tier 3 (recovery) |
+| V6.1.1b | 2026-08-10 | Grove bundle API fix |
+| V6.1.1 | 2026-08-06 | cli.py + agent fix |
+| V6.1.0 | 2026-08-05 | opencode planning engine |
+| V6.0.0 | 2026-08-04 | Grove Kit v1.0.0 |
+| V6-beta | 2026-07 | V6 prototype |
