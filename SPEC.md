@@ -20,6 +20,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.1.1b | 2026-08-10 | released | Grove bundle API fix |
 | V6.2.0 | 2026-08-10 | released | Tier 2 (streaming) + Tier 3 (recovery) |
 | V6.3.0 | 2026-08-10 | released | Tier 4 (MCP-native) |
+| V6.4.0 | 2026-08-10 | released | Tier 5 (Proactive Self-Healing) |
 
 ## Architecture Tiers
 
@@ -59,6 +60,22 @@ Hand -> MCP stdio client -> opencode kit server.mjs -> opencode_run (async) -> p
 - Same MCP interface Portal uses - Hand and Portal share one entry point
 - MCPEngine in hand/plan/mcp_engine.py
 
+### Tier 5 - Proactive Self-Healing (stable)
+```
+FailurePredictor
+  predict(kind, action, place_set, trace) -> StepPrediction(risk, signal, healing)
+
+HealingEngine
+  heal(goal, steps, execute_fn, max_recoveries) -> result with heal_count + predictions
+```
+- Predicts step failure BEFORE execution, not after
+- no_place -> insert_open (re-open the target if available)
+- repeated_failure -> skip the duplicate action
+- unknown_kind -> skip before dispatch crash
+- records near-misses (predicted low but actually failed) for future learning
+- Falls back to Tier 3 reactive recovery when prediction misses
+
+
 ## Module Topology
 
 ```
@@ -71,6 +88,7 @@ hand/
     engine.py        -- PlanningEngine (opencode subprocess)
     stream_engine.py  -- StreamingEngine (opencode server + SSE)
     mcp_engine.py     -- MCPEngine (opencode via MCP kit) [T4]
+    healing.py        -- FailurePredictor + HealingEngine [T5]
     parser.py         -- parse opencode JSON event stream
     prompts.py        -- system prompt + tool contract
     tier2_prompts.py  -- streaming-optimized prompt

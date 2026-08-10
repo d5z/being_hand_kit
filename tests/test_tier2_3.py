@@ -136,3 +136,77 @@ class TestBuildRecoveryPrompt(unittest.TestCase):
         self.assertIn('open the file', p)
         self.assertIn('no such file', p)
         # system prompt says 
+class TestTier5Healing(unittest.TestCase):
+    """Tier 5 - Proactive Self-Healing tests."""
+
+    def setUp(self):
+        from hand.session import reset_session
+        reset_session()
+
+    def test_failure_predictor_no_place(self):
+        """do without place -> high risk + insert_open."""
+        from hand.plan.healing import FailurePredictor
+        p = FailurePredictor()
+        pred = p.predict("do", "Cmd+N", place_set=False, trace=[])
+        self.assertEqual(pred.risk, "high")
+        self.assertEqual(pred.signal, "no_place")
+        self.assertEqual(pred.healing, "insert_open")
+
+    def test_failure_predictor_with_place(self):
+        from hand.plan.healing import FailurePredictor
+        p = FailurePredictor()
+        pred = p.predict("do", "Cmd+N", place_set=True, trace=[])
+        self.assertEqual(pred.risk, "low")
+
+    def test_failure_predictor_unknown_kind(self):
+        from hand.plan.healing import FailurePredictor
+        p = FailurePredictor()
+        pred = p.predict("bogus", "x", place_set=True, trace=[])
+        self.assertEqual(pred.risk, "high")
+        self.assertEqual(pred.signal, "unknown_kind")
+        self.assertEqual(pred.healing, "skip_step")
+
+    def test_failure_predictor_repeated_failure(self):
+        from hand.plan.healing import FailurePredictor
+        p = FailurePredictor()
+        trace = [{"kind": "do", "action": "Cmd+N", "result": {"error": "failed"}}]
+        pred = p.predict("do", "Cmd+N", place_set=True, trace=trace)
+        self.assertEqual(pred.risk, "high")
+        self.assertEqual(pred.signal, "repeated_failure")
+
+    def test_healing_engine_normal_flow(self):
+        from hand.plan.healing import HealingEngine
+        engine = HealingEngine()
+        def fe(kind, action): return {"ok": True}
+        steps = [("open", "Notes", None), ("do", "Cmd+N", None), ("done", "", {})]
+        r = engine.heal("test", steps, fe)
+        self.assertEqual(r["plan"], "healed")
+        self.assertGreaterEqual(r["heal_count"], 0)
+
+    def test_healing_engine_skips_unknown(self):
+        from hand.plan.healing import HealingEngine
+        engine = HealingEngine()
+        def fe(kind, action): return {"ok": True}
+        steps = [("open", "Notes", None), ("bogus", "x", None), ("done", "", {})]
+        r = engine.heal("test", steps, fe)
+        self.assertGreaterEqual(r["heal_count"], 1)
+        for p in r["predictions"]:
+            if p["kind"] == "bogus":
+                self.assertTrue(p["healed"])
+
+    def test_route_plan_healing_importable(self):
+        from hand.router import route_plan_healing
+        self.assertTrue(callable(route_plan_healing))
+        import inspect
+        sig = inspect.signature(route_plan_healing)
+        self.assertIn("goal", sig.parameters)
+
+    def test_healing_engine_see_without_place(self):
+        from hand.plan.healing import FailurePredictor
+        p = FailurePredictor()
+        pred = p.predict("see", "", place_set=False, trace=[])
+        self.assertEqual(pred.risk, "high")
+        self.assertEqual(pred.signal, "no_place")
+
+if __name__ == "__main__":
+    unittest.main()

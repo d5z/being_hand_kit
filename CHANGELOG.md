@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.0] - 2026-08-10
+
+#### Added
+- **Tier 5 - Proactive Self-Healing**: hand/plan/healing.py (FailurePredictor + HealingEngine), route_plan_healing() in router
+- FailurePredictor: predicts step risk BEFORE execution (no_place, repeated_failure, unknown_kind)
+- HealingEngine: wraps execution loop with preventive healing (re-open, skip, replan)
+- SPEC.md: Tier 5 marked stable, module topology updated
+
+# Changelog
+
 ## [1.3.0] - 2026-08-10
 
 #### Added

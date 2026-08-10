@@ -210,9 +210,10 @@ def route_screenshot(place: Optional[Place] = None) -> dict:
 
 # ── Plan ─────────────────────────────────────────────────────────────
 
-def route_plan(goal: str, steps: Optional[list] = None) -> dict:
+def route_plan(goal: str, steps: Optional[list] = None,
+                 max_recoveries: int = 3) -> dict:
     """
-    Plan and execute a natural-language goal.
+    Plan and execute a natural-language goal (Tier 1 + Tier 3 recovery).
 
     When steps is None, uses PlanningEngine to decompose the goal into
     ordered Hand primitives.  Iterates steps, dispatching each to
@@ -220,13 +221,19 @@ def route_plan(goal: str, steps: Optional[list] = None) -> dict:
     session.  After every 'do' a 'see' is automatically inserted for
     closed-loop verification.
 
-    Returns a summary dict with the full trace.
+    Tier 3: when a step fails, builds a recovery prompt from the failure
+    context and calls PlanningEngine again to generate recovery steps.
+    At most max_recoveries rounds of recovery are attempted.
+
+    Returns a summary dict with the full trace, including recovery info.
     """
     from hand.plan.engine import PlanningEngine
+    from hand.plan.recovery import build_recovery_prompt
 
     session = get_session()
     session.clear_plan_trace()
     trace: list[dict] = session.plan_trace
+    recovery_count = 0
 
     if steps is None:
         engine = PlanningEngine()
@@ -235,7 +242,9 @@ def route_plan(goal: str, steps: Optional[list] = None) -> dict:
             return {"error": "planning failed", "details": result.error}
         steps = [(s.kind, s.action, s.raw) for s in result.steps]
 
-    for kind, action, raw in steps:
+    i = 0
+    while i < len(steps):
+        kind, action, raw = steps[i]
         entry = {"kind": kind, "action": action, "raw": raw}
         try:
             if kind == "open":
@@ -250,11 +259,10 @@ def route_plan(goal: str, steps: Optional[list] = None) -> dict:
                 res = route_do(action)
                 entry["result"] = res
                 trace.append(entry)
-                # auto-insert see after every do
                 see_res = route_see()
                 trace.append({"kind": "see", "action": "", "result": see_res})
             elif kind == "done":
-                entry["summary"] = raw.get("summary", "")
+                entry["summary"] = raw.get("summary", "") if raw else ""
                 entry["result"] = {"ok": True}
                 trace.append(entry)
                 break
@@ -269,10 +277,38 @@ def route_plan(goal: str, steps: Optional[list] = None) -> dict:
             entry["result"] = {"error": str(e)}
             trace.append(entry)
 
+        result = entry.get("result", {})
+        is_failure = (
+            isinstance(result, dict) and result.get("error") is not None
+        ) or (
+            isinstance(result, dict) and result.get("ok") is False
+        )
+
+        if is_failure and recovery_count < max_recoveries:
+            recovery_count += 1
+            recovery_prompt = build_recovery_prompt(goal, entry, trace)
+            recovery_engine = PlanningEngine()
+            recovery_result = recovery_engine.plan(recovery_prompt)
+            if recovery_result.ok and recovery_result.steps:
+                recovery_steps = [(s.kind, s.action, s.raw) for s in recovery_result.steps]
+                steps = steps[:i+1] + recovery_steps + steps[i+1:]
+                trace.append({"kind": "recovery",
+                              "action": f"attempt #{recovery_count}",
+                              "result": {"ok": True, "recovery_steps": len(recovery_steps)}})
+            else:
+                trace.append({"kind": "recovery",
+                              "action": f"attempt #{recovery_count}",
+                              "result": {"error": "recovery planning failed",
+                                         "details": recovery_result.error}})
+                break
+
+        i += 1
+
     return {
         "plan": "ok",
         "goal": goal,
         "trace": trace,
+        "recoveries": recovery_count,
     }
 
 
@@ -295,3 +331,51 @@ def see_and_do(action: str, place: Optional[Place] = None) -> dict:
         "action": do_result,
         "after": after,
     }
+
+
+
+
+
+
+# ── Plan with healing (Tier 5) ─────────────────────────────────────
+
+def route_plan_healing(goal: str, steps=None, max_recoveries: int = 3) -> dict:
+    """Plan and execute a goal with PROACTIVE self-healing (Tier 5)."""
+    from hand.plan.engine import PlanningEngine
+    from hand.plan.healing import HealingEngine
+    from hand.session import get_session
+
+    session = get_session()
+    session.clear_plan_trace()
+
+    if steps is None:
+        engine = PlanningEngine()
+        result = engine.plan(goal)
+        if not result.ok and not result.steps:
+            return {"error": "planning failed", "details": result.error}
+        steps = [(s.kind, s.action, s.raw) for s in result.steps]
+
+    def execute_fn(kind, action):
+        from hand.router import route_open, route_see, route_do
+        if kind == "open": return route_open(action)
+        if kind == "see": return route_see()
+        if kind == "do": return route_do(action)
+        return {"ok": True}
+
+    heal_engine = HealingEngine()
+    return heal_engine.heal(goal, steps, execute_fn, max_recoveries=max_recoveries)
+
+def route_plan_stream(goal, context=None, max_steps=20):
+    from hand.plan.stream_engine import StreamingEngine
+    session = get_session()
+    session.clear_plan_trace()
+    trace = session.plan_trace
+    engine = StreamingEngine()
+    stream_trace = engine.plan_stream(goal, context, max_steps)
+    for st in stream_trace:
+        entry = dict(kind=st.step.kind, action=st.step.action, raw=st.step.raw, result=st.result)
+        if st.error:
+            entry[chr(34)+chr(101)+chr(114)+chr(114)+chr(111)+chr(114)+chr(34)] = st.error
+        trace.append(entry)
+    engine.stop_server()
+    return dict(plan=chr(115)+chr(116)+chr(114)+chr(101)+chr(97)+chr(109)+chr(95)+chr(111)+chr(107), goal=goal, trace=trace)
