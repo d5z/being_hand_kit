@@ -19,6 +19,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.1.1 | 2026-08-06 | released | cli.py + agent fix |
 | V6.1.1b | 2026-08-10 | released | Grove bundle API fix |
 | V6.2.0 | 2026-08-10 | released | Tier 2 (streaming) + Tier 3 (recovery) |
+| V6.3.0 | 2026-08-10 | released | Tier 4 (MCP-native) |
 
 ## Architecture Tiers
 
@@ -49,9 +50,14 @@ step fails -> build_recovery_prompt(failure context) -> PlanningEngine -> recove
 - At most max_recoveries=3 rounds per goal
 - Recovery steps inserted inline into execution sequence
 
-### Tier 4 - MCP-native (planned)
-- opencode as MCP tool (no subprocess/SSE)
-- Full bidirectional control
+### Tier 4 - MCP-native (stable)
+```
+Hand -> MCP stdio client -> opencode kit server.mjs -> opencode_run (async) -> poll opencode_result -> steps
+```
+- opencode called via MCP kit protocol - no subprocess/SSE in Hand
+- Reuses kit async run/poll pattern (no 30s timeout blocking)
+- Same MCP interface Portal uses - Hand and Portal share one entry point
+- MCPEngine in hand/plan/mcp_engine.py
 
 ## Module Topology
 
@@ -64,6 +70,7 @@ hand/
     __init__.py
     engine.py        -- PlanningEngine (opencode subprocess)
     stream_engine.py  -- StreamingEngine (opencode server + SSE)
+    mcp_engine.py     -- MCPEngine (opencode via MCP kit) [T4]
     parser.py         -- parse opencode JSON event stream
     prompts.py        -- system prompt + tool contract
     tier2_prompts.py  -- streaming-optimized prompt

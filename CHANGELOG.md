@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.0] - 2026-08-10
+
+#### Added
+- **Tier 4 - MCP-native**: MCPEngine (hand/plan/mcp_engine.py), calls opencode via MCP kit protocol (no subprocess/SSE)
+- plan/__init__.py exports MCPEngine + mcpplan default instance
+- SPEC.md: Tier 4 marked stable, module topology updated
+
+# Changelog
+
 ## [1.2.0] - 2026-08-10
 
 #### Added
