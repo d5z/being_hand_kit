@@ -1,64 +1,45 @@
 # Changelog
 
-## [1.1.1] — 2026-08-06
+## [1.1.1b] - 2026-08-10
 
-### 新增
-- **cli.py** — `hand plan <goal>` CLI 入口，支持 --json / --model / --session
+### Fixed
+- Grove publish: use Judy bundle API (bundle embeds manifest.json)
+- SPEC.md restored from git (was truncated on disk)
+- Docs topology aligned to actual code (cli.py, docs/, tests/)
 
-### 修复
-- engine.py: agent 名 `plan` → `build`（opencode 无 plan agent）
-- agent.md: 加注设计文档声明（NOT auto-loaded by opencode）
-- PLAN-opencode.md: agent.md 标注 NOT auto-loaded，§5 重写为 Agent Strategy
-- ROADMAP.md: cli.py 从 V6.2 待实现移到 V6.1 已完成
+## [1.1.1] - 2026-08-06
 
-## [1.1.0] — 2026-08-05
+### Added
+- cli.py - hand plan <goal> CLI entry (--json/--model/--session)
 
-### 新增 — V6.1 规划层
-- **hand/plan/** 模块 — 规划引擎，将自然语言目标分解为 Hand 原语步骤
-  - `engine.py` — PlanningEngine 调用 opencode CLI
-  - `parser.py` — 解析 opencode JSONL 事件流为 Step
-  - `prompts.py` — hand-planner 系统提示词
-  - `agent.md` — opencode agent 配置模板
-- **route_plan()** — router 新增规划路由，遍历 steps 执行
-- **plan_trace** — session 新增规划追踪，记录每个 step 的执行结果
-- **hand_plan MCP 工具** — Kit 新增，自然语言目标 → 规划步骤
-- tests/test_plan.py — 15 个测试用例
+### Fixed
+- engine.py: agent name plan -> build (opencode has no plan agent)
+- agent.md: marked NOT auto-loaded by opencode
+- PLAN-opencode.md: rewritten agent strategy
 
-### 变更
-- 版本号 1.0.0 → 1.1.0 (V6.1.0)
-- SPEC.md 新增规划层架构与 Step 类型表
-- hand/__init__.py 版本声明更新为 6.1.0
+## [1.1.0] - 2026-08-05
 
-## [1.0.0] — 2026-08-04
+### Added - V6.1 planning layer
+- hand/plan/ module - planning engine
+- route_plan() - router planning route
+- plan_trace - session planning trace
+- hand_plan MCP tool
+- tests/test_plan.py (15 cases)
 
-### 新增
-- Hand Kit v1.0.0 Grove 发布版
-- SPEC.md 完整模块拓扑与依赖矩阵
-- CHANGELOG.md 版本追踪
-- ROADMAP.md 路线图
-- .gitignore (排除 __pycache__、*.pyc、.DS_Store)
-- kit/manifest.json Grove 发布清单
-- kit/README.md Kit 说明
+### Changed
+- Version 1.0.0 -> 1.1.0 (V6.1.0)
+- SPEC.md planning layer architecture
 
-### 修复
-- portal_file_write heredoc 通道写入，避免 act DSL 解析器误解析
-- 模块导入路径验证通过（13 个模块全部可 import）
+## [1.0.0] - 2026-08-04
 
-### 变更
-- 架构文档从 V5 纯 CDP 升级为 V6 多通道统一框架
-- 版本号从 0.1.0 → 1.0.0（正式发布版）
+### Added
+- Hand Kit v1.0.0 Grove release
+- SPEC.md full module topology
+- Docs system (SPEC/CHANGELOG/ROADMAP)
 
-## [0.1.0] — 2026-07
+## [0.1.0] - 2026-07
 
-### 新增
-- Hand V6 统一框架原型
-- CDP 截图与操作模块
-- macOS AX UI 感知模块
-- Vision OCR 模块
-- Session 跨 turn 上下文缓存
-- Router 意图路由层
-
-## [V5] — 2026-06
-
-### 说明
-纯 CDP 浏览器控制版本，1054 行单文件，为 V6 架构基础。
+### Added
+- Hand V6 unified framework prototype
+- CDP, AX, OCR modules
+- Session, Router
