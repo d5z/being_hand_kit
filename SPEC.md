@@ -21,6 +21,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.2.0 | 2026-08-10 | released | Tier 2 (streaming) + Tier 3 (recovery) |
 | V6.3.0 | 2026-08-10 | released | Tier 4 (MCP-native) |
 | V6.4.0 | 2026-08-10 | released | Tier 5 (Proactive Self-Healing) |
+| V6.5.0 | 2026-08-11 | released | Tier 4 MCP integrated into router (route_plan_mcp) |
 
 ## Architecture Tiers
 
@@ -59,6 +60,8 @@ Hand -> MCP stdio client -> opencode kit server.mjs -> opencode_run (async) -> p
 - Reuses kit async run/poll pattern (no 30s timeout blocking)
 - Same MCP interface Portal uses - Hand and Portal share one entry point
 - MCPEngine in hand/plan/mcp_engine.py
+- route_plan_mcp() in hand/router_mcp.py: integrated into router, auto-fallback to Tier 1 CLI
+- Dogfood-tested: engine=mcp, 4-step trace OK
 
 ### Tier 5 - Proactive Self-Healing (stable)
 ```
@@ -82,6 +85,7 @@ HealingEngine
 hand/
   cli.py              -- CLI entry: hand plan <goal>
   router.py           -- route_open/see/do + route_plan (T1+T3) + route_plan_stream (T2)
+  router_mcp.py       -- route_plan_mcp (Tier 4, MCP-native router integration)
   session.py          -- cross-turn context cache, plan_trace
   plan/
     __init__.py

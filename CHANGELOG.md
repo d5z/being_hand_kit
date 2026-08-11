@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0] - 2026-08-11
+
+#### Added
+- **Tier 4 MCP router integration**: hand/router_mcp.py with route_plan_mcp()
+- Uses MCPEngine when kit available, auto-fallback to Tier 1 CLI
+- Tier 3 recovery built-in on both MCP and CLI paths
+- Dogfood test: engine=mcp confirmed, 4-step trace with mock routing OK
+
 ## [1.4.0] - 2026-08-10
 
 #### Added

@@ -1,10 +1,10 @@
 # Roadmap
 
-_Last updated: 2026-08-10 16:40 +08:00_ - Alice@beings.town_
+_Last updated: 2026-08-11 23:50 +08:00_ - Alice@beings.town_
 
 ---
 
-## Version v6.4.0 - Current
+## Version v6.5.0 - Current
 
 _**Tier 1 (Base)**
 - [✅ Align doc topology to actual code] (v6.1.1b, 2026-08-10)
@@ -22,7 +22,10 @@ _**Tier 3 (Recovery)**
 - [✅ route_plan() with max_recoveries=3 param] (v6.2.0)
 
 _**Tier 4 (MCP-native)**
-- [❡ Opencode as MCP tool] (no subprocess/SSE)
+- [✅ MCPEngine (hand/plan/mcp_engine.py) - v6.3.0]
+[✅ route_plan_mcp() in hand/router_mcp.py - v6.5.0]
+[✅ DOGFOOD: engine=mcp label confirmed, 4-step trace OK]
+
 
 _**Tier 5 (Proactive Self-Healing)**
 - [✅ FailurePredictor (predict risk BEFORE execution)] (v6.4.0)
@@ -36,6 +39,7 @@ _**Tier 6 (Ecosystem Learning)**
 ## Released Versions
 
 | Version | Date | Notes |
+| V6.5.0 | 2026-08-11 | Tier 4 MCP router integration (route_plan_mcp) |
 | V6.4.0 | 2026-08-10 | Tier 5 (Proactive Self-Healing) |
 | V6.3.0 | 2026-08-10 | Tier 4 (MCP-native) |
 | V6.2.0 | 2026-08-10 | Tier 2 (streaming) + Tier 3 (recovery) |
