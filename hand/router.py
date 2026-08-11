@@ -17,7 +17,7 @@ from hand.session import get_session, Place, reset_session
 # ── Perception backends ────────────────────────────────────────────
 
 SEE_PRIORITY = {
-    "browser":      ["cdp_dom", "ax_ui", "vision_ocr"],
+    "browser":      ["cdp_dom", "cdp_network", "ax_ui", "vision_ocr"],
     "desktop_app":  ["ax_app", "ax_ui", "vision_ocr"],
     "unknown":      ["vision_ocr", "ax_ui"],
 }
@@ -68,7 +68,7 @@ def route_open(target: str) -> dict:
 
 # ── See ──────────────────────────────────────────────────────────────
 
-def route_see(place: Optional[Place] = None) -> dict:
+def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict:
     """
     Look at the screen / current place.
 
@@ -97,6 +97,17 @@ def route_see(place: Optional[Place] = None) -> dict:
 
     errors = []
 
+    if kind == "network":
+        try:
+            from hand.perception.cdp_network import network_snapshot
+            result = network_snapshot()
+            if result and result.get("method"):
+                session = get_session()
+                session.last_see = result
+                return result
+        except Exception as e:
+            return {"error": "cdp_network failed", "details": str(e)}
+
     for backend in backends:
         try:
             result = None
@@ -112,6 +123,9 @@ def route_see(place: Optional[Place] = None) -> dict:
             elif backend == "cdp_dom":
                 from hand.perception.cdp_snapshot import cdp_snapshot_see
                 result = cdp_snapshot_see()
+            elif backend == "cdp_network":
+                from hand.perception.cdp_network import network_snapshot
+                result = network_snapshot()
 
             if result is not None and result.get("method"):
                 # Cache in session: full result for ax_app/ax_ui, screenshot for vision
@@ -171,6 +185,17 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
         pass  # pre-actions are best-effort
 
     errors = []
+
+    if kind == "network":
+        try:
+            from hand.perception.cdp_network import network_snapshot
+            result = network_snapshot()
+            if result and result.get("method"):
+                session = get_session()
+                session.last_see = result
+                return result
+        except Exception as e:
+            return {"error": "cdp_network failed", "details": str(e)}
 
     for backend in backends:
         try:

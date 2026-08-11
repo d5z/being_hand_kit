@@ -37,3 +37,7 @@ def cdp_snapshot(max_chars=8000, page_sel=None):
 
 
 cdp_snapshot_see = cdp_snapshot
+# ── Network ───────────────────────────────────────────────────────────
+from hand.perception.cdp_network import network_snapshot, fetch_network_body
+
+cdp_network_see = network_snapshot
