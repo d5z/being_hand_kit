@@ -154,12 +154,19 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
     if place is None:
         return {"error": "no place — call route_open first"}
 
-    place_type = place.type
+    # Normalize: place can be dict or object
+    if isinstance(place, dict):
+        place_type = place.get("type", "unknown")
+        place_id = place.get("identifier", "")
+    else:
+        place_type = place.type
+        place_id = place.identifier
+
     backends = DO_PRIORITY.get(place_type, DO_PRIORITY["unknown"])
 
     # Run pre-actions (context setup) for certain app+action combos
     try:
-        _run_pre_actions(place.identifier, action, place.identifier)
+        _run_pre_actions(place_id, action, place_id)
     except Exception:
         pass  # pre-actions are best-effort
 
@@ -169,16 +176,16 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
         try:
             if backend == "cdp_click":
                 from hand.action.cdp_act import cdp_click_do
-                result = cdp_click_do(action, app_name=place.identifier)
+                result = cdp_click_do(action, app_name=place_id)
             elif backend == "cdp_type":
                 from hand.action.cdp_act import cdp_type_do
-                result = cdp_type_do(action, app_name=place.identifier)
+                result = cdp_type_do(action, app_name=place_id)
             elif backend == "keystroke":
                 from hand.action.keystroke import keystroke_do
-                result = keystroke_do(action, app_name=place.identifier)
+                result = keystroke_do(action, app_name=place_id)
             elif backend == "ax_click":
                 from hand.action.ax_click import ax_click_do
-                result = ax_click_do(action, app_name=place.identifier)
+                result = ax_click_do(action, app_name=place_id)
 
             if result is not None and result.get("success", True):
                 # Invalidate perception cache after action
@@ -191,22 +198,39 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
 
     return {"error": "all action backends failed", "details": errors}
 
+def route_screenshot(place=None) -> dict:
+    """Take a screenshot. Updates session cache.
 
-# ── Screenshot ───────────────────────────────────────────────────────
+    Browser -> CDP Page.captureScreenshot
+    Other -> vision_ocr (screencapture on macOS)
+    """
+    if place is None:
+        from hand.session import get_session
+        session = get_session()
+        place = session.place
 
-def route_screenshot(place: Optional[Place] = None) -> dict:
-    """Take a screenshot. Updates session cache."""
+    if place is not None and place.type == "browser":
+        from hand.perception.cdp_core import cdp_screenshot
+        result = cdp_screenshot()
+        if result.get("data"):
+            session = get_session()
+            session.screenshot_path = "cdp:" + result["format"]
+            return {
+                "method": "screenshot",
+                "source": "cdp",
+                "data_length": len(result["data"]),
+                "format": result["format"],
+            }
+
     from hand.perception.vision_ocr import _capture_screenshot
-
     path = _capture_screenshot()
     session = get_session()
     session.screenshot_path = path
-
     return {
         "method": "screenshot",
+        "source": "vision_ocr",
         "path": path,
     }
-
 
 # ── Plan ─────────────────────────────────────────────────────────────
 

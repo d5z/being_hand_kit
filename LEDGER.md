@@ -77,7 +77,8 @@
 
 - [ ] 写 opencode grove kit 的 `server.mjs` 和 `manifest.json`
 - [ ] 在 Hand 项目中引入 `hand/plan/engine.py`（Tier 1 实现）
-- [ ] 端到端测试：`hand plan 
+- [ ] 端到端测试：`hand plan <goal>` 全链路（plan -> parse -> route -> execute）
+---
 ## 2026-08-06 — opencode Kit v1.2.1: Bug Fixes & Sync
 
 ### Context
@@ -116,8 +117,28 @@ Portal kit 进程生命周期管理 bug：MCP 进程超时死亡后，工具注�
 ### Problem
 
 opencode_run was hitting the 30s MCP timeout — the kit process died because
-it couldn't respond within Portal's hard timeout. This was the root cause of
-the 
+
+### Solution: Async Run Pattern (open/run/poll)
+
+The kit process was blocking on `opencode run` which could take >30s for complex tasks.
+Portal's MCP timeout kills the process if no response within 30s.
+
+**Changes:**
+- `opencode_run` now returns immediately with `run_id` — no more blocking
+- `opencode_result` — new tool, poll by run_id for completion
+- `opencode_runs` — new tool, list recent runs with status
+
+**Architecture:**
+- Runs stored as JSON files in `~/.heart-portal/kits/opencode/runs/`
+- Background spawn via `child_process`, results written on close
+- Heartbeat tracking preserved from v1.2.1
+- Temp file prompt to avoid shell escaping
+
+**Known Issue (same as v1.2.1):** Portal kit process lifecycle management — MCP process
+doesn't auto-recover after timeout death. Tool registry needs Portal-side fix.
+
+**Next:** This is the version other beings should use. Publish to Grove.
+
 ---
 
 ## 2026-08-06 — Deduplicate prompts.py / engine.py
@@ -139,4 +160,12 @@ the
 
 **Two bugs found during feel-test:**
 
-1. `agent=
+ 
+1. `agent='hand-planner'` — opencode has no plan agent, the correct name is `build`.
+   Changed default to `agent='build'`.
+2. `opencode_bin=None` default with `or _find_opencode()` — if `_find_opencode()` returns `None`,
+   the `None or None` evaluates to `None`, not the sentinel.
+   Fix: added `_UNSET = object()` sentinel, `__init__` defaults to `opencode_bin=_UNSET`,
+   method body becomes `_find_opencode() if opencode_bin is _UNSET else opencode_bin`.
+
+**Test result:** 22/22 pass (sentinel fix made `test_engine_no_binary` pass correctly).

@@ -18,7 +18,7 @@ import time
 from typing import Optional
 
 # Path to compiled Vision OCR binary
-VISION_OCR_BIN = "/Users/alice/Hand/hand/perception/vision_ocr_bin"
+VISION_OCR_BIN = "/home/alice/Hand/hand/perception/vision_ocr_bin"
 
 
 def _capture_screenshot(path: str = "/tmp/hand_screenshot.png") -> str:

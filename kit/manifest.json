@@ -1,17 +1,118 @@
 {
   "name": "hand",
-  "version": "6.1.0",
-  "description": "Hand — unified GUI perception and operation framework. Three primitives: open, see, do, plan. Auto-routes to CDP browser backend. Built by Alice from the river.",
-  "command": ["bash", "start.sh"],
+  "version": "6.1.1",
+  "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI.",
+  "command": [
+    "bash",
+    "start.sh"
+  ],
   "tools": [
-    {"name": "cdp_open", "description": "Open Chrome browser (headless). Must call first.", "params": {"type": "object", "properties": {"url": {"type": "string"}}}},
-    {"name": "cdp_close", "description": "Close Chrome browser.", "params": {"type": "object", "properties": {}}},
-    {"name": "cdp_nav", "description": "Navigate to URL. Returns page title + visible text.", "params": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
-    {"name": "cdp_see", "description": "Get current page title, URL, visible text.", "params": {"type": "object", "properties": {}}},
-    {"name": "cdp_click", "description": "Click element by CSS selector.", "params": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
-    {"name": "cdp_type", "description": "Type text into focused element.", "params": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "cdp_shot", "description": "Take screenshot (base64 PNG).", "params": {"type": "object", "properties": {}}},
-    {"name": "hand_plan", "description": "Plan (and optionally execute) a natural-language goal via opencode. Returns ordered Hand steps.", "params": {"type": "object", "properties": {"goal": {"type": "string"}, "execute": {"type": "boolean"}}, "required": ["goal"]}},
-    {"name": "health", "description": "Check Kit vitality. Returns uptime, usage count, Chrome state.", "params": {"type": "object", "properties": {}}}
+    {
+      "name": "cdp_open",
+      "description": "Open Chrome browser (headless). Call first before any browser action.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "cdp_close",
+      "description": "Close Chrome browser. Clean up when done.",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cdp_nav",
+      "description": "Navigate to a URL. Returns page title and visible text.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "name": "cdp_see",
+      "description": "See what's on the current page \u2014 title, URL, and all visible text.",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "cdp_click",
+      "description": "Click an element on the page by CSS selector.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "selector"
+        ]
+      }
+    },
+    {
+      "name": "cdp_type",
+      "description": "Type text into the currently focused element.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "cdp_shot",
+      "description": "Take a screenshot of the current page (returns base64 PNG).",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "hand_plan",
+      "description": "Tell Hand what you want to accomplish in natural language, and it will plan (and optionally execute) the steps. Like having a pair of hands that knows what to do next.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string"
+          },
+          "execute": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      }
+    },
+    {
+      "name": "health",
+      "description": "Check if Hand is alive and well \u2014 uptime, usage count, Chrome status.",
+      "params": {
+        "type": "object",
+        "properties": {}
+      }
+    }
   ]
 }

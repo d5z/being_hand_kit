@@ -91,3 +91,17 @@ def _element_info(ws, selector):
 def _scroll_into_view(ws, selector):
     import json as jm
     cdp_call(ws,'Runtime.evaluate',{'expression':'document.querySelector('+jm.dumps(selector)+').scrollIntoView({block:"center"})'})
+
+def cdp_screenshot(page_sel=None, format='png', quality=None) -> dict:
+    """Take a screenshot via CDP Page.captureScreenshot. Returns {'data': base64, 'format': 'png'}."""
+    pages = list_pages()
+    idx, page = resolve_page(page_sel, pages)
+    ws = cdp_connect(page['webSocketDebuggerUrl'])
+    try:
+        params = {'format': format}
+        if quality is not None and format == 'jpeg':
+            params['quality'] = quality
+        result = cdp_call(ws, 'Page.captureScreenshot', params, msg_id=42)
+        return {'data': result.get('data', ''), 'format': format, 'page_index': idx}
+    finally:
+        ws.close()
