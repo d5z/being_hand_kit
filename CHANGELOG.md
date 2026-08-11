@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0] - 2026-08-12
+
+#### Added
+- **see(NETWORK)**: hand/perception/cdp_network.py
+- network_snapshot() captures HTTP request/response via CDP
+- bypasses cdp_call() event ingestion bug
+- router.py: SEE_PRIORITY updated, kind=network dispatch
+
 ## [1.5.0] - 2026-08-11
 
 #### Added
