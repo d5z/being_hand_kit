@@ -403,3 +403,4 @@ def route_plan_stream(goal, context=None, max_steps=20):
         trace.append(entry)
     engine.stop_server()
     return dict(plan=chr(115)+chr(116)+chr(114)+chr(101)+chr(97)+chr(109)+chr(95)+chr(111)+chr(107), goal=goal, trace=trace)
+from hand.router_mcp import route_plan_mcp  # Tier 4 (MCP protocol)
