@@ -2,7 +2,7 @@ import json, time, websocket
 from hand.perception.cdp_core import list_pages, resolve_page, cdp_connect, _write_last
 
 
-def network_snapshot(page_sel=None, duration=3.0, kind=None, max_small_body=2048):
+def network_snapshot(page_sel=None, duration=3.0, kind=None, fetch_body_id=None, max_small_body=2048):
     pages = list_pages()
     idx, page = resolve_page(page_sel, pages)
     ws = cdp_connect(page['webSocketDebuggerUrl'])
@@ -61,27 +61,29 @@ def network_snapshot(page_sel=None, duration=3.0, kind=None, max_small_body=2048
             except Exception:
                 break
 
-        for req_id, req in list(requests.items()):
-            mime = req.get('type', '')
-            size = req.get('size', 0)
-            if (req.get('status') is not None
-                    and 'json' in mime
-                    and 0 < size <= max_small_body):
-                try:
-                    body_result = cdp_call_raw(ws, 'Network.getResponseBody',
-                                               {'requestId': req_id},
-                                               msg_id=60000 + abs(hash(req_id)) % 10000)
-                    body_text = body_result.get('body', '')
-                    if body_text:
-                        try:
-                            req['body'] = json.loads(body_text)
-                        except (json.JSONDecodeError, ValueError):
-                            req['body'] = body_text[:max_small_body]
-                except Exception:
-                    pass
+
+        if fetch_body_id is not None:
+            try:
+                body_result = cdp_call_raw(ws, 'Network.getResponseBody',
+                                           {'requestId': fetch_body_id},
+                                           msg_id=50002, timeout=5)
+                if fetch_body_id not in requests:
+                    requests[fetch_body_id] = {
+                        'id': fetch_body_id,
+                        'method': '',
+                        'url': '',
+                        'type': '',
+                        'status': None,
+                        'size': 0,
+                        'body': None,
+                    }
+                requests[fetch_body_id]['body'] = body_result.get('body', '')
+                requests[fetch_body_id]['base64_encoded'] = body_result.get('base64Encoded', False)
+            except Exception:
+                pass
 
         try:
-            ws.send(json.dumps({'id': 50002, 'method': 'Network.disable'}))
+            ws.send(json.dumps({'id': 50003, 'method': 'Network.disable'}))
         except Exception:
             pass
 
@@ -122,7 +124,7 @@ def cdp_call_raw(ws, method, params=None, msg_id=1, timeout=5):
         msg = json.loads(raw)
         if msg.get('id') == msg_id:
             if 'error' in msg:
-                raise RuntimeError(f'CDP error: {msg[chr(34)+chr(101)+chr(114)+chr(114)+chr(111)+chr(114)+chr(34)]}')
+                raise RuntimeError(f'CDP error: {str(msg.get("error", ""))}')
             return msg.get('result', {})
     raise TimeoutError(f'CDP call {method} timed out')
 
@@ -131,28 +133,20 @@ def fetch_network_body(page_sel=None, request_id=None):
     if not request_id:
         return {'error': 'request_id required', 'method': 'cdp_network'}
 
-    pages = list_pages()
-    idx, page = resolve_page(page_sel, pages)
-    ws = cdp_connect(page['webSocketDebuggerUrl'])
+    result = network_snapshot(page_sel, duration=0.5, fetch_body_id=request_id)
 
-    try:
-        ws.send(json.dumps({'id': 70001, 'method': 'Network.enable'}))
-        result = cdp_call_raw(ws, 'Network.getResponseBody',
-                              {'requestId': request_id},
-                              msg_id=70002, timeout=10)
-        body_text = result.get('body', '')
-        is_base64 = result.get('base64Encoded', False)
-        try:
-            ws.send(json.dumps({'id': 70003, 'method': 'Network.disable'}))
-        except Exception:
-            pass
-    finally:
-        ws.close()
+    body = ''
+    base64_encoded = False
+    for r in result.get('requests', []):
+        if r.get('id') == request_id:
+            body = r.get('body', '') or ''
+            base64_encoded = r.get('base64_encoded', False)
+            break
 
     return {
         'method': 'cdp_network',
-        'page_index': idx,
+        'page_index': result.get('page_index', 0),
         'request_id': request_id,
-        'body': body_text,
-        'base64_encoded': is_base64,
+        'body': body,
+        'base64_encoded': base64_encoded,
     }

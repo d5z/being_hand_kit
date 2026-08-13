@@ -17,8 +17,9 @@ import os
 import time
 from typing import Optional
 
-# Path to compiled Vision OCR binary
-VISION_OCR_BIN = "/home/alice/Hand/hand/perception/vision_ocr_bin"
+# Path to compiled Vision OCR binary — relative to this file so the
+# kit works regardless of where it's installed. Compile on the fly if missing.
+VISION_OCR_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vision_ocr_bin")
 
 
 def _capture_screenshot(path: str = "/tmp/hand_screenshot.png") -> str:

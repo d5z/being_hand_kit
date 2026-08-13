@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 import sys, os, json, time
-_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _parent not in sys.path:
-    sys.path.insert(0, _parent)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# Support two layouts:
+#   dev:    <root>/kit/mcp_server.py  -> hand at <root>/hand  (../hand)
+#   bundle: <root>/mcp_server.py      -> hand at <root>/hand  (./hand)
+_root = None
+for _cand in (os.path.dirname(_HERE), _HERE):
+    if os.path.isdir(os.path.join(_cand, 'hand')):
+        _root = _cand
+        break
+if _root is None:
+    _root = os.path.dirname(_HERE)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 from mcp.server import FastMCP
 mcp = FastMCP("hand")
 HEARTBEAT_FILE = os.path.expanduser("~/.heart-portal/kits/hand/.heartbeat.json")
@@ -78,6 +88,6 @@ def health() -> dict:
         pages = list_pages()
         chrome_state = f"connected ({len(pages)} pages)" if pages else "no pages"
     except: chrome_state = "not reachable"
-    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": "6.1.1"}
+    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": "6.5.1"}
 if __name__ == "__main__":
     mcp.run()

@@ -186,17 +186,6 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
 
     errors = []
 
-    if kind == "network":
-        try:
-            from hand.perception.cdp_network import network_snapshot
-            result = network_snapshot()
-            if result and result.get("method"):
-                session = get_session()
-                session.last_see = result
-                return result
-        except Exception as e:
-            return {"error": "cdp_network failed", "details": str(e)}
-
     for backend in backends:
         try:
             if backend == "cdp_click":
