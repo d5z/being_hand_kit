@@ -33,12 +33,18 @@ def open_place(target: str) -> Place:
     """
     # ── URL → browser ───────────────────────────────────────────────
     if target.startswith("http://") or target.startswith("https://"):
-        # Try CDP navigate first (reuse existing tab)
+        # Guarantee a CDP endpoint. On headless Linux this spawns Chrome.
+        from hand.perception.cdp_launcher import ensure_chrome, chrome_running
+        if not chrome_running():
+            ensure_chrome()
+
+        # Try CDP navigate (reuse or create a tab)
         try:
-            from hand.perception.cdp_core import list_pages, resolve_page, cdp_connect, cdp_call, _init_domains, _json_get
+            from hand.perception.cdp_core import list_pages, resolve_page, cdp_connect, cdp_call, _init_domains
             pages = list_pages()
             if not pages:
-                import urllib.request as _ur; _req = _ur.Request("http://localhost:9222/json/new?url=" + target, method="PUT", data=b""); _ur.urlopen(_req, timeout=10)
+                from hand.perception.cdp_launcher import open_new_tab
+                open_new_tab(target)
                 time.sleep(2)
                 pages = list_pages()
             if pages:
@@ -51,8 +57,7 @@ def open_place(target: str) -> Place:
                 return Place(type="browser", identifier=target)
         except Exception:
             pass
-        # Fallback: open in browser (new tab)
-        time.sleep(2)
+        # Last resort: assume the place is a browser even if nav failed.
         return Place(type="browser", identifier=target)
 
     # ── App name ────────────────────────────────────────────────────
