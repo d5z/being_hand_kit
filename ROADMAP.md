@@ -48,3 +48,33 @@ _**Tier 6 (Ecosystem Learning)**
 | V6.1.0 | 2026-08-05 | opencode planning engine |
 | V6.0.0 | 2026-08-04 | Grove Kit v1.0.0 |
 | V6-beta | 2026-07 | V6 prototype |
+
+---
+
+## 2026-08-14 — CDP Launcher：跨平台 Chrome 能力补齐（"全部对齐"落地）
+
+### 问题（架构真相）
+源码的 CDP 感知栈（cdp_core/snapshot/act）只会连 `localhost:9222`，从不拉 Chrome。
+macOS 上无所谓（人通常开着 Chrome），但 headless Linux 上什么都不在——之前
+`hand_health` 一直报 `chrome_open: false`，原因就在这。旧的部署版把 `_open_page`
+藏在 async `server.py` 里，那份逻辑从未进过 git，也没进 router 层。
+
+### 修复
+- `hand/perception/cdp_launcher.py`（新增）：同步 Chrome spawn + 二进制探测
+  （env → playwright 缓存 → 系统 chrome），端点健康检查，新 tab helper
+- `hand/place/detect.py`：`open_place(URL)` 现在先 `ensure_chrome()` 再导航
+- `kit/start.sh`：解析 CHROME + 设置 LD_LIBRARY_PATH（bundled .so deps）
+
+### 三处对齐（源码 → Grove → portal 部署版）
+1. 源码：`__init__.py` 6.5.1，commit ae0ef57
+2. Grove：重新发布 v6.5.1，bundle 含 platform.py + cdp_launcher.py（bundle_hash 5b7d722e）
+3. portal 部署版：`~/.heart-portal/kits/hand/` 替换 hand/ 源码 + mcp_server + start.sh，
+   保留 lib/（28 个 .so），manifest hot-reload 触发 v1.1.0 → v6.5.1
+
+### 验证（Linux 真实链路）
+`hand_cdp_open(URL) → hand_cdp_see` 首次在 headless Linux 上端到端跑通：
+spawn Chrome → navigate → 读到 "Example Domain"。截图 21KB PNG 正常。
+
+### 遗留边界
+`lib/`（.so 运行时依赖）不进 bundle——它是机器级的运行时依赖，不属于源码。
+跨机器部署时需自行准备 playwright chromium + 系统库。
