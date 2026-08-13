@@ -7,6 +7,6 @@ build/
 .grove/
 *.tar.gz
 *.bundle
-kit-opencode/node_modules/
+# opencode kit 已独立为 /home/alice/opencode-kit repo
 .opencode/
 *.opencode-session.json

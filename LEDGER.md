@@ -169,3 +169,26 @@ doesn't auto-recover after timeout death. Tool registry needs Portal-side fix.
    method body becomes `_find_opencode() if opencode_bin is _UNSET else opencode_bin`.
 
 **Test result:** 22/22 pass (sentinel fix made `test_engine_no_binary` pass correctly).
+
+---
+
+## 2026-08-14 — opencode kit 独立成 repo
+
+**Decision:** `kit-opencode/` 从 Hand 主仓库拆出，独立为 `/home/alice/opencode-kit`（git subtree split 保留完整历史）。Hand 不再 vendored opencode kit。
+
+**Changes:**
+- opencode-kit 独立 repo：server.mjs + package.json + manifest.json + README + docs/
+- kit 专属文档（`opencode-kit-frictions.md`、`opencode-sop.md`）随 kit 迁移
+- Hand 里删除 `kit-opencode/` 目录及两篇 kit 文档
+- `.gitignore` 移除 `kit-opencode/node_modules/` 条目
+
+**Kit 侧修复（本次一起做）：**
+- stdout 不再截断（移除 100KB 截断，那是抓错证据的障碍）
+- `summary` 字段改名 `stdout_head`（诚实：它就是 head-500，不是真 summary）
+- `opencode_result` 增加 `wait_ms`（block 直到 done/timeout/error）
+- 新增 `cleanupRuns`（1h 龄自动清理，`opencode_runs` 时触发）
+- 修复 package.json（原本是坏的单行 `{`）
+
+**Known:** 两个 repo 均无 remote。开源时再决定是否用 submodule 关联。
+
+**Next:** 推 GitHub 开源（泽平定）。Grove publish 完整 bundle 上传通道仍卡在 http body 大小限制。
