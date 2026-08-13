@@ -12,22 +12,37 @@ Priority order matters:
 """
 
 from typing import Optional
+from hand.platform import is_macos
 from hand.session import get_session, Place, reset_session
+
+# ── Permission of backends per platform ────────────────────────────
+# ax_* / vision_ocr / keystroke only exist on macOS (osascript, screencapture).
+# On other platforms they are silently dropped from the priority chains —
+# no "command not found" noise.
+
+_MAC_ONLY_BACKENDS = {"ax_app", "ax_ui", "ax_click", "vision_ocr", "keystroke"}
+
+
+def _available(backends: list) -> list:
+    if is_macos():
+        return backends
+    return [b for b in backends if b not in _MAC_ONLY_BACKENDS]
+
 
 # ── Perception backends ────────────────────────────────────────────
 
 SEE_PRIORITY = {
-    "browser":      ["cdp_dom", "cdp_network", "ax_ui", "vision_ocr"],
-    "desktop_app":  ["ax_app", "ax_ui", "vision_ocr"],
-    "unknown":      ["vision_ocr", "ax_ui"],
+    "browser":      _available(["cdp_dom", "cdp_network", "ax_ui", "vision_ocr"]),
+    "desktop_app":  _available(["ax_app", "ax_ui", "vision_ocr"]),
+    "unknown":      _available(["vision_ocr", "ax_ui"]),
 }
 
 # ── Action backends ─────────────────────────────────────────────────
 
 DO_PRIORITY = {
-    "browser":      ["cdp_click", "cdp_type"],
-    "desktop_app":  ["keystroke", "ax_click"],
-    "unknown":      ["keystroke", "ax_click"],
+    "browser":      _available(["cdp_click", "cdp_type"]),
+    "desktop_app":  _available(["keystroke", "ax_click"]),
+    "unknown":      _available(["keystroke", "ax_click"]),
 }
 
 # ── Pre-actions per app ─────────────────────────────────────────────
@@ -96,6 +111,12 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
     backends = SEE_PRIORITY.get(place_type, SEE_PRIORITY["unknown"])
 
     errors = []
+
+    if not backends:
+        # No backend available for this place on this platform — honest
+        # boundary statement, not a fake "everything failed" error.
+        return {"error": f"no see backends for '{place_type}' on this platform",
+                "details": f"platform has no perception backend for {place_type}"}
 
     if kind == "network":
         try:
@@ -177,6 +198,10 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
         place_id = place.identifier
 
     backends = DO_PRIORITY.get(place_type, DO_PRIORITY["unknown"])
+
+    if not backends:
+        return {"error": f"no action backends for '{place_type}' on this platform",
+                "details": f"platform has no action backend for {place_type}"}
 
     # Run pre-actions (context setup) for certain app+action combos
     try:
