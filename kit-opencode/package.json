@@ -1,2 +1,16 @@
 {
-  
+  "name": "opencode",
+  "version": "1.4.0",
+  "description": "opencode agent as a Grove Kit - async run/poll, model listing, status via MCP stdio",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "opencode-kit": "server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

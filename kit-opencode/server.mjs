@@ -110,9 +110,9 @@ function runOpencodeAsync(args) {
       started_at: startedAt,
       finished_at: new Date().toISOString(),
       stdout, stderr,
-      summary: preview(stdout, 500)
+      stdout_length: stdout.length,
+      stdout_head: preview(stdout, 500)
     };
-    if (stdout.length > 100000) { result.stdout = stdout.slice(0, 50000) + '\n...(truncated)'; result.truncated = true; }
     if (code !== 0 && !timedOut) result.error = stderr || 'exit code ' + code;
     try { writeFileSync(runFile, JSON.stringify(result, null, 2) + '\n', 'utf-8'); } catch {}
   });
@@ -127,15 +127,51 @@ function runOpencodeAsync(args) {
   return { run_id: runId, status: 'started', started_at: startedAt, poll_with: 'opencode_result', prompt_preview: preview(args.prompt, 200) };
 }
 
-function getRunResult(runId) {
+function getRunResult(runId, waitMs) {
   const runFile = join(RUNS_DIR, runId + '.json');
   if (!existsSync(runFile)) return { run_id: runId, status: 'not_found', error: 'No run with this id. Runs may be cleaned up after 1 hour.' };
+  if (waitMs && waitMs > 0) {
+    // poll until done/timeout/error, or waitMs elapses
+    const deadline = Date.now() + waitMs;
+    let data = null;
+    while (Date.now() < deadline) {
+      try {
+        data = JSON.parse(readFileSync(runFile, 'utf-8'));
+        if (data.status !== 'running') return data;
+      } catch {}
+      const remaining = deadline - Date.now();
+      const sleepMs = Math.min(1000, remaining);
+      if (sleepMs <= 0) break;
+      // busy-wait with a synchronous sleep via execSync
+      try { execSync('sleep ' + (sleepMs / 1000), { timeout: sleepMs + 500 }); } catch {}
+    }
+    try { data = JSON.parse(readFileSync(runFile, 'utf-8')); } catch {}
+    if (data) { data.waited = true; data.wait_expired = data.status === 'running'; return data; }
+    return { run_id: runId, status: 'error', error: 'Failed to read run file after wait' };
+  }
   try {
     const data = JSON.parse(readFileSync(runFile, 'utf-8'));
     return data;
   } catch (e) {
     return { run_id: runId, status: 'error', error: 'Failed to read run file: ' + e.message };
   }
+}
+
+function cleanupRuns(maxAgeMs) {
+  if (!maxAgeMs) maxAgeMs = 3600000; // 1 hour default
+  try {
+    const files = readdirSync(RUNS_DIR).filter(f => f.endsWith('.json'));
+    const now = Date.now();
+    let removed = 0;
+    for (const f of files) {
+      try {
+        const p = join(RUNS_DIR, f);
+        const st = statSync(p);
+        if (now - st.mtimeMs > maxAgeMs) { unlinkSync(p); removed++; }
+      } catch {}
+    }
+    return removed;
+  } catch { return 0; }
 }
 
 function listRuns() {
@@ -213,9 +249,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'opencode_result',
-      description: 'Poll for the result of an async opencode_run. Returns status and results when done.',
+      description: 'Poll for the result of an async opencode_run. Set wait_ms to block until done/timeout/error (up to wait_ms ms).',
       inputSchema: { type: 'object', properties: {
-        run_id: { type: 'string', description: 'Run ID returned by opencode_run' }
+        run_id: { type: 'string', description: 'Run ID returned by opencode_run' },
+        wait_ms: { type: 'number', description: 'Optional: block up to this many ms waiting for the run to finish (default 0 = poll once)' }
       }, required: ['run_id'] }
     },
     {
@@ -245,9 +282,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       result = toolResult(runOpencodeAsync({ prompt: args.prompt, directory: args.directory, model: args.model || DEFAULT_MODEL, timeout: args.timeout || 180 }));
     } else if (name === 'opencode_result') {
       if (!args || !args.run_id) return toolError(new Error('run_id is required'));
-      result = toolResult(getRunResult(args.run_id));
+      result = toolResult(getRunResult(args.run_id, args.wait_ms));
     } else if (name === 'opencode_runs') {
-      result = toolResult(listRuns());
+      const cleaned = cleanupRuns();
+      const list = listRuns();
+      list.cleaned = cleaned;
+      result = toolResult(list);
     } else if (name === 'opencode_models') {
       result = toolResult(await listModels());
     } else if (name === 'opencode_status') {
