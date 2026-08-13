@@ -231,8 +231,17 @@ class TestRoutePlan(unittest.TestCase):
 class TestVersion(unittest.TestCase):
 
     def test_version(self):
+        import re
         import hand
-        self.assertEqual(hand.__version__, "6.1.1")
+        # 版本号必须是 semver 格式（MAJOR.MINOR.PATCH）
+        self.assertRegex(hand.__version__, r"^\d+\.\d+\.\d+$")
+        # 且与 kit/manifest.json 里声明的版本一致（单一真相源）
+        import json, os
+        manifest_path = os.path.join(os.path.dirname(hand.__file__), "..", "kit", "manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+            self.assertEqual(hand.__version__, manifest.get("version"))
 
 
 if __name__ == '__main__':
