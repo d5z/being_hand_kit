@@ -39,6 +39,7 @@ _**Tier 6 (Ecosystem Learning)**
 ## Released Versions
 
 | Version | Date | Notes |
+| V6.7.0 | 2026-08-16 | do(xy) 坐标桥 — 眼(元素地图坐标)→手(按坐标点击)通路 |
 | V6.6.0 | 2026-08-16 | see(INTERACTIVE) element map + do(scroll) — grounding + wheel scroll |
 | V6.5.2 | 2026-08-16 | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |
 | V6.5.1 | 2026-08-12 | see(NETWORK) browser network layer, CDP event ingestion fix |

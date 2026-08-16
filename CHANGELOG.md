@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.4] - 2026-08-16
+
+#### Added
+- **do(xy) 坐标桥**: hand/action/cdp_act.py 的 cdp_click_do 识别 `xy:412,188` 格式，直接按物理像素坐标点击。打通眼→手裂缝——see(INTERACTIVE) 元素地图的 {x,y} 和未来 vision_llm 返回的坐标，都能直接喂给手点击，不再绕回 DOM 找 selector。抽公共函数 _click_at 收敛三处点击路径（selector/text=/xy:）的"÷dpr→dispatchMouseEvent"逻辑
+
+#### Refactor
+- **坐标契约文档化**: 所有坐标统一为物理像素（CSS px × devicePixelRatio）。cdp_snapshot.py 输出、cdp_act.py 输入同约定，docstring 写明——锁死历史高发的 ×dpr/÷dpr 方向反坑
+
 ## [1.6.3] - 2026-08-16
 
 #### Added

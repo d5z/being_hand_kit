@@ -25,6 +25,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.5.1 | 2026-08-12 | released | see(NETWORK) browser network layer perception, CDP event ingestion fix |
 | V6.5.2 | 2026-08-16 | released | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |
 | V6.6.0 | 2026-08-16 | released | see(INTERACTIVE) element map, do(scroll), grounding + wheel scroll |
+| V6.7.0 | 2026-08-16 | released | do(xy) 坐标桥 — 眼(元素地图坐标)→手(按坐标点击)通路，坐标契约统一物理像素 |
 
 ## Architecture Tiers
 

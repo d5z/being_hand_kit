@@ -1,6 +1,11 @@
 """
 CDP Action — browser click/type via Chrome DevTools Protocol.
 4-tier fallback for click preserved from V5.
+
+COORDINATE CONTRACT: all coordinates in this module (see output such as
+interactive_map/_element_info, and do input such as "xy:X,Y") are PHYSICAL
+pixels = CSS px × devicePixelRatio. CDP Input.dispatchMouseEvent expects
+viewport CSS px, so _click_at divides by dpr before dispatching.
 """
 import json, time
 from hand.perception.cdp_core import (
@@ -8,6 +13,17 @@ from hand.perception.cdp_core import (
     _init_domains, _element_info, _scroll_into_view,
     _get_dpr, _header, _write_last, LOAD_TIMEOUT
 )
+
+def _click_at(ws, x, y, dpr):
+    """Dispatch a real mouse click (pressed + released) at viewport (x, y).
+
+    Input is PHYSICAL pixels (CSS px × devicePixelRatio). CDP
+    Input.dispatchMouseEvent expects CSS px viewport coordinates, so we
+    divide by dpr here. Viewport-relative — no scrollX/scrollY adjustment.
+    """
+    x_scaled, y_scaled = x / dpr, y / dpr
+    cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mousePressed','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=3)
+    cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mouseReleased','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=4)
 
 def cdp_click(selector, page_sel=None):
     pages = list_pages()
@@ -24,10 +40,7 @@ def cdp_click(selector, page_sel=None):
             info = _element_info(ws, selector)
         x, y = info['x'], info['y']
         dpr = _get_dpr(ws)
-        x_scaled, y_scaled = x / dpr, y / dpr
-
-        cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mousePressed','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=3)
-        cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mouseReleased','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=4)
+        _click_at(ws, x, y, dpr)
         _js_click(ws, selector, msg_id=10)
         # 输入元素（input/textarea）只聚焦不提交：_js_focus_enter 触发 Enter 键、
         # _js_submit 触发 form.submit()，对搜索框这类输入框是破坏性的（提交空查询、
@@ -110,6 +123,8 @@ def cdp_click_do(action, app_name=None):
     Router-compatible wrapper. Accepts:
     - CSS selector: '#submit', 'a.login', 'button'
     - text= prefix: 'text=Learn more'
+    - xy: prefix: 'xy:412,188' — physical pixels (CSS px × devicePixelRatio),
+      same convention as interactive_map's {x, y}; feed those values straight in.
     """
     sel = action
     if action.startswith('text='):
@@ -140,11 +155,26 @@ def cdp_click_do(action, app_name=None):
 
             x, y = info['x'], info['y']
             dpr = _get_dpr(ws)
-            x_scaled, y_scaled = x / dpr, y / dpr
-            cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mousePressed','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=3)
-            cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mouseReleased','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=4)
+            _click_at(ws, x, y, dpr)
             _write_last(idx)
             return {'method': 'cdp_click', 'text_match': text_val, 'tag': info.get('tag'), 'page_index': idx, 'result': 'ok'}
+        finally:
+            ws.close()
+    if action.startswith('xy:'):
+        try:
+            parts = action[3:].strip().split(',')
+            x, y = int(round(float(parts[0].strip()))), int(round(float(parts[1].strip())))
+        except (ValueError, IndexError):
+            return {'method': 'cdp_click', 'error': 'invalid xy format, expected "xy:X,Y"', 'action': action}
+        pages = list_pages()
+        idx, page = resolve_page(None, pages)
+        ws = cdp_connect(page['webSocketDebuggerUrl'])
+        try:
+            _init_domains(ws, 'Runtime')
+            dpr = _get_dpr(ws)
+            _click_at(ws, x, y, dpr)
+            _write_last(idx)
+            return {'method': 'cdp_click', 'xy': [x, y], 'page_index': idx, 'result': 'ok'}
         finally:
             ws.close()
     return cdp_click(sel)

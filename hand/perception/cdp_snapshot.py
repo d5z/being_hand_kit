@@ -1,5 +1,9 @@
 """
 CDP Snapshot - browser perception via CDP.
+
+COORDINATE CONTRACT: all coordinates returned here (e.g. interactive_map's
+{x, y}) are PHYSICAL pixels = CSS px × devicePixelRatio. Feed them directly
+to cdp_click_do("xy:x,y") — do accepts the same physical-pixel convention.
 """
 import json
 from hand.perception.cdp_core import (
@@ -46,7 +50,8 @@ def interactive_map(page_sel=None, max_elems=200):
 
     Each entry: {tag, text, selector, x, y, w, h, visible}.
     Coordinates are center-of-element in CSS px scaled by devicePixelRatio
-    (same convention as _element_info). Sorted visible-first, text-first,
+    (same convention as _element_info). x/y are PHYSICAL pixels — feed them
+    straight to cdp_click_do("xy:x,y"). Sorted visible-first, text-first,
     then DOM order; truncated to max_elems.
     """
     pages = list_pages()
