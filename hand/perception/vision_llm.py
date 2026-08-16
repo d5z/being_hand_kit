@@ -26,12 +26,17 @@ import json
 import os
 import urllib.request
 
-DEFAULT_ENDPOINT = "https://opencode.ai/zen/v1"
-DEFAULT_MODEL = "mimo-v2.5-free"
+DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL = "qwen/qwen3-vl-8b-instruct"
 
 
 def _default_key() -> str:
-    """从 opencode auth.json 读 key（key 不写死在代码里）。"""
+    """从 opencode auth.json 读 key（key 不写死在代码里）。
+
+    根据 endpoint 选 provider：OpenRouter 用 openrouter key，zen 网关用 opencode key。
+    """
+    endpoint = os.environ.get("HAND_VISION_ENDPOINT", DEFAULT_ENDPOINT)
+    preferred = ("openrouter", "opencode") if "openrouter" in endpoint else ("opencode", "openrouter")
     candidates = [
         os.path.expanduser("~/.local/share/opencode/auth.json"),
         os.path.expanduser("~/.config/opencode/auth.json"),
@@ -40,7 +45,7 @@ def _default_key() -> str:
         try:
             with open(path) as f:
                 data = json.load(f)
-            for provider in ("opencode", "openrouter"):
+            for provider in preferred:
                 entry = data.get(provider, {})
                 if isinstance(entry, dict) and entry.get("key"):
                     return entry["key"]

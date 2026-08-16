@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.6.5] - 2026-08-16
+
+#### Changed
+- **vision_llm 默认 provider 切到 OpenRouter**: 默认 endpoint `https://openrouter.ai/api/v1`，默认模型 `qwen/qwen3-vl-8b-instruct`（约 $0.12/M input，支持 image）。zen 网关的免费 omni 模型（mimo-v2.5-free）限流频繁、部分不支持 image，改为 OpenRouter 付费但稳定的 vision 模型。key 读取逻辑升级：根据 endpoint 自动选 provider（OpenRouter→openrouter key，zen→opencode key），key 仍不写死在代码里、存 opencode auth.json
+
 ## [1.6.4] - 2026-08-16
 
 #### Added
