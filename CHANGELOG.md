@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.3] - 2026-08-16
+
+#### Added
+- **vision_llm fallback 视觉后端**: hand/perception/vision_llm.py。DOM 不可用、本地 OCR 不可用时，把截图发给 vision 语言模型描述屏幕——"眼"的最后一道 fallback，只要有网络 + 一个支持图片输入的模型就能看。provider 完全可配置（endpoint/model/key 从环境变量读），默认指向 opencode zen 网关。错误分层返回（rate_limited / no_balance / model_not_supported / no_image_input / auth_failed），让调用方知道该降级还是重试，而不是笼统报错
+
+#### Fixed
+- **Cloudflare 反爬拦截**: urllib 默认 User-Agent（Python-urllib/3.x）被 Cloudflare 拦（403 error code: 1010），加 UA 头修复
+- **HTTP/2 状态码不可靠**: urllib 在 HTTP/2 下 e.code 报 403、实际响应头是 429。错误分层改为以响应体 error.type 字段为准（跨 provider 通用约定），状态码只做兜底
+
 ## [1.6.2] - 2026-08-16
 
 #### Added
