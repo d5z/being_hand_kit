@@ -79,10 +79,7 @@ def cdp_type(selector, text, page_sel=None, fast=False):
         if 'error' in info:
             return {'method': 'cdp_type', 'error': info['error'], 'selector': selector}
         x, y = info['x'], info['y']
-        dpr = _get_dpr(ws)
-        x_scaled, y_scaled = x / dpr, y / dpr
-        cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mousePressed','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=3)
-        cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mouseReleased','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=4)
+        _click_at(ws, x, y, _get_dpr(ws))
         for char in text:
             cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
             time.sleep(0.001)
