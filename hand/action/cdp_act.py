@@ -29,8 +29,13 @@ def cdp_click(selector, page_sel=None):
         cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mousePressed','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=3)
         cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mouseReleased','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=4)
         _js_click(ws, selector, msg_id=10)
-        _js_focus_enter(ws, selector, msg_id=15)
-        _js_submit(ws, selector, msg_id=20)
+        # 输入元素（input/textarea）只聚焦不提交：_js_focus_enter 触发 Enter 键、
+        # _js_submit 触发 form.submit()，对搜索框这类输入框是破坏性的（提交空查询、
+        # 清空焦点）。只有动作元素（button/a）才需要这两步真正触发动作。
+        tag = (info.get('tag') or '').upper()
+        if tag not in ('INPUT', 'TEXTAREA'):
+            _js_focus_enter(ws, selector, msg_id=15)
+            _js_submit(ws, selector, msg_id=20)
 
         _write_last(idx)
         return {'method': 'cdp_click', 'selector': selector, 'page_index': idx, 'result': 'ok', 'tiers': '4-tier'}
@@ -153,3 +158,25 @@ def cdp_type_do(action, app_name=None):
         sel, text = action.split('|', 1)
         return cdp_type(sel.strip(), text.strip())
     return {'error': 'cdp_type needs selector|text format', 'action': action}
+
+
+def cdp_type_focused(text, page_sel=None):
+    """Type into the currently focused element via Input.insertText.
+
+    Contract: types into whatever element already has focus (set by a prior
+    cdp_click). Distinct from cdp_type(selector, text) which clicks first.
+    The MCP tool 'cdp_type' is documented as 'type into focused element', so
+    it must use this — NOT route_do, which routes to cdp_click first and
+    misinterprets the text as a CSS selector.
+    """
+    pages = list_pages()
+    idx, page = resolve_page(page_sel, pages)
+    ws = cdp_connect(page['webSocketDebuggerUrl'])
+    try:
+        # Input domain needs no enable
+        for char in text:
+            cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
+        _write_last(idx)
+        return {'method': 'cdp_type', 'page_index': idx, 'text': text, 'result': 'ok'}
+    finally:
+        ws.close()

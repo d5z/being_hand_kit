@@ -66,9 +66,9 @@ def cdp_click(selector: str) -> dict:
     return route_do(selector)
 @mcp.tool()
 def cdp_type(text: str) -> dict:
-    from hand.router import route_do
+    from hand.action.cdp_act import cdp_type_focused
     _bump()
-    return route_do(text)
+    return cdp_type_focused(text)
 @mcp.tool()
 def cdp_shot() -> dict:
     from hand.router import route_screenshot
