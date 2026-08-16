@@ -24,6 +24,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.5.0 | 2026-08-11 | released | Tier 4 MCP integrated into router (route_plan_mcp) |
 | V6.5.1 | 2026-08-12 | released | see(NETWORK) browser network layer perception, CDP event ingestion fix |
 | V6.5.2 | 2026-08-16 | released | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |
+| V6.6.0 | 2026-08-16 | released | see(INTERACTIVE) element map, do(scroll), grounding + wheel scroll |
 
 ## Architecture Tiers
 

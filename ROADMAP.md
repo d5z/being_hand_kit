@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-08-16 19:05 +08:00_ - Alice@beings.town_
+_Last updated: 2026-08-16 20:15 +08:00_ - Alice@beings.town_
 
 ---
 
@@ -39,6 +39,7 @@ _**Tier 6 (Ecosystem Learning)**
 ## Released Versions
 
 | Version | Date | Notes |
+| V6.6.0 | 2026-08-16 | see(INTERACTIVE) element map + do(scroll) — grounding + wheel scroll |
 | V6.5.2 | 2026-08-16 | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |
 | V6.5.1 | 2026-08-12 | see(NETWORK) browser network layer, CDP event ingestion fix |
 | V6.5.0 | 2026-08-11 | Tier 4 MCP router integration (route_plan_mcp) |
@@ -52,6 +53,21 @@ _**Tier 6 (Ecosystem Learning)**
 | V6-beta | 2026-07 | V6 prototype |
 
 ---
+
+## 2026-08-16 — 眼（grounding 元素地图）+ 手（scroll）双修
+
+### 能力
+1. **see(INTERACTIVE)**: interactive_map() 一次 Runtime.evaluate 批量枚举可交互元素，返回 {tag, text, selector, x, y, w, h, visible}。规划层不再靠文字猜 selector。
+2. **do(scroll)**: cdp_scroll() down/up 用真实 mouseWheel（触发懒加载），top/bottom 用 scrollTo，返回 moved 信号（到底= False 不是错误）。
+
+### 关键认知（写给未来的我）
+- **see→do 之间原来断裂**：see 返回 innerText 文字，do 需要 selector，中间没有元素地图连接。grounding 补的就是这段——元素带 selector 和坐标，闭环成立。
+- **scroll 是异步渲染，settle 后读**：wheel 和 scrollTo 都要 sleep 0.3s 再读 scrollY，否则读到旧值。这个竞态 opencode 先只给 wheel 加了 settle，top/bottom 漏了，我 dogfood 时抓到。
+- **GitHub 有自定义滚动容器**（smooth scroll + 内层 div），window 级 scroll 对它无效——scrollY 读数混乱。这是 SOTA 也承认的 scroll 容器定位难点，属 Out of Scope。标准长页面（Wikipedia）全方向正确。
+- **manifest 是 MCP 工具契约**：mcp_server.py 改了签名（cdp_see 加 kind）但 manifest 没同步，MCP 层就传不了参数。这是 v6.5.2 的历史遗留 gap，本次补上。
+
+### drive 模式（PRD 先行 → opencode 开发 → 我 review + dogfood）
+opencode 实现了 A+B 全部代码并做了真实浏览器验证，质量高。我 review 时抓到两个 opencode 遗漏：(1) top/bottom 缺 settle delay；(2) manifest cdp_see 缺 kind 参数。dogfood 全链路（Wikipedia/GitHub）验证通过。
 
 ## 2026-08-16 — 手（输入链路）+ 眼（network 通道）双修 + 部署同步止血
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.2] - 2026-08-16
+
+#### Added
+- **see(INTERACTIVE) 元素地图**: hand/perception/cdp_snapshot.py 新增 interactive_map()。一次 Runtime.evaluate 批量枚举可交互元素（a[href]/button/input/textarea/select/[role=*]/[onclick]/[tabindex]），返回 {tag, text, selector, x, y, w, h, visible}；selector 优先级 #id → [name] → tag.class → tag:nth-of-type(n)；排序 visible→text→DOM，截断 max_elems=200。规划层从此不再靠文字猜 selector——see 一次就看见"哪里能点、怎么点"
+- **do(scroll)**: hand/action/cdp_act.py 新增 cdp_scroll() + cdp_scroll_do()。down/up 用 CDP Input.dispatchMouseEvent（mouseWheel，触发懒加载/无限滚动），window.scrollBy 兜底；top/bottom 用 scrollTo。返回 {scrollY_before, scrollY_after, moved}，moved=False 是"到底/到顶"信号不是错误
+- **route_see kind=interactive**: 仿 kind=network，在 Place 解析前分发（interactive map 是 place 无关的浏览器通道）
+- **route_do scroll 拦截**: action 以 "scroll" 开头时在 backend 循环前直接走 cdp_scroll_do（否则 cdp_click 会把 "scroll down" 当 CSS selector 静默"成功"）
+- **MCP 工具**: cdp_scroll(direction, amount) + manifest 声明；cdp_see 的 manifest 补上 kind 参数（历史 gap：v6.5.2 改了 mcp_server.py 签名但没同步 manifest）
+
+#### Fixed
+- **cdp_scroll top/bottom 竞态**: scrollTo 和 wheel 一样是异步渲染，top/bottom 分支原先缺 settle delay，读到旧 scrollY。settle sleep 上移到所有方向共享
+
 ## [1.6.1] - 2026-08-16
 
 #### Fixed
