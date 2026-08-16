@@ -128,7 +128,23 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
         place = session.place
 
     if place is None:
-        # No place set — try vision OCR as universal fallback
+        # No place set. Try CDP browser first — Chrome may be alive even
+        # without an explicit open (the MCP server is lazy-spawned, so a
+        # fresh process loses session.place but the browser itself persists).
+        # Then fall back to vision OCR.
+        try:
+            from hand.perception.cdp_core import list_pages
+            pages = list_pages()
+            if pages:
+                from hand.perception.cdp_snapshot import cdp_snapshot
+                result = cdp_snapshot()
+                if result and result.get("method"):
+                    session = get_session()
+                    session.last_see = result
+                    return result
+        except Exception:
+            pass
+        # No live browser — vision OCR as universal fallback
         try:
             from hand.perception.vision_ocr import vision_ocr_see
             result = vision_ocr_see()

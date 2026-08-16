@@ -26,6 +26,14 @@ def _bump():
         with open(HEARTBEAT_FILE, "w") as f:
             json.dump({"calls": _call_count, "last_used_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "uptime_seconds": int(time.time() - _started_at)}, f)
     except: pass
+
+def _version():
+    """Read the hand version from the package (single source of truth)."""
+    try:
+        from hand import __version__
+        return __version__
+    except Exception:
+        return "unknown"
 @mcp.tool()
 def cdp_open(url: str) -> dict:
     from hand.router import route_open
@@ -93,6 +101,6 @@ def health() -> dict:
         pages = list_pages()
         chrome_state = f"connected ({len(pages)} pages)" if pages else "no pages"
     except: chrome_state = "not reachable"
-    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": "6.6.0"}
+    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": _version()}
 if __name__ == "__main__":
     mcp.run()
