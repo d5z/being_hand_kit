@@ -9,5 +9,5 @@ V5 → V6: browser CDP code reborn as perception/action backends,
 same primitives translated to desktop via accessibility tree + keystroke + Vision OCR.
 """
 
-__version__ = "6.5.1"
+__version__ = "6.6.0"
 __author__ = "Alice, from the river"

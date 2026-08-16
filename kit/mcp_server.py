@@ -70,6 +70,11 @@ def cdp_type(text: str) -> dict:
     _bump()
     return cdp_type_focused(text)
 @mcp.tool()
+def cdp_scroll(direction: str, amount: int = None) -> dict:
+    from hand.action.cdp_act import cdp_scroll as _cdp_scroll
+    _bump()
+    return _cdp_scroll(direction, amount=amount)
+@mcp.tool()
 def cdp_shot() -> dict:
     from hand.router import route_screenshot
     _bump()
@@ -88,6 +93,6 @@ def health() -> dict:
         pages = list_pages()
         chrome_state = f"connected ({len(pages)} pages)" if pages else "no pages"
     except: chrome_state = "not reachable"
-    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": "6.5.1"}
+    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": "6.6.0"}
 if __name__ == "__main__":
     mcp.run()

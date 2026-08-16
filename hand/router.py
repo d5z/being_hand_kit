@@ -32,7 +32,7 @@ def _available(backends: list) -> list:
 # ── Perception backends ────────────────────────────────────────────
 
 SEE_PRIORITY = {
-    "browser":      _available(["cdp_dom", "cdp_network", "ax_ui", "vision_ocr"]),
+    "browser":      _available(["cdp_dom", "cdp_network", "cdp_interactive", "ax_ui", "vision_ocr"]),
     "desktop_app":  _available(["ax_app", "ax_ui", "vision_ocr"]),
     "unknown":      _available(["vision_ocr", "ax_ui"]),
 }
@@ -40,7 +40,7 @@ SEE_PRIORITY = {
 # ── Action backends ─────────────────────────────────────────────────
 
 DO_PRIORITY = {
-    "browser":      _available(["cdp_click", "cdp_type"]),
+    "browser":      _available(["cdp_click", "cdp_type", "cdp_scroll"]),
     "desktop_app":  _available(["keystroke", "ax_click"]),
     "unknown":      _available(["keystroke", "ax_click"]),
 }
@@ -109,6 +109,20 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
         except Exception as e:
             return {"error": "cdp_network failed", "details": str(e)}
 
+    if kind == "interactive":
+        # Interactive element map is a place-independent channel too — the
+        # CDP browser exposes the interactive nodes regardless of the
+        # current Place. Handle it before Place resolution, same as network.
+        try:
+            from hand.perception.cdp_snapshot import interactive_map
+            result = interactive_map()
+            if result and result.get("method"):
+                session = get_session()
+                session.last_see = result
+                return result
+        except Exception as e:
+            return {"error": "cdp_interactive failed", "details": str(e)}
+
     if place is None:
         session = get_session()
         place = session.place
@@ -151,6 +165,9 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
             elif backend == "cdp_network":
                 from hand.perception.cdp_network import network_snapshot
                 result = network_snapshot()
+            elif backend == "cdp_interactive":
+                from hand.perception.cdp_snapshot import interactive_map
+                result = interactive_map()
 
             if result is not None and result.get("method"):
                 # Cache in session: full result for ax_app/ax_ui, screenshot for vision
@@ -215,6 +232,21 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
 
     errors = []
 
+    # Scroll intent — "scroll down/up/top/bottom" routes straight to the CDP
+    # scroll backend. Must be intercepted before the backend loop: cdp_click
+    # would treat the action as a CSS selector and "fail" (silently returning
+    # its error dict, which reads as success), never reaching the scroller.
+    if 'cdp_scroll' in backends and action.strip().lower().startswith('scroll'):
+        try:
+            from hand.action.cdp_act import cdp_scroll_do
+            result = cdp_scroll_do(action, app_name=place_id)
+            if result is not None:
+                session = get_session()
+                session.clear()
+                return result
+        except Exception as e:
+            errors.append(f"cdp_scroll: {e}")
+
     for backend in backends:
         try:
             if backend == "cdp_click":
@@ -223,6 +255,9 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
             elif backend == "cdp_type":
                 from hand.action.cdp_act import cdp_type_do
                 result = cdp_type_do(action, app_name=place_id)
+            elif backend == "cdp_scroll":
+                from hand.action.cdp_act import cdp_scroll_do
+                result = cdp_scroll_do(action, app_name=place_id)
             elif backend == "keystroke":
                 from hand.action.keystroke import keystroke_do
                 result = keystroke_do(action, app_name=place_id)

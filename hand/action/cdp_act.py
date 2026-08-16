@@ -180,3 +180,80 @@ def cdp_type_focused(text, page_sel=None):
         return {'method': 'cdp_type', 'page_index': idx, 'text': text, 'result': 'ok'}
     finally:
         ws.close()
+
+
+# ── Scroll ────────────────────────────────────────────────────────────
+
+def _scroll_y(ws):
+    """Current window.scrollY in CSS px."""
+    result = cdp_call(ws, 'Runtime.evaluate', {'expression': 'window.scrollY || 0'}, msg_id=30)
+    return result.get('result', {}).get('value', 0)
+
+
+def _viewport_height(ws):
+    """One screen height in CSS px — the default scroll amount."""
+    result = cdp_call(ws, 'Runtime.evaluate', {'expression': 'window.innerHeight || 800'}, msg_id=31)
+    return result.get('result', {}).get('value', 800)
+
+
+def cdp_scroll(direction='down', amount=None, page_sel=None):
+    """Scroll the page. Real wheel events for down/up, scrollTo for top/bottom.
+
+    direction: down / up / top / bottom. down/up default to one screen height
+    and use CDP Input.dispatchMouseEvent (mouseWheel) — equivalent to a user
+    wheel, triggers lazy loading / infinite scroll; window.scrollBy is the
+    fallback. top/bottom use window.scrollTo.
+    Returns scrollY before/after; moved=False means already at the end/edge —
+    a signal, not an error.
+    """
+    pages = list_pages()
+    idx, page = resolve_page(page_sel, pages)
+    ws = cdp_connect(page['webSocketDebuggerUrl'])
+    try:
+        _init_domains(ws, 'Runtime')
+        d = str(direction).lower()
+        before = _scroll_y(ws)
+
+        if d == 'top':
+            cdp_call(ws, 'Runtime.evaluate', {'expression': 'window.scrollTo(0,0)'}, msg_id=5)
+        elif d == 'bottom':
+            cdp_call(ws, 'Runtime.evaluate', {'expression': 'window.scrollTo(0, document.body.scrollHeight)'}, msg_id=6)
+        else:
+            delta = amount if amount is not None else _viewport_height(ws)
+            delta = abs(int(delta))
+            deltaY = -delta if d == 'up' else delta
+            try:
+                cdp_call(ws, 'Input.dispatchMouseEvent',
+                         {'type': 'mouseWheel', 'x': 0, 'y': 0,
+                          'deltaX': 0, 'deltaY': deltaY,
+                          'deltaX_single': 0, 'deltaY_single': deltaY,
+                          'modifiers': 0}, msg_id=7)
+            except Exception:
+                # Fallback: wheel event may fail on some pages — direct scroll.
+                cdp_call(ws, 'Runtime.evaluate',
+                         {'expression': 'window.scrollBy(0, %d)' % deltaY}, msg_id=8)
+        # Scroll (wheel dispatch AND scrollTo) is processed asynchronously —
+        # settle before reading scrollY, or the before/after diff reads a stale
+        # value. Applies to all directions, not just wheel.
+        time.sleep(0.3)
+
+        after = _scroll_y(ws)
+        _write_last(idx)
+        return {'method': 'cdp_scroll', 'direction': d,
+                'scrollY_before': before, 'scrollY_after': after,
+                'moved': after != before}
+    finally:
+        ws.close()
+
+
+def cdp_scroll_do(action, app_name=None):
+    """Router-compatible wrapper. 'action' is 'scroll down/up/top/bottom'
+    (also accepts 'scroll to <direction>'). Direction defaults to down.
+    """
+    d = 'down'
+    toks = action.strip().lower().split()
+    if len(toks) >= 2 and toks[1] in ('down', 'up', 'top', 'bottom'):
+        d = toks[1]
+    elif len(toks) >= 3 and toks[1] == 'to' and toks[2] in ('down', 'up', 'top', 'bottom'):
+        d = toks[2]
+    return cdp_scroll(d)

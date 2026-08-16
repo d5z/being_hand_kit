@@ -1,6 +1,6 @@
 {
   "name": "hand",
-  "version": "6.5.1",
+  "version": "6.6.0",
   "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI.",
   "platforms": {
     "supported": [
@@ -63,10 +63,15 @@
     },
     {
       "name": "cdp_see",
-      "description": "See what's on the current page \u2014 title, URL, and all visible text.",
+      "description": "See what's on the current page \u2014 title, URL, and all visible text. kind=interactive returns the interactive element map (role/text/selector/coordinates); kind=network returns the request/response flow.",
       "params": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["dom", "interactive", "network", "screenshot"]
+          }
+        }
       }
     },
     {
@@ -105,6 +110,24 @@
       "params": {
         "type": "object",
         "properties": {}
+      }
+    },
+    {
+      "name": "cdp_scroll",
+      "description": "Scroll the page. direction: down/up/top/bottom. amount is optional pixels for down/up (default: one screen height).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "direction": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "direction"
+        ]
       }
     },
     {
