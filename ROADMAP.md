@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-08-11 23:50 +08:00_ - Alice@beings.town_
+_Last updated: 2026-08-16 19:05 +08:00_ - Alice@beings.town_
 
 ---
 
@@ -39,6 +39,8 @@ _**Tier 6 (Ecosystem Learning)**
 ## Released Versions
 
 | Version | Date | Notes |
+| V6.5.2 | 2026-08-16 | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |
+| V6.5.1 | 2026-08-12 | see(NETWORK) browser network layer, CDP event ingestion fix |
 | V6.5.0 | 2026-08-11 | Tier 4 MCP router integration (route_plan_mcp) |
 | V6.4.0 | 2026-08-10 | Tier 5 (Proactive Self-Healing) |
 | V6.3.0 | 2026-08-10 | Tier 4 (MCP-native) |
@@ -50,6 +52,18 @@ _**Tier 6 (Ecosystem Learning)**
 | V6-beta | 2026-07 | V6 prototype |
 
 ---
+
+## 2026-08-16 — 手（输入链路）+ 眼（network 通道）双修 + 部署同步止血
+
+### 三个 commit
+1. `c2ba743` — cdp_type 输入链路：type 不再误当 selector 去点击
+2. `83af45d` — kit/sync.sh：收敛开发→部署同步循环（语法检查→rsync→cp→停旧进程）
+3. `c3557e5` — route_see kind=network 上移到 Place 解析前，place 无关通道不再被 vision fallback 堵死
+
+### 关键机制认知（写给未来的我）
+- **Portal kit 是 lazy spawn（按需启动），不是守护式重启**：kill 掉 mcp_server 后 Portal 不主动拉起，等下一次 hand_* 工具调用才 spawn 新进程（uptime 归零即新进程）。更新 kit = 替换文件 + 停旧进程，加载交给 lazy spawn。
+- **kill 后进程短暂 zombie（Z）态**：父进程尚未 wait 回收，kill -0 仍返回成功。判断"已退出"要用 ps stat 首字符（空或 Z），不能用 kill -0。
+- **network 是 place 无关通道**：路由分发时，place 无关的通道分支要放在 place 依赖的 fallback 链之前，否则被 vision_ocr 这类 place 依赖 backend 遮蔽。
 
 ## 2026-08-14 — CDP Launcher：跨平台 Chrome 能力补齐（"全部对齐"落地）
 
