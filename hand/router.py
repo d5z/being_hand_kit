@@ -94,6 +94,21 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
 
     On success, updates session cache.
     """
+    if kind == "network":
+        # Network is a place-independent channel — the CDP browser exposes
+        # request/response flow regardless of the current Place. Handle it
+        # before Place resolution so it's never shadowed by the vision
+        # fallback when no Place is set.
+        try:
+            from hand.perception.cdp_network import network_snapshot
+            result = network_snapshot()
+            if result and result.get("method"):
+                session = get_session()
+                session.last_see = result
+                return result
+        except Exception as e:
+            return {"error": "cdp_network failed", "details": str(e)}
+
     if place is None:
         session = get_session()
         place = session.place
@@ -117,17 +132,6 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
         # boundary statement, not a fake "everything failed" error.
         return {"error": f"no see backends for '{place_type}' on this platform",
                 "details": f"platform has no perception backend for {place_type}"}
-
-    if kind == "network":
-        try:
-            from hand.perception.cdp_network import network_snapshot
-            result = network_snapshot()
-            if result and result.get("method"):
-                session = get_session()
-                session.last_see = result
-                return result
-        except Exception as e:
-            return {"error": "cdp_network failed", "details": str(e)}
 
     for backend in backends:
         try:

@@ -55,10 +55,10 @@ def cdp_nav(url: str) -> dict:
     _bump()
     return route_open(url)
 @mcp.tool()
-def cdp_see() -> dict:
+def cdp_see(kind: str = None) -> dict:
     from hand.router import route_see
     _bump()
-    return route_see()
+    return route_see(kind=kind)
 @mcp.tool()
 def cdp_click(selector: str) -> dict:
     from hand.router import route_do
