@@ -92,16 +92,94 @@ def _scroll_into_view(ws, selector):
     import json as jm
     cdp_call(ws,'Runtime.evaluate',{'expression':'document.querySelector('+jm.dumps(selector)+').scrollIntoView({block:"center"})'})
 
+def _decode_image_size(data_b64, fmt):
+    """Decode PNG/JPEG base64 head to extract width and height."""
+    import base64, struct
+    try:
+        if fmt == 'png':
+            head = base64.b64decode(data_b64[:512])
+            if head[:8] == b'\x89PNG\r\n\x1a\n':
+                w = struct.unpack('!I', head[16:20])[0]
+                h = struct.unpack('!I', head[20:24])[0]
+                return w, h
+        elif fmt == 'jpeg':
+            raw = base64.b64decode(data_b64)
+            i = 0
+            while i < len(raw) - 1:
+                if raw[i] == 0xFF:
+                    marker = raw[i+1]
+                    if marker == 0xD8:
+                        i += 2
+                        continue
+                    elif marker == 0xD9:
+                        break
+                    elif marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                                    0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                        if i + 9 < len(raw):
+                            h = struct.unpack('!H', raw[i+5:i+7])[0]
+                            w = struct.unpack('!H', raw[i+7:i+9])[0]
+                            return w, h
+                        break
+                    else:
+                        if i + 3 < len(raw):
+                            seg_len = struct.unpack('!H', raw[i+2:i+4])[0]
+                            i += 2 + seg_len
+                            continue
+                i += 1
+    except Exception:
+        pass
+    return None, None
+
+def _build_coord(css_w, css_h, dpr, img_w=None, img_h=None):
+    """Build perception-contract coordinate metadata.
+
+    COORDINATE CONTRACT: space='physical', dpr from browser,
+    viewport in CSS px, image in physical px with scale=image/physical.
+    """
+    physical_w = css_w * dpr if css_w else 0
+    physical_h = css_h * dpr if css_h else 0
+    if img_w is None or img_h is None:
+        img_w = physical_w
+        img_h = physical_h
+    scale = round(img_w / physical_w, 3) if physical_w else 1.0
+    return {
+        'space': 'physical',
+        'dpr': dpr,
+        'viewport': {'w': css_w, 'h': css_h},
+        'image': {'w': img_w, 'h': img_h, 'scale': scale},
+    }
+
 def cdp_screenshot(page_sel=None, format='png', quality=None) -> dict:
-    """Take a screenshot via CDP Page.captureScreenshot. Returns {'data': base64, 'format': 'png'}."""
+    """Take a screenshot via CDP Page.captureScreenshot.
+
+    COORDINATE CONTRACT: space='physical', dpr from browser,
+    viewport in CSS px, image in physical px with scale=image/physical.
+    Returns {'data': base64, 'format': 'png', 'page_index': idx, 'coord': {...}}."""
     pages = list_pages()
     idx, page = resolve_page(page_sel, pages)
     ws = cdp_connect(page['webSocketDebuggerUrl'])
     try:
+        _init_domains(ws, 'Page')
         params = {'format': format}
         if quality is not None and format == 'jpeg':
             params['quality'] = quality
         result = cdp_call(ws, 'Page.captureScreenshot', params, msg_id=42)
-        return {'data': result.get('data', ''), 'format': format, 'page_index': idx}
+        data = result.get('data', '')
+        # Layout metrics & DPR for coordinate contract
+        dpr = _get_dpr(ws)
+        metrics = cdp_call(ws, 'Page.getLayoutMetrics', msg_id=97, timeout=5)
+        css_viewport = metrics.get('cssLayoutViewport', {})
+        css_w = css_viewport.get('clientWidth', 0)
+        css_h = css_viewport.get('clientHeight', 0)
+        img_w, img_h = _decode_image_size(data, format)
+        if img_w is None:
+            img_w, img_h = 0, 0
+        coord = _build_coord(css_w, css_h, dpr, img_w, img_h)
+        return {
+            'data': data,
+            'format': format,
+            'page_index': idx,
+            'coord': coord,
+        }
     finally:
         ws.close()

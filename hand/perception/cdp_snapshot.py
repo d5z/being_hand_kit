@@ -8,11 +8,15 @@ to cdp_click_do("xy:x,y") — do accepts the same physical-pixel convention.
 import json
 from hand.perception.cdp_core import (
     list_pages, resolve_page, cdp_connect, cdp_call,
-    _init_domains, _header, _write_last, LOAD_TIMEOUT
+    _init_domains, _header, _write_last, LOAD_TIMEOUT,
+    _get_dpr, _build_coord
 )
 
 
 def cdp_snapshot(max_chars=8000, page_sel=None):
+    """Return page text snapshot.
+
+    COORDINATE CONTRACT: all coordinates are physical pixels (CSS px × DPR)."""
     pages = list_pages()
     idx, page = resolve_page(page_sel, pages)
     ws = cdp_connect(page['webSocketDebuggerUrl'])
@@ -35,6 +39,13 @@ def cdp_snapshot(max_chars=8000, page_sel=None):
         _write_last(idx)
         data['page_index'] = idx
         data['method'] = 'cdp_snapshot'
+        # Coordinate contract metadata
+        dpr = _get_dpr(ws)
+        metrics = cdp_call(ws, 'Page.getLayoutMetrics', msg_id=96, timeout=5)
+        css_viewport = metrics.get('cssLayoutViewport', {})
+        css_w = css_viewport.get('clientWidth', 0)
+        css_h = css_viewport.get('clientHeight', 0)
+        data['coord'] = _build_coord(css_w, css_h, dpr)
         return data
     finally:
         ws.close()
@@ -47,6 +58,9 @@ cdp_snapshot_see = cdp_snapshot
 
 def interactive_map(page_sel=None, max_elems=200):
     """Element map of interactive nodes, batch-fetched in one Runtime.evaluate.
+
+    COORDINATE CONTRACT: all xy coordinates are physical pixels (CSS px × DPR).
+    Feed them straight to cdp_click_do("xy:x,y").
 
     Each entry: {tag, text, selector, x, y, w, h, visible}.
     Coordinates are center-of-element in CSS px scaled by devicePixelRatio
@@ -101,6 +115,12 @@ function mk(el){
                                   0 if (e.get('text') or '').strip() else 1))
         elems = elems[:max_elems]
         _write_last(idx)
+        # Coordinate contract metadata
+        dpr = _get_dpr(ws)
+        metrics = cdp_call(ws, 'Page.getLayoutMetrics', msg_id=95, timeout=5)
+        css_viewport = metrics.get('cssLayoutViewport', {})
+        css_w = css_viewport.get('clientWidth', 0)
+        css_h = css_viewport.get('clientHeight', 0)
         return {
             'method': 'cdp_interactive',
             'page_index': idx,
@@ -108,6 +128,7 @@ function mk(el){
             'total': total,
             'truncated': total > len(elems),
             'elems': elems,
+            'coord': _build_coord(css_w, css_h, dpr),
         }
     finally:
         ws.close()
