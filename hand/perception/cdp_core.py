@@ -84,7 +84,7 @@ def _get_dpr(ws):
     except: return 1.0
 def _element_info(ws, selector):
     import json as jm
-    expr = '(function(){var el=document.querySelector('+jm.dumps(selector)+');if(!el)return JSON.stringify({error:"element not found"});var r=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;return JSON.stringify({x:(r.left+r.width/2)*dpr,y:(r.top+r.height/2)*dpr,w:r.width,h:r.height,visible:r.width>0&&r.height>0,tag:el.tagName,text:(el.innerText||"").substring(0,80)});})()'
+    expr = '(function(){var el=document.querySelector('+jm.dumps(selector)+');if(!el)return JSON.stringify({error:"element not found"});var r=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;return JSON.stringify({x:(r.left+r.width/2)*dpr,y:(r.top+r.height/2)*dpr,w:r.width*dpr,h:r.height*dpr,visible:r.width>0&&r.height>0,tag:el.tagName,text:(el.innerText||"").substring(0,80)});})()'
     result = cdp_call(ws,'Runtime.evaluate',{'expression':expr,'returnByValue':True})
     value = result.get('result',{}).get('value','{}')
     return jm.loads(value)

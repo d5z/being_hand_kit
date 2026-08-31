@@ -2,7 +2,7 @@
 CDP Snapshot - browser perception via CDP.
 
 COORDINATE CONTRACT: all coordinates returned here (e.g. interactive_map's
-{x, y}) are PHYSICAL pixels = CSS px × devicePixelRatio. Feed them directly
+{x, y, w, h}) are PHYSICAL pixels = CSS px × devicePixelRatio. Feed them directly
 to cdp_click_do("xy:x,y") — do accepts the same physical-pixel convention.
 """
 import json
@@ -85,7 +85,7 @@ for(var i=0;i<els.length;i++){
   var t=(el.innerText||el.getAttribute("placeholder")||"").replace(/\\s+/g," ").trim();
   out.push({tag:el.tagName,text:t.substring(0,80),selector:mk(el),
     x:(r.left+r.width/2)*dpr,y:(r.top+r.height/2)*dpr,
-    w:r.width,h:r.height,visible:r.width>0&&r.height>0});
+    w:r.width*dpr,h:r.height*dpr,visible:r.width>0&&r.height>0});
 }
 return JSON.stringify(out);
 function mk(el){

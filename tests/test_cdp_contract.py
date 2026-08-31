@@ -84,5 +84,83 @@ class TestDecodeImageSize(unittest.TestCase):
         self.assertEqual(h, 1)
 
 
+class TestClickAtContract(unittest.TestCase):
+    """Verify _click_at dispatches CSS px = physical / dpr."""
+
+    def test_click_at_divides_by_dpr(self):
+        from unittest import mock
+        from hand.action.cdp_act import _click_at
+
+        calls = []
+        def fake_cdp(ws, method, params=None, msg_id=1, timeout=10):
+            calls.append((method, params, msg_id))
+            return {}
+
+        with mock.patch('hand.action.cdp_act.cdp_call', side_effect=fake_cdp):
+            _click_at(mock.Mock(), 400, 600, 2.0)
+
+        self.assertEqual(len(calls), 2)  # pressed + released
+        for _, params, _ in calls:
+            self.assertEqual(params['x'], 200.0)  # 400 / 2
+            self.assertEqual(params['y'], 300.0)  # 600 / 2
+
+    def test_click_at_1x_identity(self):
+        from unittest import mock
+        from hand.action.cdp_act import _click_at
+
+        calls = []
+        def fake_cdp(ws, method, params=None, msg_id=1, timeout=10):
+            calls.append((method, params, msg_id))
+            return {}
+
+        with mock.patch('hand.action.cdp_act.cdp_call', side_effect=fake_cdp):
+            _click_at(mock.Mock(), 150, 250, 1.0)
+
+        for _, params, _ in calls:
+            self.assertEqual(params['x'], 150.0)
+            self.assertEqual(params['y'], 250.0)
+
+
+class TestElementInfoContract(unittest.TestCase):
+    """Verify _element_info returns physical w/h at dpr≠1."""
+
+    def test_element_info_physical_pixels_at_dpr2(self):
+        from unittest import mock
+        from hand.perception.cdp_core import _element_info
+
+        # Simulate CDP returning JS result for an element at CSS (100,50) size 200×40, dpr=2
+        def fake_cdp(ws, method, params=None, msg_id=1, timeout=10):
+            if method == 'Runtime.evaluate':
+                return {'result': {'value': '{"x":300,"y":150,"w":400,"h":80,"visible":true,"tag":"BUTTON","text":"OK"}'}}
+            return {}
+
+        with mock.patch('hand.perception.cdp_core.cdp_call', side_effect=fake_cdp):
+            info = _element_info(mock.Mock(), '#btn')
+
+        self.assertEqual(info['x'], 300)
+        self.assertEqual(info['y'], 150)
+        self.assertEqual(info['w'], 400)  # 200 CSS * 2
+        self.assertEqual(info['h'], 80)   # 40 CSS * 2
+        self.assertTrue(info['visible'])
+
+    def test_element_info_js_expr_contains_dpr_for_wh(self):
+        """Sanity-check that the JS expression multiplies w/h by dpr."""
+        import json as jm
+        from hand.perception.cdp_core import _element_info
+
+        # The JS expr is constructed inside _element_info; we inspect it indirectly
+        # by ensuring a mocked response is parsed correctly.
+        from unittest import mock
+        def fake_cdp(ws, method, params=None, msg_id=1, timeout=10):
+            expr = params.get('expression', '')
+            # Assert the expression contains *dpr for width and height
+            self.assertIn('r.width*dpr', expr)
+            self.assertIn('r.height*dpr', expr)
+            return {'result': {'value': '{"x":0,"y":0,"w":0,"h":0,"visible":false,"tag":"DIV","text":""}'}}
+
+        with mock.patch('hand.perception.cdp_core.cdp_call', side_effect=fake_cdp):
+            _element_info(mock.Mock(), 'body')
+
+
 if __name__ == "__main__":
     unittest.main()
