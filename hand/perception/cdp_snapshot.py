@@ -56,17 +56,27 @@ cdp_snapshot_see = cdp_snapshot
 
 # ── Interactive map ──────────────────────────────────────────────────
 
+def _element_sort_key(elem):
+    """Sort key for interactive_map: occluded sinks to bottom,
+    then visible-first, text-first, preserving DOM order via stable sort."""
+    return (
+        0 if not elem.get('occluded') else 1,
+        0 if elem.get('visible') else 1,
+        0 if (elem.get('text') or '').strip() else 1,
+    )
+
+
 def interactive_map(page_sel=None, max_elems=200):
     """Element map of interactive nodes, batch-fetched in one Runtime.evaluate.
 
     COORDINATE CONTRACT: all xy coordinates are physical pixels (CSS px × DPR).
     Feed them straight to cdp_click_do("xy:x,y").
 
-    Each entry: {tag, text, selector, x, y, w, h, visible}.
+    Each entry: {tag, text, selector, x, y, w, h, in_viewport, occluded, visible}.
     Coordinates are center-of-element in CSS px scaled by devicePixelRatio
     (same convention as _element_info). x/y are PHYSICAL pixels — feed them
-    straight to cdp_click_do("xy:x,y"). Sorted visible-first, text-first,
-    then DOM order; truncated to max_elems.
+    straight to cdp_click_do("xy:x,y"). Sorted occluded-last, visible-first,
+    text-first, then DOM order; truncated to max_elems.
     """
     pages = list_pages()
     idx, page = resolve_page(page_sel, pages)
@@ -78,14 +88,39 @@ def interactive_map(page_sel=None, max_elems=200):
 var SEL='a[href], button, input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="tab"], [onclick], [tabindex]:not([tabindex="-1"])';
 var els=document.querySelectorAll(SEL);
 var dpr=window.devicePixelRatio||1;
+var vw=window.innerWidth||0;
+var vh=window.innerHeight||0;
 var out=[];
+var candidates=[];
 for(var i=0;i<els.length;i++){
   var el=els[i];
   var r=el.getBoundingClientRect();
   var t=(el.innerText||el.getAttribute("placeholder")||"").replace(/\\s+/g," ").trim();
+  var in_vp=r.width > 0 && r.height > 0 && !(r.right < 0 || r.bottom < 0 || r.left > vw || r.top > vh);
+  var cx=r.left+r.width/2;
+  var cy=r.top+r.height/2;
   out.push({tag:el.tagName,text:t.substring(0,80),selector:mk(el),
-    x:(r.left+r.width/2)*dpr,y:(r.top+r.height/2)*dpr,
-    w:r.width*dpr,h:r.height*dpr,visible:r.width>0&&r.height>0});
+    x:cx*dpr,y:cy*dpr,w:r.width*dpr,h:r.height*dpr,
+    in_viewport:in_vp,occluded:false});
+  if(in_vp && candidates.length < 50){
+    candidates.push({idx:i,el:el,cx:cx,cy:cy});
+  }
+}
+for(var j=0;j<candidates.length;j++){
+  var c=candidates[j];
+  if(c.cx >= 0 && c.cx < vw && c.cy >= 0 && c.cy < vh){
+    var hit=document.elementFromPoint(c.cx,c.cy);
+    var found=false;
+    while(hit){
+      if(hit===c.el){found=true;break;}
+      hit=hit.parentElement;
+    }
+    out[c.idx].occluded=!found;
+  }
+}
+for(var k=0;k<out.length;k++){
+  var e=out[k];
+  e.visible=e.in_viewport && !e.occluded && e.w > 0 && e.h > 0;
 }
 return JSON.stringify(out);
 function mk(el){
@@ -111,8 +146,7 @@ function mk(el){
         value_str = raw.get('result', {}).get('value') or '[]'
         elems = json.loads(value_str)
         total = len(elems)
-        elems.sort(key=lambda e: (0 if e.get('visible') else 1,
-                                  0 if (e.get('text') or '').strip() else 1))
+        elems.sort(key=_element_sort_key)
         elems = elems[:max_elems]
         _write_last(idx)
         # Coordinate contract metadata

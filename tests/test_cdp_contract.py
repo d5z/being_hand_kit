@@ -10,6 +10,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from hand.perception.cdp_core import _build_coord, _decode_image_size
+from hand.perception.cdp_snapshot import _element_sort_key
 import base64
 
 
@@ -160,6 +161,30 @@ class TestElementInfoContract(unittest.TestCase):
 
         with mock.patch('hand.perception.cdp_core.cdp_call', side_effect=fake_cdp):
             _element_info(mock.Mock(), 'body')
+
+
+class TestElementSortKey(unittest.TestCase):
+    """Three-tier visibility sort: occluded sinks, then visible-first, text-first."""
+
+    def test_occluded_sinks_to_bottom(self):
+        a = {'occluded': False, 'visible': True, 'text': 'A'}
+        b = {'occluded': True, 'visible': False, 'text': 'B'}
+        self.assertLess(_element_sort_key(a), _element_sort_key(b))
+
+    def test_visible_before_hidden(self):
+        a = {'occluded': False, 'visible': True, 'text': ''}
+        b = {'occluded': False, 'visible': False, 'text': ''}
+        self.assertLess(_element_sort_key(a), _element_sort_key(b))
+
+    def test_text_before_empty(self):
+        a = {'occluded': False, 'visible': True, 'text': 'A'}
+        b = {'occluded': False, 'visible': True, 'text': ''}
+        self.assertLess(_element_sort_key(a), _element_sort_key(b))
+
+    def test_dom_order_preserved_with_same_key(self):
+        a = {'occluded': False, 'visible': True, 'text': 'A'}
+        b = {'occluded': False, 'visible': True, 'text': 'A'}
+        self.assertEqual(_element_sort_key(a), _element_sort_key(b))
 
 
 if __name__ == "__main__":
