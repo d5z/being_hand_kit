@@ -106,7 +106,7 @@
     },
     {
       "name": "cdp_shot",
-      "description": "Take a screenshot of the current page (returns base64 PNG).",
+      "description": "Take a screenshot of the current page. Returns the image directly to the model (MCP ImageContent) when the substrate has vision; also includes base64 PNG data.",
       "params": {
         "type": "object",
         "properties": {}

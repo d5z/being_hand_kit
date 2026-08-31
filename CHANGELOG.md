@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.8.2] - 2026-09-01
+
+#### Added
+- **cdp_shot 图片直达 being（portal 图片链路打通）**: `cdp_shot` 现在把 CDP 截图作为 MCP `ImageContent` 返回，Heart provider 层把工具结果中的 image block 映射为 image_url，截图直达模型 native vision——不再只有 `data_length` 元数据。注意实现细节：`result["data"]` 已是 base64，直接构造 `mcp.types.ImageContent`，不要过 FastMCP `Image`（会双重编码）。前提是 substrate 有视觉能力（如 GLM 5.3 flash native vision）。
+
+#### Fixed
+- **route_screenshot place=None 陷阱**: 新进程空 session 时原先直接落 macOS `screencapture`（Linux 上不存在，报 FileNotFoundError）。现在对齐 8820e3f 的 route_see 模式：先探测 CDP 活浏览器，有则走 cdp_screenshot，无才 fallback。
+
+#### Dev
+- vision_llm 接线收尾：`hand_see_vlm` MCP 工具注册、`tests/test_vision_llm.py`（53 tests 全绿）、spec-v680-vision-llm.md 落盘。
+
 ## [6.8.0] - 2026-08-18
 
 #### Added
