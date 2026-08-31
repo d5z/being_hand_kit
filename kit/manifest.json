@@ -1,6 +1,6 @@
 {
   "name": "hand",
-  "version": "6.7.0",
+  "version": "6.8.2",
   "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI.",
   "platforms": {
     "supported": [
@@ -146,6 +146,17 @@
         "required": [
           "goal"
         ]
+      }
+    },
+    {
+      "name": "hand_see_vlm",
+      "description": "Use a vision language model (VLM) to describe the current screen. Takes a screenshot and sends it to the configured vision model (OpenRouter qwen3-vl by default). Set prompt to ask a specific question about the screen.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "prompt": {"type": "string"},
+          "image_b64": {"type": "string"}
+        }
       }
     },
     {

@@ -83,6 +83,53 @@ def route_open(target: str) -> dict:
 
 # ── See ──────────────────────────────────────────────────────────────
 
+def route_see_vlm(prompt: Optional[str] = None, image_b64: Optional[str] = None) -> dict:
+    """
+    Use a vision LLM to describe the current screen.
+
+    Screenshot source: CDP browser (if alive) → screencapture (macOS).
+    Returns {"method": "vision_llm", "text": ..., "model": ..., "source": ...}.
+    """
+    source = None
+    if not image_b64:
+        # 1) try CDP browser
+        try:
+            from hand.perception.cdp_core import list_pages, cdp_screenshot
+            pages = list_pages()
+            if pages:
+                shot = cdp_screenshot()
+                image_b64 = shot.get("data", "")
+                source = "cdp"
+        except Exception:
+            image_b64 = ""
+        # 2) fallback screencapture (macOS)
+        if not image_b64:
+            import base64, tempfile, os
+            from hand.perception.vision_ocr import _capture_screenshot
+            path = _capture_screenshot()
+            with open(path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode("utf-8")
+            source = "screencapture"
+
+    from hand.perception.vision_llm import describe_screenshot
+    result = describe_screenshot(image_b64, prompt=prompt)
+    if result.get("ok"):
+        return {
+            "method": "vision_llm",
+            "text": result.get("text"),
+            "model": result.get("model"),
+            "source": source,
+        }
+    return {
+        "method": "vision_llm",
+        "text": None,
+        "model": result.get("model"),
+        "source": source,
+        "error": result.get("error"),
+        "detail": result.get("detail"),
+    }
+
+
 def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict:
     """
     Look at the screen / current place.
@@ -122,6 +169,9 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
                 return result
         except Exception as e:
             return {"error": "cdp_interactive failed", "details": str(e)}
+
+    if kind == "vlm":
+        return route_see_vlm()
 
     if place is None:
         session = get_session()
@@ -292,29 +342,46 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
 
     return {"error": "all action backends failed", "details": errors}
 
-def route_screenshot(place=None) -> dict:
+def route_screenshot(place=None, with_data: bool = False) -> dict:
     """Take a screenshot. Updates session cache.
 
     Browser -> CDP Page.captureScreenshot
     Other -> vision_ocr (screencapture on macOS)
+    with_data: include raw base64 in return dict (for MCP image content).
     """
     if place is None:
         from hand.session import get_session
         session = get_session()
         place = session.place
 
+    if place is None:
+        # No session place yet: probe for a live CDP browser first
+        # (same pattern as route_see), only then fall back to screencapture.
+        try:
+            from hand.perception.cdp_core import list_pages
+            if list_pages():
+                from hand.session import Place
+                session = get_session()
+                if session.place is None:
+                    session.place = Place(type="browser", identifier="cdp-detected")
+                place = session.place
+        except Exception:
+            pass
     if place is not None and place.type == "browser":
         from hand.perception.cdp_core import cdp_screenshot
         result = cdp_screenshot()
         if result.get("data"):
             session = get_session()
             session.screenshot_path = "cdp:" + result["format"]
-            return {
+            out = {
                 "method": "screenshot",
                 "source": "cdp",
                 "data_length": len(result["data"]),
                 "format": result["format"],
             }
+            if with_data:
+                out["data"] = result["data"]
+            return out
 
     from hand.perception.vision_ocr import _capture_screenshot
     path = _capture_screenshot()

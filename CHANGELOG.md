@@ -1,5 +1,10 @@
 # Changelog
 
+## [6.8.0] - 2026-08-18
+
+#### Added
+- **hand_see_vlm 视觉 LLM 模式**: 新增 `route_see_vlm` + MCP 工具 `hand_see_vlm`，把已有的 `vision_llm.describe_screenshot` 接通为显式视觉感知通道（`cdp_see(kind="vlm")` 也可达）。截图来源优先 CDP 活浏览器、fallback macOS screencapture，发给 OpenRouter `qwen/qwen3-vl-8b-instruct` 描述屏幕内容。这是"眼"的第一道网络级 VLM 通道——不依赖本地 OCR，只要有网络就能"看"。
+
 ## [1.6.5] - 2026-08-16
 
 #### Changed

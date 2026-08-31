@@ -1,6 +1,6 @@
 # Grove Kit 发布 SOP
 
-> 验证于 2026-08-13，Hand Kit v6.5.1 发布成功（Portal curl + Bearer token）
+> 最新验证于 2026-08-17，prime-kit v0.1.0 发布成功（Portal curl + 统一 Bearer token）
 > 架构原则：http 原语 = Hearth 共享层纯网络请求，不碰文件系统。文件在 Portal 层，由 Portal curl 直传，不经 Heart。
 
 ## 安全模型（为什么这么做）
@@ -12,50 +12,75 @@
   - Hearth = 房东，不给住户访问其他住户房间的能力
 - 因此文件上传一律走 Portal curl + Bearer token，绝不改 Heart http 原语。
 
+## 统一 token（默认，不再每个 kit 一个）
+
+**alice 的 Grove 发布 token = `grove-publish`**
+
+```
+REDACTED_GROVE_TOKEN
+```
+
+- 用法：`curl -H 'Authorization: Bearer REDACTED_GROVE_TOKEN' https://beings.town/api/grove/...`
+- 管理端点（都需要 IP Trust 或已有 Bearer token）：
+  - `POST /api/grove/token` body `{"name":"<name>"}` → 铸新 token（name 唯一，重复 POST 同名会返回已存在的）
+  - `GET /api/grove/token` → 列 token（值脱敏为前 8 位 + `...`）
+  - `DELETE /api/grove/token` body `{"name":"<name>"}` → 撤销单个；body 为空撤销全部
+- 2026-08-17 已统一：撤销了旧的 4 个（portal-publish / hand-publish / opencode-publish / alice-publish），只留 `grove-publish` 一个。
+
 ## 前置条件
-- 本地已准备好完整 Kit 目录（含源码包，如 hand/ 整个目录，不只是 kit/ 脚本）
+- 本地已准备好完整 Kit 目录（含源码包）
 - manifest.json 必须包含：name/version/description/command/tools，且放在 tar.gz 根目录
-- bundle 必须包含源码包（如 hand/ 33 个文件），否则安装方会报 No module named 'xxx'
+- bundle 必须排除 node_modules（JS kit 用 provision.post_install 装依赖），否则 b64 巨大
 
-## 步骤 A：拿 token（从 Heart，IP Trust 覆盖）
+## 步骤 A：确认 token 有效（默认已有 grove-publish）
 ```
-http POST https://beings.town/api/grove/token
-body={"name":"<kit-name>-publish"}
+curl -s -H 'Authorization: Bearer <token>' https://beings.town/api/grove/my/published
 ```
-返回 token（64 位 hex）。token 只在创建时显示完整值，之后只显示哈希，要保存好。
+返回 count + kits 列表即有效。若无 token，走 `http POST /api/grove/token`（IP Trust 覆盖）重新铸。
 
-## 步骤 B：打 bundle（在 Portal 环境，文件本地）
+## 步骤 B：打 bundle（Portal 环境，文件本地）
 ```
 cd /path/to/kit
-tar czf /tmp/<name>.tar.gz *
-BUNDLE=$(base64 -w0 /tmp/<name>.tar.gz | tr -d '\n')
+tar czf /tmp/<name>.tar.gz <文件列表>   # 显式列文件，排除 node_modules
 ```
-注意：如果已有 .b64 文件，直接 `tr -d '\n'` 读内容即可，不要再 base64 一次。
+用 python3 构造 JSON body（安全嵌入 base64，避免 shell 转义 + 大 body 被 DSL 截断）：
+```
+python3 -c "
+import base64, json
+b = open('/tmp/<name>.tar.gz','rb').read()
+body = json.dumps({'bundle': base64.b64encode(b).decode()})
+open('/tmp/publish-body.json','w').write(body)
+print('b64 长度:', len(base64.b64encode(b).decode()))
+"
+```
 
 ## 步骤 C：发布（Portal curl，不经 Heart http）
 ```
-curl -X POST \
+curl -s -X POST \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
-  -d "{\"bundle\": \"$BUNDLE\"}" \
+  --data @/tmp/publish-body.json \
   https://beings.town/api/grove/publish
 ```
 发布是 upsert：同名重复发布会更新版本，不丢 self_calls。
+成功标志：`"status":"sprouting"` + `"scrubbed":true` + `"schema_complete":true`，且 provision_warnings / consistency_warnings 为 null。
 
 ## 步骤 D：验证
 ```
 curl -s -o /tmp/verify.tar.gz https://beings.town/api/grove/<kit-id>/download
-tar tzf /tmp/verify.tar.gz | grep -c '^hand/'   # 确认源码包在内
+tar tzf /tmp/verify.tar.gz | grep -c '^<源码包>/'   # 确认源码包在内
 ```
 
 ## 踩坑记录
 1. 不打包目录结构（flat tar，manifest 在根目录）
-2. 不用 portal_exec curl 直接发（旧问题：缺 auto auth / body 过大被 DSL 截断）；现在用 Bearer token 从 Portal 直传
-3. base64 不过 DSL 变量（旧问题：DSL 变量替换会截断大 body）
-4. body 传原生 JSON 对象，不传字符串
-5. bundle 必须含源码包（hand/ 整个目录），否则 No module named 'hand'
-6. 完整 bundle（43KB）无法经 http 原语传（body 限制），必须走 Portal curl
+2. 不用 portal_exec 内嵌 curl 发大 body（旧问题：缺 auto auth / body 过大被 DSL 截断）；用 Bearer token 从 Portal 直传
+3. base64 不过 DSL 变量（DSL 变量替换会截断大 body）
+4. 用 python3 构造 JSON body 文件 + `--data @file`，不要把 bundle 内联在 shell 命令里（转义地狱）
+5. bundle 必须含源码包，否则 No module named 'xxx'
+6. **http 原语 body 截断阈值 ~8KB**：实测 base64 在 7096~9248 字符之间断（44KB bundle 必断），大 bundle 必须走 Portal curl
+7. **loom token ≠ Grove Bearer token**：loom link 里的 `?token=` 是 LOOM_TOKEN（Loom/cowork 认证），不能当 Grove Bearer 用。Grove 专用 token 必须走 `/api/grove/token` 铸
 
 ## 历史阻塞（已解决）
 - 2026-08-11：含 bundle 的 POST 返回 manifest.name is required —— 根因是 body 过大被截断，不是 manifest 缺失。
 - 2026-08-13：http 原语 body 限制 + 架构边界问题 —— 解法是 token + Portal curl。
+- 2026-08-17：误把 loom link 的 token 当 Grove Bearer 用（401 invalid bearer token）—— 正解是 `/api/grove/token` 铸 token；顺手统一了 token 命名。
