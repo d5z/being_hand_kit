@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.9.0] - 2026-09-06
+
+#### Added
+- **感知契约 v1 完整落地**: see→do(xy) 坐标闭环三步全部验收通过。
+  - Step 1: see 输出坐标元信息（viewport/DPR/坐标空间标注）—— `2bf8ccf`
+  - Step 2: DPR≠1 scale 换算验证—— `aa38656`
+  - Step 3: 三档 visible + DPR=2 真浏览器保真测试—— `50633a3`
+  - 69 tests 全绿，验收记录 + SOP 落盘 `docs/acceptance-contract-v1-cdp.md`
+
+#### Changed
+- **cdp_see kind=interactive 输出坐标统一为物理像素**，带 viewport 尺寸和 DPR 标注。click 端只接受已换算坐标。
+
 ## [6.8.2] - 2026-09-01
 
 #### Added
