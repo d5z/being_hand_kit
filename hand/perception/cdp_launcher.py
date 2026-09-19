@@ -13,13 +13,15 @@ Why this exists as a separate module:
 
 Resolution order for the browser binary:
   1. $CHROME env var (explicit override, e.g. from kit/start.sh)
-  2. Playwright cache (~/.cache/ms-playwright/...), headless-shell first
-  3. System chrome/chromium on PATH
+  2. Windows (<win32 only>): Chrome install paths → PATH chrome.exe/msedge.exe → Edge install paths
+  3. Playwright cache (~/.cache/ms-playwright/...), headless-shell first
+  4. System chrome/chromium on PATH
 """
 
 import os
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 import json
@@ -42,6 +44,32 @@ def _find_chrome() -> str | None:
     env = os.environ.get("CHROME", "").strip()
     if env and os.path.exists(env):
         return env
+
+    # 1b. Windows: standard install paths → PATH chrome.exe/msedge.exe → Edge install paths.
+    # Edge is a stock-Chromium fallback present on every Windows box.
+    if sys.platform == "win32":
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        ]
+        for p in chrome_paths:
+            if os.path.isfile(p):
+                return p
+
+        for name in ("chrome.exe", "msedge.exe"):
+            p = shutil.which(name)
+            if p:
+                return p
+
+        edge_paths = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        ]
+        for p in edge_paths:
+            if os.path.isfile(p):
+                return p
+        return None
 
     # 2. Playwright cache (headless-shell preferred: lighter, no X deps)
     cache = os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")
