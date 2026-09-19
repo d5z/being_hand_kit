@@ -206,7 +206,9 @@ New tests, all mocked (`sys.platform` monkeypatch, no real Windows):
 - `test_find_chrome_windows`: $CHROME wins; install-path probe order
   chrome.exe → msedge.exe; PATH fallback finds msedge.exe.
 - `test_see_priority_unknown`: on win32, unknown chain contains cdp_dom
-  (not empty); on darwin, order preserved (vision_ocr first).
+  (not empty); on darwin, unknown chain order is cdp_dom → cdp_interactive →
+  vision_ocr → ax_ui (S2 code block is authoritative — CDP first when a
+  browser is alive, fail-fast to vision_ocr when not).
 - `test_route_see_unknown_probes_cdp`: place=unknown + live CDP (mocked
   list_pages) → routes to browser chain, session.place updated.
 - `test_open_place_honest_failure`: place URL + no chrome_running +
