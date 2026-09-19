@@ -34,7 +34,7 @@ def _available(backends: list) -> list:
 SEE_PRIORITY = {
     "browser":      _available(["cdp_dom", "cdp_network", "cdp_interactive", "ax_ui", "vision_ocr"]),
     "desktop_app":  _available(["ax_app", "ax_ui", "vision_ocr"]),
-    "unknown":      _available(["vision_ocr", "ax_ui"]),
+    "unknown":      _available(["cdp_dom", "cdp_interactive", "vision_ocr", "ax_ui"]),
 }
 
 # ── Action backends ─────────────────────────────────────────────────
