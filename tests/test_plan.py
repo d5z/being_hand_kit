@@ -154,6 +154,18 @@ class TestRoutePlan(unittest.TestCase):
 
     def setUp(self):
         reset_session()
+        # Hermetic guard: route_plan's Tier-3 recovery spawns a real
+        # opencode subprocess when any step fails. A wedged/slow opencode
+        # made the suite hang up to 300s per recovery round (found
+        # 2026-09-19 during 6.10.0 L2 regression). Mock the planner so
+        # failure-path tests never depend on external LLM availability.
+        from hand.plan.engine import PlanningResult
+        self._planner = mock.patch.object(
+            PlanningEngine, "plan",
+            return_value=PlanningResult(
+                goal="test", ok=False, error="planner mocked (hermetic test)"))
+        self._planner.start()
+        self.addCleanup(self._planner.stop)
 
     def test_route_plan_done_only(self):
         from hand.router import route_plan
