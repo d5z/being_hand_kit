@@ -177,30 +177,27 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
         session = get_session()
         place = session.place
 
-    if place is None:
-        # No place set. Try CDP browser first — Chrome may be alive even
-        # without an explicit open (the MCP server is lazy-spawned, so a
-        # fresh process loses session.place but the browser itself persists).
-        # Then fall back to vision OCR.
+    if place is None or getattr(place, "type", None) == "unknown":
+        # No place set (or a stale "unknown"). Try the live CDP browser first —
+        # Chrome may be alive even without an explicit open (the MCP server is
+        # lazy-spawned, so a fresh process loses session.place but the browser
+        # itself persists). One HTTP GET to /json; cheap and idempotent.
         try:
             from hand.perception.cdp_core import list_pages
             pages = list_pages()
             if pages:
-                from hand.perception.cdp_snapshot import cdp_snapshot
-                result = cdp_snapshot()
-                if result and result.get("method"):
-                    session = get_session()
-                    session.last_see = result
-                    return result
+                session = get_session()
+                session.place = Place(type="browser", identifier="cdp-detected")
+                place = session.place
         except Exception:
             pass
-        # No live browser — vision OCR as universal fallback
-        try:
-            from hand.perception.vision_ocr import vision_ocr_see
-            result = vision_ocr_see()
-            return result
-        except Exception as e:
-            return {"error": "no place set and vision_ocr failed", "details": str(e)}
+        if place is None:
+            # No place at all and no live browser — vision OCR as universal fallback
+            try:
+                from hand.perception.vision_ocr import vision_ocr_see
+                return vision_ocr_see()
+            except Exception as e:
+                return {"error": "no place set and vision_ocr failed", "details": str(e)}
 
     place_type = place.type
     backends = SEE_PRIORITY.get(place_type, SEE_PRIORITY["unknown"])
