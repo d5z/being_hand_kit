@@ -57,8 +57,15 @@ def open_place(target: str) -> Place:
                 return Place(type="browser", identifier=target)
         except Exception:
             pass
-        # Last resort: assume the place is a browser even if nav failed.
-        return Place(type="browser", identifier=target)
+        # Last resort: only claim success when a CDP endpoint is actually alive.
+        # Otherwise this was a previous fake success that corrupted downstream
+        # routing state (every later cdp_* call would fail confusingly).
+        if chrome_running():
+            return Place(type="browser", identifier=target)
+        raise RuntimeError(
+            f"cannot open {target}: no CDP endpoint and no browser binary — "
+            "set $CHROME or install Chrome/Edge"
+        )
 
     # ── App name ────────────────────────────────────────────────────
     try:
