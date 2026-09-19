@@ -1,12 +1,33 @@
 """
 Place detection — figure out where I am and how to get somewhere.
 """
-import subprocess, time
+import subprocess, sys, time
 from hand.session import Place, get_session
 
 
 def detect_place() -> Place:
     """Detect the current foreground application."""
+    if sys.platform == "win32":
+        try:
+            ps = (
+                "powershell", "-NoProfile", "-Command",
+                "Get-Process | Where-Object {$_.MainWindowTitle} | "
+                "Select-Object -First 1 -ExpandProperty ProcessName",
+            )
+            result = subprocess.run(
+                ps, capture_output=True, text=True, timeout=5
+            )
+            proc = result.stdout.strip().lower()
+            if proc in ("chrome", "msedge", "firefox"):
+                place_type = "browser"
+            elif proc:
+                place_type = "desktop_app"
+            else:
+                place_type = "unknown"
+            return Place(type=place_type, identifier=proc or None)
+        except Exception:
+            return Place(type="unknown", identifier=None)
+
     try:
         script = 'tell application "System Events" to get name of first application process whose frontmost is true'
         result = subprocess.run(
@@ -68,6 +89,23 @@ def open_place(target: str) -> Place:
         )
 
     # ── App name ────────────────────────────────────────────────────
+    if sys.platform == "win32":
+        # Best-effort Windows activation via cmd `start` (AppleScript does not
+        # exist here). Limited by design: detect_place then reports whichever
+        # foreground app PowerShell can see.
+        try:
+            subprocess.run(
+                ["cmd", "/c", "start", "", target],
+                capture_output=True, text=True, timeout=5
+            )
+        except Exception:
+            pass
+        time.sleep(0.5)
+        place = detect_place()
+        if place.type == "unknown":
+            place = Place(type="desktop_app", identifier=target)
+        return place
+
     try:
         script = f'tell application "{target}" to activate'
         subprocess.run(

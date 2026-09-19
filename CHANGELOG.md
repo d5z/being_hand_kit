@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.10.0] - 2026-09-19
+
+#### Added
+- **Windows 支持（感知三角修复）**: Windows 上 cdp_shot / hand_see_vlm / cdp_see 三件套全部打通。
+  - `_find_chrome()` 新增 win32 查找链：`$CHROME` → Chrome 安装路径 → PATH `chrome.exe`/`msedge.exe` → Edge 安装路径（Edge 是每台 Windows 都有的 Chromium 兜底）。
+  - `detect_place()` 新增 PowerShell 前台窗口探测（chrome/msedge/firefox → browser，其余 → desktop_app，失败 → unknown）。
+  - manifest `supported` 加入 `windows`，与 `backend_matrix.cdp` 对齐。
+
+#### Changed
+- `SEE_PRIORITY["unknown"]` 加入 CDP 后端（`cdp_dom`/`cdp_interactive`），CDP 是 place 无关通道。
+- `route_see()` 对 stale `place="unknown"` 与 `place=None` 一样先探测活浏览器，探测到就路由 browser 链并回写 session.place。
+- `open_place()` URL 分支诚实失败：导航失败后仅当 CDP 端点真的活着才返回 browser Place，否则 raise RuntimeError（`$CHROME` 提示）。
+
 ## [6.9.0] - 2026-09-06
 
 #### Added
