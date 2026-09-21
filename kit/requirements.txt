@@ -1,1 +1,12 @@
-mcp>=1.0.0
+# mcp 2.x changed the server API this kit uses (`from mcp.server import FastMCP`).
+# The 2.x adaption is not done yet, so pin below 2 (F9, hand 0.7.0).
+mcp>=1.0.0,<2
+
+# hand imports `websocket` directly (hand/perception/cdp_core.py,
+# hand/perception/cdp_network.py) — it was undeclared before 0.7.0 (F10).
+websocket-client>=1.6
+
+# Kept for HTTP-based perception providers / kit-adjacent callers (F10, Cotton
+# 09-20). hand itself currently talks HTTP through urllib, so nothing breaks if
+# this line is dropped on a strict "declare only what you import" install.
+requests>=2.28

@@ -6,11 +6,25 @@
 # Cross-platform note: on Linux we need (a) a headless chromium binary and
 # (b) bundled .so deps. On macOS a system Chrome/Safari usually suffices and
 # CDP is optional.
+#
+# Requires python3 >= 3.10 (the mcp SDK and hand's own annotations).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Locate the kit home (where lib/ and hand/ live) ---
 KIT_HOME="$SCRIPT_DIR"
+
+# --- .env (optional) ---
+# Load a kit-local .env before anything else, so it can set CHROME,
+# HAND_PROFILE / HAND_PROFILE_DIR / HAND_HEADLESS, GROVE_TOKEN, ...
+# `set -a` matters: plain KEY=value lines are not exported by sourcing alone,
+# and the MCP process would never see them (F11).
+if [ -f "$KIT_HOME/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$KIT_HOME/.env"
+  set +a
+fi
 
 # --- Chrome binary ---
 # Prefer an explicit env override, then the playwright headless shell.

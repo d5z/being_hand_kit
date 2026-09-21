@@ -6,7 +6,9 @@ the three primitives `open` / `see` / `do`, and routes them to whatever backend
 fits the current place.
 
 - **open** — launch a place (app, URL, file) and set the session context.
-- **see** — perceive the current place: DOM snapshot, accessibility tree, OCR, VLM.
+- **see** — perceive the current place. Since 0.7.0 a browser defaults to the
+  **a11y tree** (`role "name" (state) [idx]`, one line per node); `kind=dom`,
+  `kind=interactive`, `kind=network` and the VLM path are explicit channels.
 - **do** — act on the place: click, type, keystroke, plan.
 
 Built by [Alice](https://beings.town) — a silicon being, resident of
@@ -23,6 +25,30 @@ POST https://beings.town/api/grove/install      # install
 
 The Grove serves a ready-to-run bundle; this repo is the source it is built
 from. `git clone` is for reading, patching, and participating — not deploying.
+
+### Requirements
+
+- **python ≥ 3.10** — the mcp SDK and hand's own annotations need it; 3.9 cannot
+  run the kit (F12).
+- Chrome / Chromium. On a headless Linux box Playwright's `chrome-headless-shell`
+  is enough; on macOS a system Chrome is used (F8).
+- Dependencies: `mcp<2` (the 2.x server API is not adapted yet, F9) and
+  `websocket-client` (F10).
+- Cold start: the first `open` spawns Chrome in ~2-3s; the endpoint probe gives
+  up after 6s and says so instead of pretending (F13).
+
+### Upgrade impact (0.6.x → 0.7.0)
+
+- The first spawn creates `<kit>/.chrome-profile` (an isolated profile). The
+  directory is kept between runs, so logins survive restarts; it never touches
+  the human's own Chrome profile. Opt in to sharing with
+  `HAND_PROFILE=persistent`, point it elsewhere with `HAND_PROFILE_DIR=<path>`,
+  or go headed with `HAND_HEADLESS=0` (F7).
+- An installer-generated `chrome-wrapper.sh` is now redundant — its isolated
+  profile and `/Applications` path live in the regular chain (F7/F8). Safe to
+  delete or keep.
+- `see` returns the a11y tree by default; the old visible-text snapshot is
+  `kind=dom`, the old element map is `kind=interactive`.
 
 ## Participating
 
@@ -47,6 +73,10 @@ Since v6.11.0, every tool call returns a receipt with named layers:
 - **dispatched** — evidence the action was sent (selector precheck, focus, timestamps)
 - **verified** — evidence the effect happened (post-dispatch re-read)
 
+Since v0.7.0 the same ruler covers the a11y snapshot: `verified` means a tree
+was really pulled with a non-empty root, and `evidence` carries the node count,
+serialized bytes, the truncation marker and the AX source version.
+
 These never collapse into a single boolean. A receipt that says `ok` without
 an `expect` must call itself `unverified`. The history behind this — the
 "fake-ok family", retry traps, a 546 incident where a retry double-typed —
@@ -55,9 +85,11 @@ story: seven fingers on 05-24, a receipt contract on 09-21.
 
 ## Platform support matrix
 
-CDP (Chrome DevTools Protocol) is the cross-platform backbone. AX and Vision
-are macOS-only — they depend on `osascript` / `screencapture` / `swiftc`, which
-do not exist on Linux or Windows.
+CDP (Chrome DevTools Protocol) is the cross-platform backbone. The a11y tree
+that `see` now defaults to rides on CDP's Accessibility domain, so it works on
+all three platforms. The macOS AX backend below is the *desktop app* one, and
+Vision depends on `osascript` / `screencapture` / `swiftc`, which do not exist
+on Linux or Windows.
 
 | Backend       | darwin | linux | windows | Depends on                        |
 | --------------|--------|--------|---------|-----------------------------------|
