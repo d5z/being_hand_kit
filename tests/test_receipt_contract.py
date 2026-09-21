@@ -511,7 +511,7 @@ EXPECTED_EVIDENCE = {
     "cdp_type": "verified",
     "hand_plan": "claimed",
     "hand_see_vlm": "claimed",
-    "cdp_close": "claimed",
+    "cdp_close": "verified",
     "health": "claimed",
 }
 
@@ -559,6 +559,7 @@ class TestManifestDeclarations(unittest.TestCase):
             "cdp_scroll": ("hand/action/cdp_act.py",),
             "cdp_click": ("hand/action/cdp_act.py",),
             "cdp_type": ("hand/action/cdp_act.py",),
+            "cdp_close": ("kit/mcp_server.py",),
         }
         root = os.path.join(os.path.dirname(__file__), "..")
         for name, files in sources.items():
