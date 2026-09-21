@@ -80,32 +80,56 @@ class TestCuration(unittest.TestCase):
 
 class TestLabels(unittest.TestCase):
     def test_heading_level_becomes_h1(self):
-        role, name, state_s = ax.node_label(_n("x", "heading", "Welcome", props={"level": 1}))
+        role, name, state_s, _cut = ax.node_label(_n("x", "heading", "Welcome", props={"level": 1}))
         self.assertEqual(role, "heading")
         self.assertTrue(state_s.startswith(" (h1"))
 
     def test_level_misapplied_to_listitem_is_dropped(self):
-        role, name, state_s = ax.node_label(_n("x", "listitem", "Item A", props={"level": 2}))
+        role, name, state_s, _cut = ax.node_label(_n("x", "listitem", "Item A", props={"level": 2}))
         self.assertNotIn("h2", state_s)
         self.assertNotIn("level", state_s)
 
     def test_focusable_only_shown_for_non_interactive_roles(self):
-        _, _, s_link = ax.node_label(_n("x", "link", "Sign in", props={"focusable": True}))
+        _, _, s_link, _cut = ax.node_label(_n("x", "link", "Sign in", props={"focusable": True}))
         self.assertNotIn("focusable", s_link)
-        _, _, s_generic = ax.node_label(_n("x", "generic", "box", props={"focusable": True}))
+        _, _, s_generic, _cut = ax.node_label(_n("x", "generic", "box", props={"focusable": True}))
         self.assertIn("focusable", s_generic)
 
     def test_state_order_is_declared_not_set_order(self):
         """STATE_PROPS must be an ordered sequence: str set iteration order varies
         with PYTHONHASHSEED, which would break byte-identical serialization."""
         self.assertIsInstance(ax.STATE_PROPS, tuple)
-        _, _, s = ax.node_label(_n("x", "button", "B", props={"disabled": True, "checked": "true"}))
+        _, _, s, _cut = ax.node_label(_n("x", "button", "B", props={"disabled": True, "checked": "true"}))
         self.assertEqual(s, " (disabled=True, checked=true)")
 
     def test_name_is_single_line_and_truncated(self):
-        role, name, _ = ax.node_label(_n("x", "StaticText", "a\nb" + "x" * 100))
+        # v2.1: a name longer than MAX_NAME is cut AND the cut is flagged
+        # (never silent). Fixture must exceed MAX_NAME (200 since v2.1).
+        role, name, _, cut = ax.node_label(_n("x", "StaticText", "a\nb" + "x" * 300))
         self.assertNotIn("\n", name)
         self.assertEqual(len(name), ax.MAX_NAME)
+        self.assertTrue(cut)
+
+    def test_short_name_is_never_flagged_truncated(self):
+        role, name, _, cut = ax.node_label(_n("x", "StaticText", "一句完整的话"))
+        self.assertEqual(name, "一句完整的话")
+        self.assertFalse(cut)
+
+    def test_serialize_declares_text_truncated_count(self):
+        nodes = [
+            _n("1", "RootWebArea", "P"),
+            _n("2", "StaticText", "短文本", parent="1"),
+            _n("3", "StaticText", "长" * 250, parent="1"),
+        ]
+        ser = ax.serialize(nodes)
+        self.assertEqual(ser["text_truncated_count"], 1)
+        flagged = [m for m in ser["nodes"] if m.get("text_truncated")]
+        self.assertEqual(len(flagged), 1)
+        self.assertEqual(flagged[0]["idx"], 3)
+        # short page: nothing truncated anywhere
+        ser0 = ax.serialize([_n("1", "RootWebArea", "P"), _n("2", "link", "ok", parent="1")])
+        self.assertEqual(ser0["text_truncated_count"], 0)
+        self.assertEqual(ser0["format"], "a11y-v2.1")
 
 
 class TestSerialization(unittest.TestCase):
@@ -362,7 +386,13 @@ if __name__ == "__main__":
 
 
 class TestFixtureFidelity(unittest.TestCase):
-    """Reproduce the A/B experiment's v2 snapshot from the saved raw AX payload.
+    """Reproduce the v2.1 golden snapshot from the saved raw AX payload.
+
+    The reference (experiments/a11y_ab/github_snapshot_v2_1.txt) was generated
+    once from the same raw payload under the v2.1 contract (MAX_NAME=200, cut
+    declared) and committed; any accidental serializer change breaks the
+    byte-identical comparison. The v2 snapshot (60-char silent cut) is kept in
+    the repo as history — it is what S4 subject-1 caught.
 
     The experiment artifacts live under experiments/ (not shipped in the Grove
     bundle), so this skips when they are absent.
@@ -370,7 +400,7 @@ class TestFixtureFidelity(unittest.TestCase):
 
     ROOT = os.path.join(os.path.dirname(__file__), "..")
     RAW = os.path.join(ROOT, "experiments", "a11y_ab", "github_ax.json")
-    V2 = os.path.join(ROOT, "experiments", "a11y_ab", "github_snapshot_v2.txt")
+    V2 = os.path.join(ROOT, "experiments", "a11y_ab", "github_snapshot_v2_1.txt")
 
     @staticmethod
     def _normalize(lines):
@@ -420,7 +450,7 @@ class TestStaticTextCuration(unittest.TestCase):
         self.assertEqual(len(ax.serialize(nodes)["lines"]), 1)
 
     def test_surrounding_whitespace_of_real_names_is_preserved(self):
-        role, name, _ = ax.node_label(_n("x", "StaticText", " Star "))
+        role, name, _, _cut = ax.node_label(_n("x", "StaticText", " Star "))
         self.assertEqual(name, " Star ")
 
     def test_duplicate_detection_ignores_whitespace_differences(self):

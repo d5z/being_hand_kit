@@ -21,7 +21,11 @@ on for computer use (PRD S1). Therefore:
     state and resolvable later by click/type (`resolve_handle`).
   * Truncation is explicit: beyond `max_lines` the tree is cut, `truncated` is
     True and `nodes_omitted` counts the dropped lines; no `[idx]` is emitted
-    without a matching handle entry.
+    without a matching handle entry. Per-node accessible names longer than
+    `MAX_NAME` are cut mid-name and declared: the receipt carries
+    `text_truncated_count` and each affected node's meta has
+    `text_truncated: True` (v2.1; in v2 the cut was silent — S4 subject-1
+    caught it reading a half Chinese sentence with truncated=False).
 
 COORDINATE CONTRACT
 -------------------
@@ -48,7 +52,7 @@ from hand.perception.cdp_core import (
     _init_domains, _header, _write_last, _get_dpr, _build_coord,
 )
 
-AX_FORMAT_VERSION = "a11y-v2"
+AX_FORMAT_VERSION = "a11y-v2.1"
 
 # Roles that can be acted on — these are the nodes that get coordinates.
 INTERACTIVE_ROLES = frozenset({
@@ -65,7 +69,10 @@ LAYOUT_ROLES = frozenset({"InlineTextBox", "ListMarker"})
 STATE_PROPS = ("disabled", "checked", "expanded", "selected", "pressed",
                "hasPopup", "required", "invalid", "level", "value")
 
-MAX_NAME = 60          # chars of accessible name kept per line
+MAX_NAME = 200         # chars of accessible name kept per line; longer names
+# are cut mid-name AND declared (text_truncated_count / per-node
+# text_truncated). v2 had 60 + silent cut — S4 subject-1 read half a sentence
+# without knowing. 200 covers real paragraph lines while bounding tokens.
 # 600 lines keeps the heaviest page of the A/B experiment intact
 # (github.com/d5z/being_hand_kit v2 snapshot = 478 lines / 17.7 KB) while still
 # bounding pathological SPA trees.
@@ -142,18 +149,23 @@ def node_states(node, role=None):
 
 
 def sanitize_name(name, limit=MAX_NAME):
-    """AX name → single line, truncated. Surrounding whitespace is PRESERVED
-    (the A/B experiment's snapshots kept it: `StaticText " Star "`), because the
-    serialization is a data contract and the tested format is the reference."""
-    return (name or "").replace("\n", " ")[:limit]
+    """AX name → (single line, was_truncated). Surrounding whitespace is
+    PRESERVED (the A/B experiment's snapshots kept it: `StaticText " Star "`)
+    because the serialization is a data contract and the tested format is the
+    reference. A mid-name cut is returned as a flag so the receipt can declare
+    it (v2.1: never silent)."""
+    line = (name or "").replace("\n", " ")
+    return line[:limit], len(line) > limit
 
 
 def node_label(node):
-    """(role, sanitized name, state suffix) — the line's semantic content."""
+    """(role, sanitized name, state suffix, name was truncated) — the line's
+    semantic content plus its truncation verdict."""
     role = _role(node)
     states = node_states(node, role)
     state_s = f" ({', '.join(states)})" if states else ""
-    return role, sanitize_name(_name(node)), state_s
+    name, name_cut = sanitize_name(_name(node))
+    return role, name, state_s, name_cut
 
 
 # ── Serialization ────────────────────────────────────────────────────
@@ -172,7 +184,7 @@ def _traverse(kept):
     stack = [(r, 0, "") for r in reversed(roots)]
     while stack:
         node, depth, parent_name = stack.pop()
-        role, name, state_s = node_label(node)
+        role, name, state_s, name_cut = node_label(node)
         kids = children.get(node["nodeId"], [])
         # Collapse: nameless, stateless, non-interactive single-child chains do
         # not occupy a line — their child is lifted into this depth.
@@ -202,6 +214,7 @@ def _traverse(kept):
             "backend_node_id": bid,
             "interactive": role in INTERACTIVE_ROLES,
             "has_popup": bool(prop_value(node, "hasPopup")),
+            "text_truncated": name_cut,
         })
         for c in reversed(kids):
             stack.append((c, depth + 1, name))
@@ -228,6 +241,7 @@ def serialize(nodes, max_lines=DEFAULT_MAX_LINES):
         "nodes": meta,
         "truncated": truncated,
         "nodes_omitted": omitted,
+        "text_truncated_count": sum(1 for m in meta if m.get("text_truncated")),
         "raw_node_count": len(raw),
         "kept_count": len(kept),
         "max_lines": max_lines,
@@ -456,6 +470,7 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "serialized_bytes": text_bytes,
             "truncated": ser["truncated"],
             "nodes_omitted": ser["nodes_omitted"],
+            "text_truncated_count": ser["text_truncated_count"],
             "max_lines": ser["max_lines"],
             "sha256": ser["sha256"],
             "ax_version": ax_version,

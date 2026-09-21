@@ -616,7 +616,7 @@ class TestVersionAndDocs(unittest.TestCase):
 
 def _ax_snapshot(**over):
     snap = {
-        "method": "cdp_a11y", "format": "a11y-v2", "page_index": 0,
+        "method": "cdp_a11y", "format": "a11y-v2.1", "page_index": 0,
         "header": "#p0 r:1 Example | https://example.com/",
         "url": "https://example.com/", "page_title": "Example",
         "tree": '- RootWebArea "Example"\n  - link "Sign in" [2]',

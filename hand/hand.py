@@ -83,7 +83,8 @@ FIELD_ORDER = (
     # open
     "place",
     # see
-    "tree", "handles", "coords", "truncated", "nodes_omitted", "node_count",
+    "tree", "handles", "coords", "truncated", "nodes_omitted", "text_truncated_count",
+    "node_count",
     "line_count", "serialized_bytes", "sha256", "format", "ax_version", "header",
     "page_index", "coord",
     # do / shot / close

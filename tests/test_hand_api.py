@@ -27,7 +27,7 @@ from hand import hand as face
 
 def _a11y_receipt(**over):
     r = {
-        "method": "cdp_a11y", "format": "a11y-v2", "page_index": 0,
+        "method": "cdp_a11y", "format": "a11y-v2.1", "page_index": 0,
         "header": "#p0 r:1 Beings | https://beings.town/",
         "url": "https://beings.town/", "page_title": "Beings Town",
         "tree": '- RootWebArea "Beings Town" [1]\n  - link "Sign in" [2]',

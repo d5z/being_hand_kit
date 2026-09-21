@@ -145,6 +145,7 @@ def _with_receipt(result: dict) -> dict:
         ev["serialized_bytes"] = result.get("serialized_bytes")
         ev["truncated"] = result.get("truncated")
         ev["nodes_omitted"] = result.get("nodes_omitted")
+        ev["text_truncated_count"] = result.get("text_truncated_count")
         ev["format"] = result.get("format")
         ev["ax_version"] = result.get("ax_version")
         ev["sha256"] = result.get("sha256")

@@ -39,7 +39,7 @@ def _snapshot(method="cdp_a11y", **over):
                       "backend_node_id": 105, "interactive": True}],
            "handles": {"2": {"role": "link", "name": "Sign in", "backend_node_id": 105}},
            "coords": {"2": {"x": 10, "y": 20}}, "hint": None,
-           "root_role": "RootWebArea", "format": "a11y-v2",
+           "root_role": "RootWebArea", "format": "a11y-v2.1",
            "node_count": 2, "raw_node_count": 15, "curated_node_count": 13,
            "line_count": 2, "serialized_bytes": 45, "max_lines": 600,
            "truncated": False, "nodes_omitted": 0, "sha256": "abc",

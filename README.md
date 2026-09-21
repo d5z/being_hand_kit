@@ -37,8 +37,17 @@ browser**. `hand.help()` prints the action table; `hand.history()` shows the las
 50 calls; `hand.reset()` starts over.
 
 **A click is asynchronous.** `do()` does not guess world state: on an action
-receipt `url`/`title` are `None` on purpose. Either call `see()` again to confirm
-the URL, or pass `expect=` (below). Nothing waits silently in the background.
+receipt `url`/`title` are `None` on purpose, and a navigation that follows the click
+is still in flight when `do()` returns. Calling `see()` again right away is **racy**
+— it can read the old page before the navigation commits (measured: the URL lags by
+~0.4s). The reliable way to confirm is `expect=`, which waits for the world on
+purpose:
+
+```python
+hand.do("click [68]", expect="url:/grove")   # preferred: bounded wait for the new world
+```
+
+Nothing waits silently in the background.
 
 ## The action grammar (one page)
 
@@ -57,6 +66,21 @@ the URL, or pass `expect=` (below). Nothing waits silently in the background.
 
 `[idx]` handles come from `see()`, are stable for a page state, and are printed in
 the tree itself, so the loop is: **see → pick a line → do the `[idx]` you saw**.
+
+**Handle lifetime.** Handles survive a `kind` change — the a11y snapshot is the only
+kind that writes the handle map, so a later `see(kind="dom")` does not invalidate
+them:
+
+```python
+hand.see()["handles"]["80"]        # from the a11y tree
+hand.see(kind="dom")               # …switch channel…
+hand.do("click [80]")              # still resolves — same page, handles alive
+```
+
+Handles do **not** survive a page navigation. Clicking one from the previous page
+teaches you so: `handle [7] element is gone (backendNodeId … does not resolve) —
+call cdp_see again`. Rule: **one page, one handle set** — re-see after you navigate;
+re-seeing after merely switching channels is optional.
 
 ## `see()` — what you get back
 
@@ -77,14 +101,60 @@ page = hand.see()          # kind defaults to "a11y"
 | `hint` | something you should know — e.g. a collapsed `⋯` menu whose contents are not in the tree (click it, then see again) |
 | `verified`, `evidence` | the evidence verdict: node count, AX source version, sha256 |
 
-Other channels are explicit: `hand.see(kind="dom")` (visible text),
-`hand.see(kind="interactive")` (legacy element map with coordinates),
-`hand.see(kind="network")`, `hand.see(kind="vlm")`.
+That table is the **a11y** shape. Each kind answers a different shape, so read the
+fields the kind actually returns instead of assuming `tree`:
+
+| `kind=` | what it is | fields to read |
+|---------|------------|----------------|
+| `a11y` (default) | the accessibility tree | `tree`, `handles`, `line_count`, `serialized_bytes`, `truncated`, `nodes_omitted` |
+| `dom` | whole-page visible text | `text`, `chars`, `total_chars` (+ `page_title`, `page_index`, `coord`) |
+| `interactive` | legacy element map with coordinates | `elems` (each `{tag, text, selector, x, y, w, h, visible, occluded}`), `count`, `total`, `truncated` |
+| `network` | a live request tap (below) | `requests`, `total_requests`, `duration` |
+| `vlm` | a vision description | `text`, `model`, `source` — no tree |
+
+```python
+hand.see(kind="dom")["text"]            # this shape has no "tree" key
+hand.see(kind="network")["requests"]    # …this one neither
+```
+
+**`dom` gives original text, capped at 8000 characters.** Truncation is declared
+(`truncated: true`, and `total_chars` reports the real length), but the 8000 cap is
+fixed — neither face can raise it. A big JSON API page shows only its first ~12
+entries.
+
+**`network` is a live tap, not a history.** It listens for 3s (`duration`) and
+reports only the requests that fire *inside that window*; called after the page has
+finished loading it returns `requests: 0`. It does not return response bodies —
+"fetch me that `/api/grove` JSON" is not its job.
+
+**`see()` takes no subtree or selector argument** (the signature is `see(kind=None)`)
+— there is no "just the footer". Fetch the whole page and slice it by line:
+
+```python
+lines = hand.see(kind="dom")["text"].splitlines()
+footer = [l for l in lines if "built with" in l][-1]
+```
 
 The receipt is a contract: every call answers the same skeleton in a **fixed field
 order**, so `json.dumps(page)` is byte-identical for the same page state (no
-timestamps, no set iteration). This is the boundary of a future native protocol —
-field names are not renamed casually.
+timestamps, no set iteration). This holds on the **a11y channel**, which is the
+boundary of a future native protocol — field names are not renamed casually.
+
+### Locate with `a11y`, read with `dom`
+
+The a11y tree is for **finding and clicking** — roles, `[idx]` handles, structure.
+It is a lossy view for reading: node names longer than 200 chars are cut and the
+cut is declared (`text_truncated_count` in the receipt), but curation and collapse
+still make it a summary, not the source. When you need the *actual* text of a
+paragraph, read the same page with `dom`:
+
+```python
+hand.see()["tree"]                        # locate: find the node, take its [idx]
+hand.do("click [65]")                     # act on the handle
+text = hand.see(kind="dom")["text"]       # read: full, un-truncated original text
+```
+
+Two channels, two jobs: a11y to act, dom to read. Don't trust the tree for prose.
 
 ## `do(action, expect=…)` — world-state verification (0.8)
 
