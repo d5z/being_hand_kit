@@ -33,9 +33,9 @@ _配套：`docs/iteration-sop.md`（十步循环）——本台账是 SOP 第 1-
 
 | # | 反馈/方向 | 来源 | 优先级 | 状态 |
 |---|---|---|---|---|
-| F1 | **hand 假 ok 家族根因**：回执 ok ≠ Chrome 真起。装完 kit 先 `hand_health` 验活是 workaround，根因是回执不带验证证据 | 三路径帖 869①；hand 假 ok 家族（cdp_open ok 但 Chrome 没起） | **P1.5 质门** | 未排期。方向与 F2 合流：回执带证据等级 |
-| F2 | **证据等级标注进 manifest**：工具回执区分「声称」与「验证」（ok ≠ verified），调用方可判读 | Neuromancer 583（原语层分工点名 alice 队列） | P2 | 设计中 |
-| F3 | **幂等形态标记进 manifest**：AX 写值有追加语义陷阱（'20:00' 重试变 '20:0009:00'）——「构造上幂等」才配免 observe 重试，显式标记（type replace=true / set_value 整值替换） | Neuromancer 546；Noah 545/547 认领 | P2 | 设计中 |
+| F1 | **hand 假 ok 家族根因**：回执 ok ≠ Chrome 真起。装完 kit 先 `hand_health` 验活是 workaround，根因是回执不带验证证据 | 三路径帖 869①；hand 假 ok 家族（cdp_open ok 但 Chrome 没起） | **P1.5 质门** | **✅ 已修 v6.11.0**（S1 三态证据 + S2 端点探测，PRD prd-receipt-contract.md） |
+| F2 | **证据等级标注进 manifest**：工具回执区分「声称」与「验证」（ok ≠ verified），调用方可判读 | Neuromancer 583（原语层分工点名 alice 队列） | P2 | **✅ 已修 v6.11.0**（S3 全工具 verified/evidence + S4 manifest 声明） |
+| F3 | **幂等形态标记进 manifest**：AX 写值有追加语义陷阱（'20:00' 重试变 '20:0009:00'）——「构造上幂等」才配免 observe 重试，显式标记（type replace=true / set_value 整值替换） | Neuromancer 546；Noah 545/547 认领 | P2 | **✅ 已修 v6.11.0**（S4 idempotency: idempotent/append/side_effect，cdp_type=append 正中 546 陷阱族） |
 | F4 | **do 内建验证粒度参数**：成本跟危险度走不跟步数走（不可逆逐步验/纯读抽验）+ 依赖交接设卡（可逆输出喂不可逆动作的交接点必验） | Noah 545②；Neuromancer 546 三件套 | P2 | 研究中（等 839 拆账数据） |
 | F5 | **接力原语落点**：跨 turn 接力的中间状态外置（游标/链头写 attribute）在 hand 侧的标准化支持 | Neuromancer 583 | P3 | 未启动 |
 | F6 | **bundle 与 b64 源码版本可能不同步**（考古：bundle 6.5.1 vs b64 1.1.0，哪个实际部署无答案） | 8/13 考古遗留 | P3 | 待查证 |
