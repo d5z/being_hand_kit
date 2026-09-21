@@ -97,13 +97,31 @@ def _find_chrome() -> str | None:
     return None
 
 
+# ── Endpoint probe (v6.11.0 receipt contract) ───────────────────────
+# Spawn success ≠ endpoint alive: a chrome that dies on a missing .so leaves
+# Popen() returning happily. Every "is it up?" question goes through
+# endpoint_info() and is answered by /json/version, never by Popen's exit code.
+CDP_PROBE_INTERVAL = 0.5   # seconds between /json/version probes
+CDP_PROBE_TIMEOUT = 6.0    # seconds of patience after spawn
+
+
+def endpoint_info(timeout: float = 2):
+    """GET /json/version → dict (browser version, protocol) or None.
+
+    Contract: never raises. None means "endpoint not answering" — callers must
+    treat that as evidence level "endpoint_alive"-or-worse, not as success.
+    """
+    try:
+        with urllib.request.urlopen(f"{CDP_HOST}/json/version", timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def chrome_running() -> bool:
     """Is a CDP endpoint already answering on 9222?"""
-    try:
-        urllib.request.urlopen(f"{CDP_HOST}/json/version", timeout=2)
-        return True
-    except Exception:
-        return False
+    return endpoint_info() is not None
 
 
 def _chrome_flags() -> list:
@@ -123,8 +141,11 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
     """
     Guarantee a CDP endpoint on localhost:9222.
 
-    Returns the Popen handle if we launched it, None if it was already
-    running. Raises RuntimeError if no browser binary can be found.
+    Returns the Popen handle if we launched it (with `.cdp_endpoint` holding the
+    probed /json/version payload), None if it was already running. Raises
+    RuntimeError if no browser binary can be found, or if the spawned browser
+    never became reachable — a spawned-but-dead Chrome is *not* silently
+    reported as a live endpoint (PRD F-2 / S2).
     """
     if chrome_running():
         return None
@@ -150,19 +171,34 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
         env=env,
     )
 
-    # Wait for the endpoint to come up (bounded).
-    deadline = time.time() + 10
+    # Probe /json/version until it answers (bounded) — the spawn itself proves
+    # nothing, so we only return once the endpoint has actually spoken.
+    deadline = time.time() + CDP_PROBE_TIMEOUT
     while time.time() < deadline:
-        if chrome_running():
+        info = endpoint_info()
+        if info:
+            proc.cdp_endpoint = {
+                "url": CDP_HOST,
+                "browser": info.get("Browser") or info.get("browser"),
+                "protocol": info.get("Protocol-Version"),
+            }
             return proc
-        time.sleep(0.25)
+        time.sleep(CDP_PROBE_INTERVAL)
 
     # It didn't come up — don't leave a zombie behind.
+    kill_error = None
     try:
         proc.kill()
-    except Exception:
-        pass
-    raise RuntimeError("chrome did not become reachable on 9222 within 10s")
+    except Exception as e:
+        kill_error = f"{type(e).__name__}: {e}"
+
+    msg = (
+        f"Chrome spawned but CDP endpoint never became reachable at {CDP_HOST} "
+        f"within {CDP_PROBE_TIMEOUT}s (probe interval {CDP_PROBE_INTERVAL}s)"
+    )
+    if kill_error:
+        msg += f"; additionally kill() failed: {kill_error}"
+    raise RuntimeError(msg)
 
 
 def open_new_tab(url: str) -> dict:

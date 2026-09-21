@@ -86,8 +86,9 @@ def _browser_place(target: str, navigate_confirmed: bool, nav_error=None) -> Pla
     try:
         from hand.perception.cdp_launcher import endpoint_info
         info = endpoint_info()
-        if info and info.get("browser"):
-            evidence["browser"] = info["browser"]
+        version = (info or {}).get("Browser") or (info or {}).get("browser")
+        if version:
+            evidence["browser"] = version
     except Exception as e:
         # Optional enrichment only — record why it is missing, never swallow silently.
         evidence["browser_probe_error"] = f"{type(e).__name__}: {e}"

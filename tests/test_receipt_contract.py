@@ -120,5 +120,117 @@ class TestRouteOpenEvidence(unittest.TestCase):
         self.assertEqual(r["evidence"]["level"], "activate_issued")
 
 
+class _FakeClock:
+    """Deterministic clock: every time() call advances by `step`."""
+
+    def __init__(self, start=1000.0, step=0.5):
+        self.t = start
+        self.step = step
+
+    def time(self):
+        self.t += self.step
+        return self.t
+
+
+class TestEnsureChromeEndpointProbe(unittest.TestCase):
+    """S2: spawn success alone must not be reported as a live endpoint."""
+
+    def test_probe_constants_match_prd(self):
+        self.assertEqual(cdp_launcher.CDP_PROBE_INTERVAL, 0.5)
+        self.assertEqual(cdp_launcher.CDP_PROBE_TIMEOUT, 6.0)
+
+    def test_returns_proc_only_after_endpoint_answers(self):
+        sleeps = []
+        clock = _FakeClock()
+        probes = [None, None, {"browser": "HeadlessChrome/140.0"}]
+
+        with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=False), \
+             mock.patch("hand.perception.cdp_launcher._find_chrome", return_value="/usr/bin/chrome"), \
+             mock.patch("hand.perception.cdp_launcher.subprocess.Popen") as m_popen, \
+             mock.patch("hand.perception.cdp_launcher.endpoint_info", side_effect=lambda timeout=2: probes.pop(0) if probes else {"browser": "x"}), \
+             mock.patch("hand.perception.cdp_launcher.time.time", side_effect=clock.time), \
+             mock.patch("hand.perception.cdp_launcher.time.sleep", side_effect=sleeps.append):
+            proc = cdp_launcher.ensure_chrome()
+
+        self.assertIs(proc, m_popen.return_value)
+        self.assertEqual(sleeps, [0.5, 0.5])  # 0.5s interval, no busy loop
+        # the returned handle records the verified endpoint
+        self.assertEqual(proc.cdp_endpoint["browser"], "HeadlessChrome/140.0")
+
+    def test_timeout_raises_and_kills(self):
+        clock = _FakeClock()
+        with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=False), \
+             mock.patch("hand.perception.cdp_launcher._find_chrome", return_value="/usr/bin/chrome"), \
+             mock.patch("hand.perception.cdp_launcher.subprocess.Popen") as m_popen, \
+             mock.patch("hand.perception.cdp_launcher.endpoint_info", return_value=None), \
+             mock.patch("hand.perception.cdp_launcher.time.time", side_effect=clock.time), \
+             mock.patch("hand.perception.cdp_launcher.time.sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                cdp_launcher.ensure_chrome()
+
+        msg = str(ctx.exception)
+        self.assertIn("Chrome spawned but CDP endpoint never became reachable", msg)
+        self.assertIn("6.0", msg)
+        m_popen.return_value.kill.assert_called_once()
+
+    def test_already_running_is_a_noop(self):
+        with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=True), \
+             mock.patch("hand.perception.cdp_launcher.subprocess.Popen") as m_popen:
+            self.assertIsNone(cdp_launcher.ensure_chrome())
+        m_popen.assert_not_called()
+
+    def test_no_binary_raises_before_spawn(self):
+        with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=False), \
+             mock.patch("hand.perception.cdp_launcher._find_chrome", return_value=None), \
+             mock.patch("hand.perception.cdp_launcher.subprocess.Popen") as m_popen:
+            with self.assertRaises(RuntimeError) as ctx:
+                cdp_launcher.ensure_chrome()
+        self.assertIn("$CHROME", str(ctx.exception))
+        m_popen.assert_not_called()
+
+    def test_endpoint_info_parses_version(self):
+        body = json.dumps({"Browser": "HeadlessChrome/140.0", "Protocol-Version": "1.3"}).encode()
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return body
+
+        with mock.patch("hand.perception.cdp_launcher.urllib.request.urlopen", return_value=_Resp()):
+            info = cdp_launcher.endpoint_info()
+        self.assertEqual(info["Browser"], "HeadlessChrome/140.0")
+        self.assertTrue(cdp_launcher.chrome_running())
+
+    def test_endpoint_info_returns_none_when_dead(self):
+        with mock.patch("hand.perception.cdp_launcher.urllib.request.urlopen",
+                        side_effect=OSError("connection refused")):
+            self.assertIsNone(cdp_launcher.endpoint_info())
+            self.assertFalse(cdp_launcher.chrome_running())
+
+    def test_receipt_carries_browser_version(self):
+        """S1+S2 join: endpoint version lands in the open receipt's evidence."""
+        def fake_list_pages():
+            return [_fake_page()]
+
+        with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=True), \
+             mock.patch("hand.perception.cdp_launcher.endpoint_info",
+                        return_value={"Browser": "HeadlessChrome/140.0"}), \
+             mock.patch("hand.perception.cdp_core.list_pages", side_effect=fake_list_pages), \
+             mock.patch("hand.perception.cdp_core.resolve_page", return_value=(0, _fake_page())), \
+             mock.patch("hand.perception.cdp_core.cdp_connect", return_value=_FakeWS()), \
+             mock.patch("hand.perception.cdp_core._init_domains"), \
+             mock.patch("hand.perception.cdp_core.cdp_call", return_value={}), \
+             mock.patch("hand.place.detect.time.sleep"):
+            reset_session()
+            r = router.route_open("https://example.com")
+        self.assertEqual(r["evidence"]["level"], "navigate_confirmed")
+        self.assertEqual(r["evidence"]["browser"], "HeadlessChrome/140.0")
+
+
 if __name__ == "__main__":
     unittest.main()
