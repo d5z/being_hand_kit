@@ -2,11 +2,15 @@
 
 Agent: sub_b9008fbf-23ea-474d-92b4-a46a954be51e (session hand-08-s4)
 Working dir: /home/alice/Hand · tool: `from hand import hand` (installed version `hand 0.8.0-dev`)
-Method: read `/home/alice/Hand/README.md` first, then only `hand.open / hand.see / hand.do`.
+Method: read `/home/alice/Hand/README.md` first, then only the `hand` package (`hand.open / hand.see /
+hand.do`, plus its own introspection: `help / history / handles / get_session`) — and, for the environment
+investigation in F13, read-only OS commands (`ps`, `ss`, `ls`, `grep`, a `sleep` poll) and `grep` over the
+`hand/` source. No HTTP client library was ever used, in Python or on the shell.
 No requests/urllib/other HTTP library was used. All "answers" below are copied out of tool receipts
 (a11y tree, dom text, or `expect.evidence`), never guessed.
-The report was revised after a 5-call verification pass (calls 17-21, see "Post-report verification pass"
-at the end) that tested two README claims more strictly and produced findings F10-F12.
+The report was revised after two verification passes (calls 17-21 and 22-24, see "Post-report verification
+pass" at the end) that tested README claims more strictly and produced findings F10-F16 — including F13,
+which is about the machine rather than the page.
 
 ---
 
@@ -202,20 +206,83 @@ F12. **`expect` evidence can be internally inconsistent during the wait: the URL
     interchangeable expect forms; in practice a `title:` expectation can miss a navigation that `url:`
     already sees, so `url:` is the safer ruler. That ordering asymmetry is not in the README.
 
-## Post-report verification pass (calls 17-21)
+## Post-report verification pass (calls 17-24) and how F13 was found
 
-After writing the first version of this report I re-read the two README claims I had asserted too
-casually and ran 5 more `hand` calls to test them in isolation (`do("scroll top")`, `see()`,
-`do("scroll bottom")`, `do("click [80]", expect="url:/grove")`, `see()`). They produced F10-F12 and
-corrected F1 above. Raw receipts for those five calls and the field-level diff are in
-`S4-subject-2-evidence.md`. Final state: `see()` reports `https://beings.town/grove` /
-`Kit Grove · Beings Town` / h1 `🌳 Kit Grove`, i.e. the off-screen click really did navigate.
+**Pass 1 (calls 17-21).** After writing the first version of this report I re-read two README claims I had
+asserted too casually and tested them in isolation (`do("scroll top")`, `see()`, `do("scroll bottom")`,
+`do("click [80]", expect="url:/grove")`, `see()`). They produced F10-F12 and corrected F1 above. Raw
+receipts for those five calls and the field-level diff are in `S4-subject-2-evidence.md`. At that point
+`see()` correctly reported `https://beings.town/grove` / `Kit Grove · Beings Town` / h1 `🌳 Kit Grove`.
+
+**Pass 2 (calls 22-24) — the accident that produced F13/F14/F15.** To close out F3 I probed the three
+channels the README and `hand.help()` disagree about (`see(kind="screenshot")`, `see(kind="vlm")`,
+`see(kind="interactive")`). All three returned a **local fixture page I had never opened**
+(`http://127.0.0.1:33673/basic`, "Fixture Basic"), not the Grove page my previous call had left. No
+navigation happened on my side, so I investigated with read-only OS tools (never with an HTTP library):
+`ps -ef`, `ss -ltnp`, `ls -l /tmp/hand_*`, `grep` over `hand/`, and a 25-second passive poll of
+`/tmp/hand_ax_handles.json`. That is how F13 (global endpoint + global handle-map file + a concurrent
+writer), F14 and F15 were established. No state was written by me during this investigation; the only
+files I wrote are this report and its evidence appendix.
+
+F13. **The browser endpoint and the `[idx]` handle map are machine-global, so a second hand user on the
+    same box silently takes over your page and your handles — observed live, mid-session.** From the source:
+    `hand/perception/cdp_core.py:8` `CDP_HOST = 'http://localhost:9222'`; `hand/perception/cdp_launcher.py:34`
+    `CDP_PORT = 9222` with `:144` *"Is a CDP endpoint already answering on 9222?"* (it reuses **any**
+    endpoint on that port, not only one it spawned) and `:164` `PROFILE_DIR_NAME = ".chrome-profile"`;
+    `hand/perception/ax_tree.py:83` `HANDLE_MAP_FILE = "/tmp/hand_ax_handles.json"` — and the decisive one,
+    `resolve_handle()` (ax_tree.py:363-379) loads the handle map **from that file at action time**, not from
+    session memory.
+    What I saw: my own `see()` calls 22-24 (no navigation on my part) returned a page I never opened —
+    `url: "http://127.0.0.1:33673/basic"`, `title: "Fixture Basic"`, i.e. someone else's L2 test fixture (the
+    VLM description below literally calls it "用于手L2集成的确定性页面"); at the same moment `hand.handles()`
+    described a *different* fixture ("Fixture Big", `backend_node_id 3631…`). `ps` shows exactly **one** Chrome
+    on `127.0.0.1:9222`, `--user-data-dir=/home/alice/Hand/kit/.chrome-profile`, and its PID turns over every
+    1-2 minutes (1016206 @23:04 → 1016935 @23:05 → 1017834 @23:07:27, with defunct chrome-headless-shell
+    processes from 22:15 and 22:43). Passive proof of a concurrent writer: while **I made no hand calls at
+    all**, `/tmp/hand_ax_handles.json` was rewritten 23:06:35 (723 B) → 23:06:54 (706 B).
+    Why a being must know this: (a) your page can be navigated out from under you mid-task — my five answers
+    still stand because every receipt was internally consistent (each `see()` matched its own navigation:
+    url + title + matching content), but a longer task can silently read a stranger's page; (b) because the
+    handle map is one global file read at click time, after another session's `see()` your `[idx]` handles
+    resolve against **their** snapshot, so a stale `[N]` can hit a different element instead of raising the
+    documented "handle [N] not in the last AX snapshot" error — the README's handle-lifetime rule assumes a
+    single snapshot writer; (c) receipts deliberately carry **no timestamps** (that is how they stay
+    byte-deterministic), so you cannot prove when your snapshot was taken or that it was still yours.
+    The README's Persistence section promises "your variables, your `[idx]` handles and the Chrome process
+    all survive between executions" and warns only about page navigation — nothing about other hand sessions
+    on the same machine. Suggested fix for the kit: make port / profile / handle-map path configurable and
+    per-session (e.g. env vars, and a map file inside the profile dir), and say so in the README.
+
+F14. **`see(kind="screenshot")` is advertised by `hand.help()` but returns an a11y snapshot, not an image.**
+    Receipt: `ok: true`, `method: "cdp_a11y"`, a11y-shaped keys plus `header: "#p0 r:3E8EA2F4 Fixture Basic |
+    http://127.0.0.1:33673/basic"`, `handle_map`, `max_lines: 600`, `coords_resolved: 2`,
+    `curated_node_count: 9`, `nodes`, and `coord {space: physical, dpr 1, viewport 800x600, image 800x600,
+    scale 1.0}` — but **no image bytes, no file path, no ImageContent**: no receipt key contains
+    img/shot/b64/path. A being that asks for a screenshot gets text. The README's kind table omits
+    `screenshot` entirely; `hand.shot()` is the callable that presumably does produce one, and the README's
+    Python-face section never mentions it.
+
+F15. **`see(kind="vlm")` works on Linux here, so "Vision is macOS-only" is easy to over-read.**
+    Receipt: `ok: true`, `method: "vision_llm"`, `model: "qwen/qwen3-vl-8b-instruct"`, `source: "cdp"`,
+    `text` = a 141-char Chinese description of the page ("截图显示一个极简网页，标题为"Fixture Basic"，副标题说明是
+    "用于手L2集成的确定性页面"…"). The README's platform matrix lists Vision (OCR/VLM) as darwin-only because it
+    "depends on `osascript` / `screencapture` / `swiftc`, which do not exist on Linux or Windows" — that row is
+    about the *desktop-app* backend, but the `see()` kind table offers `vlm` with no platform caveat, and on
+    this headless Linux box it answered through CDP plus a remote vision model.
+
+F16. **Small field drift in `kind="interactive"`.** The README documents `elems` entries as
+    `{tag, text, selector, x, y, w, h, visible, occluded}`; the live receipt adds `in_viewport`
+    (`{"tag": "A", "text": "Go to form", "selector": "#to-form", "x": 43.5546875, "y": 123.375,
+    "w": 71.109375, "h": 17, "in_viewport": true, "occluded": false, "visible": true}`), and that receipt's
+    `url`/`title` are `None` (as with `do()`), so the interactive channel cannot tell you which page it read.
 
 ## Assumptions
 - "Grove 里有多少个 kit" = the kits currently listed on the Grove page (`kind: kit`), excluding the
   single `kind: app` entry (portal-desktop). Answer 22; total entries 23.
 - Task 4's "footer" = the page's footer element (`sectionfooter`), whose whole content is that one line.
 - The report's "turns" = tool execution units inside the `hand` session.
+- I deliberately did **not** call `hand.close()`: the only Chrome on port 9222 is being used by another hand
+  session right now, so tearing it down would break a stranger's run (see F13). The browser is left as-is.
 
 ## Turns
 - **16 `hand` calls** to finish all 5 tasks (per `hand.history()` n:1..16: `open` ×4, `see` ×10, `do` ×2),
@@ -227,6 +294,10 @@ corrected F1 above. Raw receipts for those five calls and the field-level diff a
   were also called but are not counted as execution units by `hand.history()` itself.
 - **+5 `hand` calls from 3 cells** in the post-report verification pass (n:17..21: `do` ×3, `see` ×2) — the
   experiments behind F10-F12, not part of the 5 tasks.
-- Session total: **21 `hand` calls** from 15 IPython cells (`open` ×4, `see` ×12, `do` ×5).
-- `hand.history()` itself reports `n: 1..21` with `met: true` on exactly calls 4 and 20 (the two clicks) —
-  a cheap audit trail that matches my log exactly.
+- **+3 `hand` calls** in the second verification pass (n:22..24: `see(kind="screenshot"|"vlm"|"interactive")`)
+  — the probes that exposed F13-F15.
+- Session total: **24 `hand` calls** from 17 IPython cells (`open` ×4, `see` ×15, `do` ×5); the F13
+  investigation used read-only OS commands (`ps`, `ss`, `ls`, `grep`, a 25 s `sleep` poll), not `hand`.
+- `hand.history()` itself reports `n: 1..24` with `met: true` on exactly calls 4 and 20 (the two clicks) —
+  a cheap audit trail that matches my log exactly (`hand.help()`, `hand.history()`, `hand.handles()` and
+  `hand.get_session()` are not counted as execution units by history).
