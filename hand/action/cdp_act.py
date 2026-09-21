@@ -14,6 +14,81 @@ from hand.perception.cdp_core import (
     _get_dpr, _header, _write_last, LOAD_TIMEOUT
 )
 
+# ── Receipt evidence helpers (v6.11.0) ──────────────────────────────
+# Contract: every receipt carries {"verified": bool, "evidence": {...}}.
+# verified=True  → the claim is backed by an observed fact recorded in evidence.
+# verified=False → the receipt MUST carry a reason (no silent ok).
+
+def _element_evidence(info: dict) -> dict:
+    """Describe the element a click/type actually landed on."""
+    tag = (info.get('tag') or '').upper()
+    text = (info.get('text') or '').strip()
+    return {
+        'element': f'{tag} "{text}"' if text else (tag or 'unknown'),
+        'tag': tag,
+        'text': text[:80],
+    }
+
+
+def _receipt_fail(method: str, reason: str, **fields) -> dict:
+    """Unverified failure receipt — always names why."""
+    out = {
+        'method': method,
+        'error': reason,
+        'verified': False,
+        'evidence': {'verified': False, 'reason': reason},
+    }
+    out.update(fields)
+    return out
+
+
+def _selector_hit(ws, selector: str, msg_id: int = 2) -> dict:
+    """Does `selector` match an element right now? (document.querySelector)
+
+    Pre-flight check for blind clicks/types: a selector that matches nothing
+    must fail *here*, not silently after the fact.
+    """
+    expr = ('(function(){var el=document.querySelector(' + json.dumps(selector) + ');'
+            'if(!el)return JSON.stringify({found:false});'
+            'return JSON.stringify({found:true,tag:el.tagName,'
+            'text:(el.innerText||el.value||"").substring(0,80)});'
+            '})()')
+    raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+    value = raw.get('result', {}).get('value') or '{}'
+    try:
+        data = json.loads(value)
+    except Exception as e:
+        # Cannot read the verification result → treat as unverified, say so.
+        return {'found': False, 'parse_error': f'{type(e).__name__}: {e}'}
+    return data if isinstance(data, dict) else {'found': False, 'parse_error': 'non-dict verification payload'}
+
+
+def _active_element(ws, msg_id: int = 2) -> dict:
+    """Current focus target (document.activeElement) as {tag,id,type} or {}."""
+    expr = ('(function(){var el=document.activeElement;'
+            'if(!el)return JSON.stringify({});'
+            'return JSON.stringify({tag:el.tagName,id:el.id||"",'
+            'type:(el.getAttribute&&el.getAttribute("type"))||""});'
+            '})()')
+    raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+    value = raw.get('result', {}).get('value') or '{}'
+    try:
+        data = json.loads(value)
+    except Exception as e:
+        return {'parse_error': f'{type(e).__name__}: {e}'}
+    return data if isinstance(data, dict) else {}
+
+
+def _focus_label(focus: dict) -> str:
+    tag = (focus.get('tag') or '').upper()
+    bits = [tag] if tag else []
+    if focus.get('id'):
+        bits.append(f"#{focus['id']}")
+    if focus.get('type'):
+        bits.append(f"[type={focus['type']}]")
+    return ''.join(bits) or 'unknown'
+
+
 def _click_at(ws, x, y, dpr):
     """Dispatch a real mouse click (pressed + released) at viewport (x, y).
 
@@ -31,9 +106,17 @@ def cdp_click(selector, page_sel=None):
     ws = cdp_connect(page['webSocketDebuggerUrl'])
     try:
         _init_domains(ws, 'Runtime')
+        # Pre-flight: never click blind. A selector that matches nothing fails here.
+        hit = _selector_hit(ws, selector)
+        if not hit.get('found'):
+            reason = f'selector did not match any element: {selector!r}'
+            if hit.get('parse_error'):
+                reason += f" (verification failed: {hit['parse_error']})"
+            return _receipt_fail('cdp_click', reason, selector=selector)
         info = _element_info(ws, selector)
         if 'error' in info:
-            return {'method': 'cdp_click', 'error': info['error'], 'selector': selector}
+            return _receipt_fail('cdp_click',
+                                 f"element info failed: {info['error']}", selector=selector)
         if not info.get('visible'):
             _scroll_into_view(ws, selector)
             time.sleep(0.2)
@@ -51,7 +134,9 @@ def cdp_click(selector, page_sel=None):
             _js_submit(ws, selector, msg_id=20)
 
         _write_last(idx)
-        return {'method': 'cdp_click', 'selector': selector, 'page_index': idx, 'result': 'ok', 'tiers': '4-tier'}
+        return {'method': 'cdp_click', 'selector': selector, 'page_index': idx,
+                'result': 'ok', 'tiers': '4-tier',
+                'verified': True, 'evidence': _element_evidence(info)}
     finally:
         ws.close()
 
@@ -75,16 +160,26 @@ def cdp_type(selector, text, page_sel=None, fast=False):
             _write_last(idx)
             return {'method': 'cdp_type', 'page_index': idx, 'fast': True, 'text': text, **data}
         pass  # Input domain needs no enable
+        hit = _selector_hit(ws, selector)
+        if not hit.get('found'):
+            reason = f'selector did not match any element: {selector!r}'
+            if hit.get('parse_error'):
+                reason += f" (verification failed: {hit['parse_error']})"
+            return _receipt_fail('cdp_type', reason, selector=selector, text=text)
         info = _element_info(ws, selector)
         if 'error' in info:
-            return {'method': 'cdp_type', 'error': info['error'], 'selector': selector}
+            return _receipt_fail('cdp_type',
+                                 f"element info failed: {info['error']}",
+                                 selector=selector, text=text)
         x, y = info['x'], info['y']
         _click_at(ws, x, y, _get_dpr(ws))
         for char in text:
             cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
             time.sleep(0.001)
         _write_last(idx)
-        return {'method': 'cdp_type', 'page_index': idx, 'selector': selector, 'text': text, 'result': 'ok'}
+        return {'method': 'cdp_type', 'page_index': idx, 'selector': selector,
+                'text': text, 'result': 'ok',
+                'verified': True, 'evidence': _element_evidence(info)}
     finally:
         ws.close()
 
@@ -148,13 +243,19 @@ def cdp_click_do(action, app_name=None):
             value_str = raw.get('result', {}).get('value', '{}')
             info = json.loads(value_str)
             if 'error' in info:
-                return {'method': 'cdp_click', 'error': info['error'], 'action': action}
+                return _receipt_fail('cdp_click',
+                                     f"text element not found: {text_val!r}",
+                                     action=action, text_match=text_val)
 
             x, y = info['x'], info['y']
             dpr = _get_dpr(ws)
             _click_at(ws, x, y, dpr)
             _write_last(idx)
-            return {'method': 'cdp_click', 'text_match': text_val, 'tag': info.get('tag'), 'page_index': idx, 'result': 'ok'}
+            return {'method': 'cdp_click', 'text_match': text_val,
+                    'tag': info.get('tag'), 'page_index': idx, 'result': 'ok',
+                    'verified': True,
+                    'evidence': _element_evidence({'tag': info.get('tag'),
+                                                   'text': info.get('text')})}
         finally:
             ws.close()
     if action.startswith('xy:'):
@@ -162,7 +263,8 @@ def cdp_click_do(action, app_name=None):
             parts = action[3:].strip().split(',')
             x, y = int(round(float(parts[0].strip()))), int(round(float(parts[1].strip())))
         except (ValueError, IndexError):
-            return {'method': 'cdp_click', 'error': 'invalid xy format, expected "xy:X,Y"', 'action': action}
+            return _receipt_fail('cdp_click',
+                                 'invalid xy format, expected "xy:X,Y"', action=action)
         pages = list_pages()
         idx, page = resolve_page(None, pages)
         ws = cdp_connect(page['webSocketDebuggerUrl'])
@@ -171,7 +273,14 @@ def cdp_click_do(action, app_name=None):
             dpr = _get_dpr(ws)
             _click_at(ws, x, y, dpr)
             _write_last(idx)
-            return {'method': 'cdp_click', 'xy': [x, y], 'page_index': idx, 'result': 'ok'}
+            # Dispatch-only: a coordinate click cannot be verified against an
+            # element, so it never claims verified=True.
+            return {'method': 'cdp_click', 'xy': [x, y], 'page_index': idx,
+                    'result': 'ok', 'verified': False,
+                    'evidence': {'verified': False, 'space': 'physical',
+                                 'dispatched': [x, y], 'dpr': dpr,
+                                 'reason': 'coordinate click: dispatch-only, no element to verify '
+                                           '(use a selector for a verified receipt)'}}
         finally:
             ws.close()
     return cdp_click(sel)
@@ -184,7 +293,7 @@ def cdp_type_do(action, app_name=None):
     if '|' in action:
         sel, text = action.split('|', 1)
         return cdp_type(sel.strip(), text.strip())
-    return {'error': 'cdp_type needs selector|text format', 'action': action}
+    return _receipt_fail('cdp_type', 'cdp_type needs selector|text format', action=action)
 
 
 def cdp_type_focused(text, page_sel=None):
@@ -200,11 +309,29 @@ def cdp_type_focused(text, page_sel=None):
     idx, page = resolve_page(page_sel, pages)
     ws = cdp_connect(page['webSocketDebuggerUrl'])
     try:
+        # Pre-flight: Input.insertText goes to whatever has focus — if nothing
+        # does, the text vanishes. Verify the focus target first (PRD S3).
+        focus = _active_element(ws)
+        if focus.get('parse_error'):
+            return _receipt_fail('cdp_type',
+                                 f"focus verification failed: {focus['parse_error']}",
+                                 text=text)
+        tag = (focus.get('tag') or '').upper()
+        if tag in ('', 'BODY', 'HTML'):
+            return _receipt_fail(
+                'cdp_type',
+                f"no focused element (activeElement is {tag or 'missing'}) — "
+                "click the field first, or use cdp_type(selector, text)",
+                text=text)
         # Input domain needs no enable
         for char in text:
             cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
         _write_last(idx)
-        return {'method': 'cdp_type', 'page_index': idx, 'text': text, 'result': 'ok'}
+        return {'method': 'cdp_type', 'page_index': idx, 'text': text,
+                'result': 'ok', 'verified': True,
+                'evidence': {'focus': _focus_label(focus), 'tag': tag,
+                             'focus_id': focus.get('id') or '',
+                             'focus_type': focus.get('type') or ''}}
     finally:
         ws.close()
 
@@ -266,9 +393,15 @@ def cdp_scroll(direction='down', amount=None, page_sel=None):
 
         after = _scroll_y(ws)
         _write_last(idx)
+        # Natural evidence: the read-back scrollY diff. moved=False means the
+        # page did not move (already at the edge) — a signal, not an error.
         return {'method': 'cdp_scroll', 'direction': d,
                 'scrollY_before': before, 'scrollY_after': after,
-                'moved': after != before}
+                'moved': after != before,
+                'verified': True,
+                'evidence': {'scrollY_before': before, 'scrollY_after': after,
+                             'moved': after != before, 'direction': d,
+                             'read_back': 'window.scrollY'}}
     finally:
         ws.close()
 

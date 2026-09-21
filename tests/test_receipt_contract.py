@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import hand.perception.cdp_launcher as cdp_launcher
 import hand.router as router
 from hand.place import detect as place_detect
-from hand.session import get_session, reset_session
+from hand.session import Place, get_session, reset_session
 
 
 PAGE_URL = "https://example.com/"
@@ -230,6 +230,195 @@ class TestEnsureChromeEndpointProbe(unittest.TestCase):
             r = router.route_open("https://example.com")
         self.assertEqual(r["evidence"]["level"], "navigate_confirmed")
         self.assertEqual(r["evidence"]["browser"], "HeadlessChrome/140.0")
+
+
+# ── S3: unified receipt evidence for actions / see ───────────────────
+
+def _page():
+    return [_fake_page()]
+
+
+class TestActionReceipts(unittest.TestCase):
+    """S3: no action may return a success-shaped receipt it cannot back."""
+
+    def _run(self, dispatcher, fn, *args, **kwargs):
+        calls = []
+
+        def fake_cdp_call(ws, method, params=None, msg_id=1, timeout=30):
+            calls.append((method, params or {}))
+            return dispatcher(method, params or {})
+
+        with mock.patch("hand.action.cdp_act.list_pages", return_value=_page()), \
+             mock.patch("hand.action.cdp_act.resolve_page", return_value=(0, _fake_page())), \
+             mock.patch("hand.action.cdp_act.cdp_connect", return_value=_FakeWS()), \
+             mock.patch("hand.action.cdp_act._init_domains"), \
+             mock.patch("hand.action.cdp_act._write_last"), \
+             mock.patch("hand.action.cdp_act.cdp_call", side_effect=fake_cdp_call), \
+             mock.patch("hand.perception.cdp_core.cdp_call", side_effect=fake_cdp_call):
+            result = fn(*args, **kwargs)
+        return result, calls
+
+    # ── cdp_click ───────────────────────────────────────────────────
+
+    def test_click_verified_element_evidence(self):
+        def dispatcher(method, params):
+            expr = params.get("expression", "")
+            if "getBoundingClientRect" in expr:
+                return {"result": {"value": '{"x":10,"y":20,"w":4,"h":4,"visible":true,"tag":"BUTTON","text":"Sign in"}'}}
+            if "querySelector" in expr and "found" in expr:
+                return {"result": {"value": '{"found":true,"tag":"BUTTON","text":"Sign in"}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_click
+        r, calls = self._run(dispatcher, cdp_click, "#go")
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["result"], "ok")
+        self.assertIn("BUTTON", r["evidence"]["element"])
+        self.assertIn("Sign in", r["evidence"]["element"])
+
+    def test_click_selector_miss_errors_without_clicking(self):
+        def dispatcher(method, params):
+            if "found" in params.get("expression", ""):
+                return {"result": {"value": '{"found":false}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_click
+        r, calls = self._run(dispatcher, cdp_click, "#ghost")
+        self.assertFalse(r["verified"])
+        self.assertIn("selector", r["error"])
+        self.assertIn("did not match", r["evidence"]["reason"])
+        dispatched = [c for c in calls if c[0] == "Input.dispatchMouseEvent"]
+        self.assertEqual(dispatched, [])  # no blind click
+
+    def test_click_do_text_match_verified(self):
+        def dispatcher(method, params):
+            if "XPathResult" in params.get("expression", ""):
+                return {"result": {"value": '{"x":5,"y":5,"tag":"A","text":"Learn more"}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_click_do
+        r, _ = self._run(dispatcher, cdp_click_do, "text=Learn more")
+        self.assertTrue(r["verified"])
+        self.assertIn("A", r["evidence"]["element"])
+
+    def test_click_do_xy_is_dispatch_only(self):
+        from hand.action.cdp_act import cdp_click_do
+        r, _ = self._run(lambda m, p: {}, cdp_click_do, "xy:412,188")
+        self.assertFalse(r["verified"])
+        self.assertIn("dispatch", r["evidence"]["reason"])
+        self.assertEqual(r["xy"], [412, 188])
+
+    def test_click_do_bad_xy_is_unverified(self):
+        from hand.action.cdp_act import cdp_click_do
+        r, _ = self._run(lambda m, p: {}, cdp_click_do, "xy:abc")
+        self.assertFalse(r["verified"])
+        self.assertIn("reason", r["evidence"])
+
+    # ── cdp_type ────────────────────────────────────────────────────
+
+    def test_type_focused_without_focus_errors(self):
+        def dispatcher(method, params):
+            if "activeElement" in params.get("expression", ""):
+                return {"result": {"value": '{"tag":"BODY"}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_type_focused
+        r, calls = self._run(dispatcher, cdp_type_focused, "hello")
+        self.assertFalse(r["verified"])
+        self.assertIn("no focused element", r["error"])
+        inserted = [c for c in calls if c[0] == "Input.insertText"]
+        self.assertEqual(inserted, [])  # nothing typed into the void
+
+    def test_type_focused_verified_reports_target(self):
+        def dispatcher(method, params):
+            if "activeElement" in params.get("expression", ""):
+                return {"result": {"value": '{"tag":"INPUT","id":"q","type":"search"}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_type_focused
+        r, calls = self._run(dispatcher, cdp_type_focused, "hi")
+        self.assertTrue(r["verified"])
+        self.assertIn("INPUT", r["evidence"]["focus"])
+        self.assertTrue([c for c in calls if c[0] == "Input.insertText"])
+
+    def test_type_selector_miss_errors(self):
+        def dispatcher(method, params):
+            if "found" in params.get("expression", ""):
+                return {"result": {"value": '{"found":false}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_type
+        r, calls = self._run(dispatcher, cdp_type, "input#nope", "hi")
+        self.assertFalse(r["verified"])
+        self.assertEqual([c for c in calls if c[0] == "Input.insertText"], [])
+
+    # ── cdp_scroll ──────────────────────────────────────────────────
+
+    def test_scroll_evidence_reads_back(self):
+        state = {"y": 0}
+
+        def dispatcher(method, params):
+            expr = params.get("expression", "")
+            if expr == "window.scrollY || 0":
+                return {"result": {"value": state["y"]}}
+            if "innerHeight" in expr:
+                return {"result": {"value": 800}}
+            if "scrollBy" in expr or "scrollTo" in expr:
+                state["y"] = 300
+                return {}
+            if "mouseWheel" in str(params.get("type", "")):
+                state["y"] = 300
+                return {}
+            return {}
+
+        from hand.action.cdp_act import cdp_scroll
+        r, _ = self._run(dispatcher, cdp_scroll, "down")
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["evidence"]["scrollY_before"], 0)
+        self.assertEqual(r["evidence"]["scrollY_after"], 300)
+        self.assertTrue(r["evidence"]["moved"])
+
+
+class TestSeeAndShotReceipts(unittest.TestCase):
+    """S3: perception receipts carry the evidence that backs them."""
+
+    def test_see_dom_receipt_verified(self):
+        reset_session()
+        with mock.patch("hand.perception.cdp_snapshot.cdp_snapshot_see",
+                        return_value={"method": "cdp_snapshot", "page_title": "Example",
+                                      "url": "https://example.com/", "text": "hi"}):
+            r = router.route_see(place=Place(type="browser", identifier="https://example.com/"))
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["evidence"]["backend"], "cdp_snapshot")
+        self.assertEqual(r["evidence"]["url"], "https://example.com/")
+
+    def test_see_interactive_empty_map_is_unverified(self):
+        reset_session()
+        with mock.patch("hand.perception.cdp_snapshot.interactive_map",
+                        return_value={"method": "cdp_interactive", "count": 0, "elems": []}):
+            r = router.route_see(kind="interactive")
+        self.assertFalse(r["verified"])
+        self.assertEqual(r["evidence"]["backend"], "cdp_interactive")
+        self.assertIn("0", r["evidence"]["reason"])
+
+    def test_see_receipt_additive(self):
+        reset_session()
+        with mock.patch("hand.perception.cdp_network.network_snapshot",
+                        return_value={"method": "cdp_network", "total_requests": 3, "requests": []}):
+            r = router.route_see(kind="network")
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["method"], "cdp_network")
+        self.assertEqual(r["evidence"]["total_requests"], 3)
+
+    def test_shot_receipt_carries_source_and_length(self):
+        reset_session()
+        with mock.patch("hand.perception.cdp_core.list_pages", return_value=_page()), \
+             mock.patch("hand.perception.cdp_core.cdp_screenshot",
+                        return_value={"data": "AAAA", "format": "png"}):
+            r = router.route_screenshot(with_data=True)
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["evidence"]["source"], "cdp")
+        self.assertEqual(r["evidence"]["data_length"], 4)
 
 
 if __name__ == "__main__":

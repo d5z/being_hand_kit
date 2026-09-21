@@ -97,6 +97,63 @@ def route_open(target: str) -> dict:
     }
 
 
+# ── Receipt evidence for perception (v6.11.0) ───────────────────────
+# Perception receipts already carry natural evidence (title/url, element count,
+# request count, screenshot length). This wraps it in the unified shape
+# {"verified": bool, "evidence": {...}} — verified=False always names a reason.
+
+def _error_receipt(error: str, **fields) -> dict:
+    """Failure receipt in the unified shape — reason always present."""
+    out = {"error": error, "verified": False,
+           "evidence": {"verified": False, "reason": error}}
+    out.update(fields)
+    return out
+
+
+def _with_receipt(result: dict) -> dict:
+    """Attach verified/evidence to a perception receipt (additive)."""
+    if not isinstance(result, dict) or "method" not in result:
+        return result
+    if "verified" in result:
+        return result
+    method = result.get("method")
+    ev = {"backend": method}
+    verified = True
+    reason = None
+
+    if method == "cdp_snapshot":
+        ev["url"] = result.get("url")
+        ev["page_title"] = result.get("page_title")
+        ev["chars"] = result.get("chars")
+        if not result.get("url") and not result.get("page_title"):
+            verified, reason = False, "cdp_dom returned neither url nor title"
+    elif method == "cdp_interactive":
+        ev["count"] = result.get("count")
+        ev["total"] = result.get("total")
+        if not result.get("count"):
+            verified, reason = False, "interactive map matched 0 elements"
+    elif method == "cdp_network":
+        ev["total_requests"] = result.get("total_requests")
+        ev["duration"] = result.get("duration")
+        if result.get("total_requests") is None:
+            verified, reason = False, "network snapshot carried no request count"
+    elif method == "vision_ocr":
+        ev["screenshot"] = result.get("screenshot")
+        ev["total_lines"] = result.get("total_lines")
+        if result.get("error"):
+            verified, reason = False, f"vision_ocr error: {result['error']}"
+    else:
+        ev["detail"] = "backend receipt wrapped without backend-specific checks"
+
+    if reason:
+        ev["reason"] = reason
+    ev["verified"] = verified
+    result = dict(result)
+    result["verified"] = verified
+    result["evidence"] = ev
+    return result
+
+
 # ── See ──────────────────────────────────────────────────────────────
 
 def route_see_vlm(prompt: Optional[str] = None, image_b64: Optional[str] = None) -> dict:
@@ -166,11 +223,12 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
             from hand.perception.cdp_network import network_snapshot
             result = network_snapshot()
             if result and result.get("method"):
+                result = _with_receipt(result)
                 session = get_session()
                 session.last_see = result
                 return result
         except Exception as e:
-            return {"error": "cdp_network failed", "details": str(e)}
+            return _error_receipt("cdp_network failed", details=str(e))
 
     if kind == "interactive":
         # Interactive element map is a place-independent channel too — the
@@ -180,11 +238,12 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
             from hand.perception.cdp_snapshot import interactive_map
             result = interactive_map()
             if result and result.get("method"):
+                result = _with_receipt(result)
                 session = get_session()
                 session.last_see = result
                 return result
         except Exception as e:
-            return {"error": "cdp_interactive failed", "details": str(e)}
+            return _error_receipt("cdp_interactive failed", details=str(e))
 
     if kind == "vlm":
         return route_see_vlm()
@@ -211,9 +270,9 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
             # No place at all and no live browser — vision OCR as universal fallback
             try:
                 from hand.perception.vision_ocr import vision_ocr_see
-                return vision_ocr_see()
+                return _with_receipt(vision_ocr_see())
             except Exception as e:
-                return {"error": "no place set and vision_ocr failed", "details": str(e)}
+                return _error_receipt("no place set and vision_ocr failed", details=str(e))
 
     place_type = place.type
     backends = SEE_PRIORITY.get(place_type, SEE_PRIORITY["unknown"])
@@ -223,8 +282,9 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
     if not backends:
         # No backend available for this place on this platform — honest
         # boundary statement, not a fake "everything failed" error.
-        return {"error": f"no see backends for '{place_type}' on this platform",
-                "details": f"platform has no perception backend for {place_type}"}
+        return _error_receipt(
+            f"no see backends for '{place_type}' on this platform",
+            details=f"platform has no perception backend for {place_type}")
 
     for backend in backends:
         try:
@@ -249,6 +309,7 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
                 result = interactive_map()
 
             if result is not None and result.get("method"):
+                result = _with_receipt(result)
                 # Cache in session: full result for ax_app/ax_ui, screenshot for vision
                 session = get_session()
                 if backend == "vision_ocr":
@@ -261,7 +322,7 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
             errors.append(f"{backend}: {e}")
             continue
 
-    return {"error": "all see backends failed", "details": errors}
+    return _error_receipt("all see backends failed", details=errors)
 
 
 # ── Do ───────────────────────────────────────────────────────────────
@@ -391,6 +452,10 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
                 "source": "cdp",
                 "data_length": len(result["data"]),
                 "format": result["format"],
+                "verified": True,
+                "evidence": {"source": "cdp",
+                             "data_length": len(result["data"]),
+                             "format": result["format"]},
             }
             if with_data:
                 out["data"] = result["data"]
@@ -404,6 +469,9 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
         "method": "screenshot",
         "source": "vision_ocr",
         "path": path,
+        "verified": True,
+        "evidence": {"source": "vision_ocr", "path": path,
+                     "read_back": "screencapture wrote a file"},
     }
 
 # ── Plan ─────────────────────────────────────────────────────────────
