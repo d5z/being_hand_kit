@@ -30,6 +30,37 @@ def chrome_available(timeout=2):
         return False
 
 
+def ensure_fresh_browser(timeout=15):
+    """Suite-boundary hygiene: close any leftover Chrome before a gate run.
+
+    cdp_launcher ADOPTS a browser already listening on the CDP port. A leftover
+    from a previous session carries unknown page state — the 2026-09-21 gate
+    flake (first run inherited a stale browser: 4 failures; every later run
+    green on the suite's own standard end-state). Within one repeat the shared
+    browser is by design; ACROSS repeats/sessions it must start clean.
+
+    Returns True if we ended with a live fresh browser.
+    """
+    try:
+        from hand.perception.cdp_launcher import ensure_chrome as spawn
+    except Exception:
+        return False
+    if chrome_available():
+        close_browser()
+        deadline = time.time() + timeout
+        while time.time() < deadline and chrome_available():
+            time.sleep(0.5)
+        if chrome_available():
+            # Browser.close not honored — hard kill, then re-probe
+            subprocess.run(["pkill", "-f", "chrome-headless-shell"],
+                           capture_output=True, timeout=10)
+            deadline = time.time() + 10
+            while time.time() < deadline and chrome_available():
+                time.sleep(0.5)
+    spawn()
+    return chrome_available()
+
+
 def host_reachable(url, timeout=8):
     """TCP-connect + HTTP HEAD/GET the host — network gate for L3."""
     try:
