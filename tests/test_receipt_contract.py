@@ -421,5 +421,92 @@ class TestSeeAndShotReceipts(unittest.TestCase):
         self.assertEqual(r["evidence"]["data_length"], 4)
 
 
+# ── S4: manifest idempotency + evidence declarations ─────────────────
+
+MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "..", "kit", "manifest.json")
+
+# PRD S4 tables. Idempotency: what a retry does. Evidence: does the receipt
+# carry a verification field at all (S3-covered = verified, rest = claimed).
+EXPECTED_IDEMPOTENCY = {
+    "cdp_open": "idempotent",
+    "cdp_nav": "idempotent",
+    "cdp_see": "idempotent",
+    "cdp_shot": "idempotent",
+    "cdp_scroll": "idempotent",
+    "cdp_close": "idempotent",
+    "cdp_type": "append",
+    "cdp_click": "side_effect",
+    "hand_plan": "side_effect",
+    "hand_see_vlm": "idempotent",
+    "health": "idempotent",
+}
+
+EXPECTED_EVIDENCE = {
+    "cdp_open": "verified",
+    "cdp_nav": "verified",
+    "cdp_see": "verified",
+    "cdp_shot": "verified",
+    "cdp_scroll": "verified",
+    "cdp_click": "verified",
+    "cdp_type": "verified",
+    "hand_plan": "claimed",
+    "hand_see_vlm": "claimed",
+    "cdp_close": "claimed",
+    "health": "claimed",
+}
+
+IDEMPOTENCY_ENUM = {"idempotent", "append", "side_effect"}
+EVIDENCE_ENUM = {"verified", "claimed"}
+
+
+class TestManifestDeclarations(unittest.TestCase):
+    """S4: idempotency shape must be declared, not guessed by the caller (F-4/F-5)."""
+
+    def setUp(self):
+        with open(MANIFEST_PATH) as f:
+            self.manifest = json.load(f)
+        self.tools = {t["name"]: t for t in self.manifest["tools"]}
+
+    def test_every_tool_declares_idempotency_and_evidence(self):
+        for name, tool in self.tools.items():
+            self.assertIn("idempotency", tool, f"{name} missing idempotency")
+            self.assertIn("evidence", tool, f"{name} missing evidence")
+            self.assertIn(tool["idempotency"], IDEMPOTENCY_ENUM, name)
+            self.assertIn(tool["evidence"], EVIDENCE_ENUM, name)
+
+    def test_idempotency_values_match_prd(self):
+        self.assertEqual({n: t["idempotency"] for n, t in self.tools.items()},
+                         EXPECTED_IDEMPOTENCY)
+
+    def test_evidence_values_match_prd(self):
+        self.assertEqual({n: t["evidence"] for n, t in self.tools.items()},
+                         EXPECTED_EVIDENCE)
+
+    def test_description_declares_the_contract(self):
+        self.assertIn("Receipts distinguish verified vs claimed; tools declare idempotency.",
+                      self.manifest["description"])
+
+    def test_no_tool_was_dropped_or_renamed(self):
+        self.assertEqual(set(self.tools), set(EXPECTED_IDEMPOTENCY))
+
+    def test_declared_verified_tools_actually_emit_evidence(self):
+        """Cross-check: every tool declared 'verified' must have code emitting it."""
+        sources = {
+            "cdp_open": ("hand/router.py", "hand/place/detect.py"),
+            "cdp_nav": ("hand/router.py", "hand/place/detect.py"),
+            "cdp_see": ("hand/router.py",),
+            "cdp_shot": ("hand/router.py",),
+            "cdp_scroll": ("hand/action/cdp_act.py",),
+            "cdp_click": ("hand/action/cdp_act.py",),
+            "cdp_type": ("hand/action/cdp_act.py",),
+        }
+        root = os.path.join(os.path.dirname(__file__), "..")
+        for name, files in sources.items():
+            if self.tools[name]["evidence"] != "verified":
+                continue
+            blob = "".join(open(os.path.join(root, f)).read() for f in files)
+            self.assertIn('"verified"', blob, f"{name} declared verified but no evidence field emitted")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 {
   "name": "hand",
   "version": "6.10.0",
-  "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI.",
+  "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI. Receipts distinguish verified vs claimed; tools declare idempotency.",
   "platforms": {
     "supported": [
       "darwin",
@@ -37,7 +37,9 @@
             "type": "string"
           }
         }
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "verified"
     },
     {
       "name": "cdp_close",
@@ -45,7 +47,9 @@
       "params": {
         "type": "object",
         "properties": {}
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "claimed"
     },
     {
       "name": "cdp_nav",
@@ -60,7 +64,9 @@
         "required": [
           "url"
         ]
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "verified"
     },
     {
       "name": "cdp_see",
@@ -70,10 +76,17 @@
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["dom", "interactive", "network", "screenshot"]
+            "enum": [
+              "dom",
+              "interactive",
+              "network",
+              "screenshot"
+            ]
           }
         }
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "verified"
     },
     {
       "name": "cdp_click",
@@ -88,7 +101,9 @@
         "required": [
           "selector"
         ]
-      }
+      },
+      "idempotency": "side_effect",
+      "evidence": "verified"
     },
     {
       "name": "cdp_type",
@@ -103,7 +118,9 @@
         "required": [
           "text"
         ]
-      }
+      },
+      "idempotency": "append",
+      "evidence": "verified"
     },
     {
       "name": "cdp_shot",
@@ -111,7 +128,9 @@
       "params": {
         "type": "object",
         "properties": {}
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "verified"
     },
     {
       "name": "cdp_scroll",
@@ -129,7 +148,9 @@
         "required": [
           "direction"
         ]
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "verified"
     },
     {
       "name": "hand_plan",
@@ -147,7 +168,9 @@
         "required": [
           "goal"
         ]
-      }
+      },
+      "idempotency": "side_effect",
+      "evidence": "claimed"
     },
     {
       "name": "hand_see_vlm",
@@ -155,10 +178,16 @@
       "params": {
         "type": "object",
         "properties": {
-          "prompt": {"type": "string"},
-          "image_b64": {"type": "string"}
+          "prompt": {
+            "type": "string"
+          },
+          "image_b64": {
+            "type": "string"
+          }
         }
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "claimed"
     },
     {
       "name": "health",
@@ -166,7 +195,9 @@
       "params": {
         "type": "object",
         "properties": {}
-      }
+      },
+      "idempotency": "idempotent",
+      "evidence": "claimed"
     }
   ]
 }
