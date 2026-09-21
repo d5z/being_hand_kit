@@ -17,6 +17,10 @@ Resolution order for the browser binary:
   2b. macOS (<darwin only>): /Applications Chrome → Chromium → Canary → Edge → ~/Applications
   3. Playwright cache (~/.cache/ms-playwright/...), headless-shell first
   4. System chrome/chromium on PATH
+
+Spawn strategy (0.7.0 F7): isolated `--user-data-dir` by default (never fights
+the human's Chrome for the profile lock); HAND_PROFILE=persistent and
+HAND_HEADLESS=0 are explicit opt-ins. See the profile-strategy block below.
 """
 
 import os
@@ -141,10 +145,80 @@ def chrome_running() -> bool:
     return endpoint_info() is not None
 
 
+# ── Profile / headless strategy (0.7.0 F7) ──────────────────────────
+# Default = ISOLATED: the kit spawns with its own user-data-dir under the kit
+# home, so it can never collide with the human's running Chrome (profile lock)
+# and never touches the human's cookies/sessions. The directory is *kept*
+# between runs — isolated from the human, not wiped — so logins survive a kit
+# restart (F7 acceptance step 5).
+#
+# taojun 954 (Windows Feishu) is the opposite need: headless fingerprint
+# throttling cleared up with a headed browser + persistent profile. So both
+# knobs are explicit opt-ins rather than one hard-coded default:
+#   HAND_PROFILE=isolated (default) | persistent
+#   HAND_PROFILE_DIR=<path>            explicit dir for either mode
+#   HAND_HEADLESS=1 (default) | 0     0 → headed window
+HAND_PROFILE_ENV = "HAND_PROFILE"
+HAND_PROFILE_DIR_ENV = "HAND_PROFILE_DIR"
+HAND_HEADLESS_ENV = "HAND_HEADLESS"
+PROFILE_DIR_NAME = ".chrome-profile"
+
+_FALSEY = ("0", "false", "no", "off")
+
+# Repo root / bundle root (the directory holding hand/ — and kit/ in the dev tree).
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _kit_dir() -> str:
+    """The kit home: <root>/kit in the dev tree, <root> in a Grove bundle."""
+    kit = os.path.join(_ROOT, "kit")
+    return kit if os.path.isdir(kit) else _ROOT
+
+
+def _platform_user_data_dir() -> str:
+    """The human's real Chrome profile dir (persistent mode)."""
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/Google/Chrome")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+        return os.path.join(base, "Google", "Chrome", "User Data")
+    return os.path.expanduser("~/.config/google-chrome")
+
+
+def profile_mode() -> str:
+    """'isolated' (default) or 'persistent' (explicit opt-in)."""
+    mode = (os.environ.get(HAND_PROFILE_ENV) or "isolated").strip().lower()
+    return "persistent" if mode == "persistent" else "isolated"
+
+
+def profile_dir() -> str:
+    """user-data-dir for the next spawn (HAND_PROFILE_DIR wins if set)."""
+    explicit = (os.environ.get(HAND_PROFILE_DIR_ENV) or "").strip()
+    if explicit:
+        return explicit
+    if profile_mode() == "persistent":
+        return _platform_user_data_dir()
+    return os.path.join(_kit_dir(), PROFILE_DIR_NAME)
+
+
+def headless() -> bool:
+    return (os.environ.get(HAND_HEADLESS_ENV) or "").strip().lower() not in _FALSEY
+
+
 def _chrome_flags() -> list:
-    return [
+    """Flags for the spawn. The profile dir is created here (first run)."""
+    profile = profile_dir()
+    try:
+        os.makedirs(profile, exist_ok=True)
+    except OSError:
+        pass  # best effort: Chrome creates it too; a failure must not block spawn
+    flags = [
         f"--remote-debugging-port={CDP_PORT}",
-        "--headless",
+        f"--user-data-dir={profile}",
+    ]
+    if headless():
+        flags.append("--headless")
+    flags += [
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-gpu",
@@ -152,6 +226,7 @@ def _chrome_flags() -> list:
         "--disable-software-rasterizer",
         "--disable-extensions",
     ]
+    return flags
 
 
 def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
@@ -181,8 +256,9 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
             f"{_LIB_DIR}:{existing}" if existing else _LIB_DIR
         )
 
+    flags = _chrome_flags()
     proc = subprocess.Popen(
-        [chrome] + _chrome_flags(),
+        [chrome] + flags,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env=env,
@@ -199,6 +275,11 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
                 "browser": info.get("Browser") or info.get("browser"),
                 "protocol": info.get("Protocol-Version"),
             }
+            # F7 acceptance protocol step 4: the spawn carries its own flags, so
+            # `ps` (or the receipt) can prove --user-data-dir was in the argv.
+            proc.cdp_flags = flags
+            proc.cdp_profile = {"dir": profile_dir(), "mode": profile_mode(),
+                                "headless": headless(), "binary": chrome}
             return proc
         time.sleep(CDP_PROBE_INTERVAL)
 

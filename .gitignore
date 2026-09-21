@@ -10,3 +10,6 @@ build/
 # opencode kit 已独立为 /home/alice/opencode-kit repo
 .opencode/
 *.opencode-session.json
+
+# 0.7.0 F7: isolated Chrome profile dir (created on first spawn, kept between runs)
+kit/.chrome-profile/
