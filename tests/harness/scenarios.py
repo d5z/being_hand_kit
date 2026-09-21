@@ -106,6 +106,15 @@ class FixtureServer:
     def blackhole_url(self, path="/slow"):
         return f"http://127.0.0.1:{self._blackhole_port}{path}"
 
+    def release_held(self):
+        """Close every held blackhole connection so Chrome can recover."""
+        for c in self._held:
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._held = []
+
     def close(self):
         self._stop = True
         try:

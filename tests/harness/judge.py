@@ -61,7 +61,8 @@ def _ev(receipt):
 
 def _reason_of(receipt):
     ev = _ev(receipt)
-    return str(ev.get("reason") or receipt.get("error") or receipt.get("detail") or "")
+    return str(ev.get("reason") or receipt.get("error")
+               or ev.get("detail") or receipt.get("detail") or "")
 
 
 # ── open ─────────────────────────────────────────────────────────────
