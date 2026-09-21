@@ -14,6 +14,7 @@ Why this exists as a separate module:
 Resolution order for the browser binary:
   1. $CHROME env var (explicit override, e.g. from kit/start.sh)
   2. Windows (<win32 only>): Chrome install paths → PATH chrome.exe/msedge.exe → Edge install paths
+  2b. macOS (<darwin only>): /Applications Chrome → Chromium → Canary → Edge → ~/Applications
   3. Playwright cache (~/.cache/ms-playwright/...), headless-shell first
   4. System chrome/chromium on PATH
 """
@@ -70,6 +71,22 @@ def _find_chrome() -> str | None:
             if os.path.isfile(p):
                 return p
         return None
+
+    # 1c. macOS: standard install locations (F8). Checked *before* the Playwright
+    # cache so a human-installed Chrome wins on a Mac — the same reasoning as the
+    # Windows chain above. The path Cotton's wrapper hard-coded (935) is now part
+    # of the regular discovery chain instead of a separate script.
+    if sys.platform == "darwin":
+        mac_candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ]
+        for p in mac_candidates:
+            if os.path.isfile(p):
+                return p
 
     # 2. Playwright cache (headless-shell preferred: lighter, no X deps)
     cache = os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")
