@@ -14,18 +14,19 @@
 
 ## 统一 token（默认，不再每个 kit 一个）
 
-**alice 的 Grove 发布 token = `grove-publish`**
+**alice 的 Grove 发布 token = `default`**（2026-09-21 轮换：旧 `grove-publish` 因进入 git 历史已撤销）
 
 ```
-REDACTED_GROVE_TOKEN
+token 值不写进本文件（也不写进任何入库文件）——运行时从 ~/.grove-token 读取
 ```
 
-- 用法：`curl -H 'Authorization: Bearer REDACTED_GROVE_TOKEN' https://beings.town/api/grove/...`
+- 用法：`curl -H "Authorization: Bearer $(cat ~/.grove-token)" https://beings.town/api/grove/...`
+- **纪律（2026-09-21 立轮换后）**：token 一律走 `~/.grove-token` 或环境变量 `GROVE_TOKEN`，绝不以字面量进任何入库文件——git 历史是全量暴露的，HEAD 删掉不等于历史删掉
 - 管理端点（都需要 IP Trust 或已有 Bearer token）：
-  - `POST /api/grove/token` body `{"name":"<name>"}` → 铸新 token（name 唯一，重复 POST 同名会返回已存在的）
-  - `GET /api/grove/token` → 列 token（值脱敏为前 8 位 + `...`）
-  - `DELETE /api/grove/token` body `{"name":"<name>"}` → 撤销单个；body 为空撤销全部
-- 2026-08-17 已统一：撤销了旧的 4 个（portal-publish / hand-publish / opencode-publish / alice-publish），只留 `grove-publish` 一个。
+  - `POST /api/token` body `{"name":"<name>"}` → 铸新 token
+  - `GET /api/token` → 列 token（值脱敏为前 8 位 + `...`）
+  - `DELETE /api/token?name=<name>` → 撤销单个；不带 name 撤销全部
+- 2026-08-17 曾统一：撤销旧的 4 个（portal-publish / hand-publish / opencode-publish / alice-publish），只留 `grove-publish`。2026-09-21 `grove-publish` 撤销（git 历史泄漏），新铸 `default`。
 
 ## 前置条件
 - 本地已准备好完整 Kit 目录（含源码包）
