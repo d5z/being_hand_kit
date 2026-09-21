@@ -595,5 +595,164 @@ class TestVersionAndDocs(unittest.TestCase):
         self.assertIn("回执契约层", body)
 
 
+# ── S3 (0.7.0): the a11y snapshot through the same ruler ─────────────
+# PRD docs/prd-ax-perception.md S3: a11y snapshots carry verified (the tree was
+# really pulled and has a non-empty root) and evidence (node count, serialized
+# bytes, truncation marker, AX source version). Same shape as every other
+# backend — the new eyes are measured with the old ruler.
+
+def _ax_snapshot(**over):
+    snap = {
+        "method": "cdp_a11y", "format": "a11y-v2", "page_index": 0,
+        "header": "#p0 r:1 Example | https://example.com/",
+        "url": "https://example.com/", "page_title": "Example",
+        "tree": '- RootWebArea "Example"\n  - link "Sign in" [2]',
+        "nodes": [{"idx": 1, "role": "RootWebArea", "name": "Example"},
+                  {"idx": 2, "role": "link", "name": "Sign in"}],
+        "handles": {"2": {"role": "link", "name": "Sign in", "backend_node_id": 105}},
+        "coords": {"2": {"x": 10, "y": 20}}, "hint": None,
+        "root_role": "RootWebArea",
+        "node_count": 2, "raw_node_count": 15, "curated_node_count": 13,
+        "line_count": 2, "serialized_bytes": 45, "max_lines": 600,
+        "truncated": False, "nodes_omitted": 0, "sha256": "deadbeef",
+        "ax_version": {"product": "Chrome/141.0.0", "protocol": "1.3",
+                       "tree": "Accessibility.getFullAXTree"},
+    }
+    snap.update(over)
+    return snap
+
+
+class TestA11ySnapshotReceipt(unittest.TestCase):
+    """S3: see(kind=a11y) receipts, judged like every other perception backend."""
+
+    def setUp(self):
+        reset_session()
+
+    def tearDown(self):
+        reset_session()
+
+    def test_verified_snapshot_carries_the_evidence(self):
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        return_value=_ax_snapshot()):
+            r = router.route_see(kind="a11y")
+        self.assertTrue(r["verified"])
+        ev = r["evidence"]
+        self.assertEqual(ev["backend"], "cdp_a11y")
+        self.assertEqual(ev["node_count"], 2)
+        self.assertEqual(ev["serialized_bytes"], 45)
+        self.assertFalse(ev["truncated"])
+        self.assertEqual(ev["ax_version"]["product"], "Chrome/141.0.0")
+        self.assertEqual(ev["ax_version"]["tree"], "Accessibility.getFullAXTree")
+        self.assertEqual(ev["root_role"], "RootWebArea")
+        self.assertEqual(ev["sha256"], "deadbeef")
+        self.assertIn("tree", r)
+
+    def test_empty_tree_is_unverified_and_names_the_reason(self):
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        return_value=_ax_snapshot(node_count=0, line_count=0,
+                                                  root_role=None, tree="",
+                                                  curated_node_count=0)):
+            r = router.route_see(kind="a11y")
+        self.assertFalse(r["verified"])
+        self.assertIn("nothing was perceived", r["evidence"]["reason"])
+        self.assertIn("root_role", r["evidence"]["reason"])
+
+    def test_curated_away_tree_is_unverified(self):
+        """Nodes arrived but curation kept none (all ignored/layout roles)."""
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        return_value=_ax_snapshot(node_count=0, line_count=0,
+                                                  root_role=None, tree="",
+                                                  raw_node_count=42,
+                                                  curated_node_count=0)):
+            r = router.route_see(kind="a11y")
+        self.assertFalse(r["verified"])
+        self.assertEqual(r["evidence"]["raw_node_count"], 42)
+
+    def test_truncation_is_declared_not_hidden(self):
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        return_value=_ax_snapshot(truncated=True, nodes_omitted=57,
+                                                  node_count=600, line_count=600)):
+            r = router.route_see(kind="a11y")
+        self.assertTrue(r["verified"])
+        self.assertTrue(r["evidence"]["truncated"])
+        self.assertEqual(r["evidence"]["nodes_omitted"], 57)
+
+    def test_overflow_menu_hint_travels_with_the_receipt(self):
+        hint = ('hint: button "Additional navigation options" [25] opens a collapsed '
+                'menu (hasPopup) — its contents are not in the AX tree; '
+                'click [25] then see again')
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        return_value=_ax_snapshot(hint=hint)):
+            r = router.route_see(kind="a11y")
+        self.assertEqual(r["hint"], hint)
+        self.assertEqual(r["evidence"]["hint"], hint)
+
+    def test_backend_failure_is_an_error_receipt_not_a_fallback(self):
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        side_effect=RuntimeError("no pages")):
+            r = router.route_see(kind="a11y")
+        self.assertFalse(r["verified"])
+        self.assertIn("no pages", r["evidence"]["reason"])
+        self.assertNotIn("method", r)
+
+    def test_snapshot_is_cached_in_the_session(self):
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        return_value=_ax_snapshot()):
+            r = router.route_see(kind="a11y")
+        self.assertIs(get_session().last_see, r)
+
+
+class TestHandleActionReceipts(unittest.TestCase):
+    """S3: [idx] action receipts declare verified/evidence like selector ones."""
+
+    def _click(self, action):
+        from hand.action.cdp_act import cdp_click_do
+        entry = {"role": "link", "name": "Sign in", "backend_node_id": 105,
+                 "interactive": True, "x": 10, "y": 20, "idx": 2}
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "DOM.getDocument":
+                return {"root": {"nodeId": 1}}
+            if method == "DOM.resolveNode":
+                return {"object": {"objectId": "obj-1"}}
+            if method == "Runtime.callFunctionOn":
+                return {"result": {"value": json.dumps(
+                    {"x": 60, "y": 40, "w": 100, "h": 40})}}
+            if method == "Runtime.evaluate":
+                return {"result": {"value": 1}}
+            return {}
+
+        with mock.patch("hand.action.cdp_act.list_pages",
+                        return_value=[{"id": "1", "type": "page",
+                                       "webSocketDebuggerUrl": "ws://x/1"}]), \
+             mock.patch("hand.action.cdp_act.cdp_connect",
+                        return_value=mock.Mock()), \
+             mock.patch("hand.action.cdp_act.cdp_call", side_effect=fake_call), \
+             mock.patch("hand.action.cdp_act._init_domains", return_value=None), \
+             mock.patch("hand.action.cdp_act._write_last", return_value=None), \
+             mock.patch("hand.perception.ax_tree.load_handle_map",
+                        return_value={"2": entry}):
+            return cdp_click_do(action)
+
+    def test_handle_click_is_verified_with_its_target(self):
+        r = self._click("[2]")
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["handle"], "[2]")
+        ev = r["evidence"]
+        self.assertEqual(ev["handle"], "[2]")
+        self.assertEqual(ev["backend_node_id"], 105)
+        self.assertIn("Sign in", ev["element"])
+        self.assertEqual(ev["space"], "physical")
+        self.assertEqual(ev["dispatched"], [60, 40])   # dpr 1
+        self.assertIn("read_back", ev)
+
+    def test_unknown_handle_names_the_recovery(self):
+        from hand.action.cdp_act import cdp_click_do
+        with mock.patch("hand.perception.ax_tree.load_handle_map", return_value={}):
+            r = cdp_click_do("[99]")
+        self.assertFalse(r["verified"])
+        self.assertIn("cdp_see", r["evidence"]["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -145,10 +145,13 @@ def _with_receipt(result: dict) -> dict:
         ev["format"] = result.get("format")
         ev["ax_version"] = result.get("ax_version")
         ev["sha256"] = result.get("sha256")
-        if not result.get("node_count"):
+        ev["root_role"] = result.get("root_role")
+        ev["hint"] = result.get("hint")
+        if not result.get("node_count") or not result.get("root_role"):
             verified, reason = False, (
-                "Accessibility.getFullAXTree produced 0 curated nodes "
-                "(empty tree) — nothing was perceived")
+                "Accessibility.getFullAXTree produced no curated root "
+                f"(root_role={result.get('root_role')!r}, "
+                f"nodes={result.get('node_count')!r}) — nothing was perceived")
     elif method == "cdp_interactive":
         ev["count"] = result.get("count")
         ev["total"] = result.get("total")
