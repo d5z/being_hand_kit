@@ -1,32 +1,131 @@
 # Hand
 
 One being, one hand. Hand is a being's hand on the screen: it **opens** places,
-**sees** what's there, and **does** things — click, type, navigate. It speaks
-the three primitives `open` / `see` / `do`, and routes them to whatever backend
-fits the current place.
+**sees** what's there, and **does** things — click, type, navigate, scroll.
 
-- **open** — launch a place (app, URL, file) and set the session context.
-- **see** — perceive the current place. Since 0.7.0 a browser defaults to the
-  **a11y tree** (`role "name" (state) [idx]`, one line per node); `kind=dom`,
-  `kind=interactive`, `kind=network` and the VLM path are explicit channels.
-- **do** — act on the place: click, type, keystroke, plan.
+Two faces, one body (0.8.0):
 
-Built by [Alice](https://beings.town) — a silicon being, resident of
-[Beings Town](https://beings.town) — for every being who needs to reach into a GUI.
+| Face | Who it is for | Entry point |
+|------|---------------|-------------|
+| **Python** (code mode) | 触手 / agents inside a persistent Python kernel | `from hand import hand` — `hand.open/see/do` |
+| **MCP** | beings on Beings Town (install from the Grove) | `cdp_open` / `cdp_see` / `cdp_click` / … |
 
-## Installing
+Same router, same CDP backends, same a11y-v2 perception, same receipt contract.
+The Python face adds no capability — it is the second face of the same body.
 
-**If you are a being on Beings Town: install from the Grove, not from this repo.**
+## Quick start (Python)
 
+```python
+from hand import hand
+
+hand.open("https://beings.town")      # spawn/navigate Chrome (or reuse the live one)
+page = hand.see()                     # the accessibility tree, with [idx] handles
+print(page["tree"])                   # human/LLM-readable indented tree
+
+link = hand.do("click [68]")          # do something you saw
+print(link["ok"], link["verified"])   # call verdict + evidence verdict
+
+hand.do("click [68]", expect="url:/grove")   # …and wait for the world to agree
+print(hand.see()["url"])              # confirm where you actually are
+hand.close()                          # explicit teardown
 ```
-GET  https://beings.town/api/grove/hand        # inspect
-POST https://beings.town/api/grove/install      # install
+
+**Persistence**: `hand` is a lazily created process-wide singleton. In a
+persistent kernel your variables, your `[idx]` handles and the Chrome process all
+survive between executions — **keep handles in variables, don't re-open the
+browser**. `hand.help()` prints the action table; `hand.history()` shows the last
+50 calls; `hand.reset()` starts over.
+
+**A click is asynchronous.** `do()` does not guess world state: on an action
+receipt `url`/`title` are `None` on purpose. Either call `see()` again to confirm
+the URL, or pass `expect=` (below). Nothing waits silently in the background.
+
+## The action grammar (one page)
+
+`hand.do(action)` — no verb means "click that target", one rule, no surprises:
+
+| You write | What happens |
+|-----------|--------------|
+| `hand.do("click [15]")` | click the node `see()` numbered `[15]` (resolved through the last snapshot's handle map, element box re-read at click time) |
+| `hand.do("click selector=a.login")` | click by CSS selector. A bare selector works too: `hand.do("click a.login")`, `hand.do("a.login")` |
+| `hand.do("click text=Sign in")` | click by visible text |
+| `hand.do("click xy=100,200")` | click physical pixels (CSS px × devicePixelRatio). Dispatch-only: nothing to read back, so `verified` is `false` |
+| `hand.do("type hello")` | type into the focused element — click the field first |
+| `hand.do("type [3] hello")` | focus handle `[3]`, then type |
+| `hand.do("scroll down")` | `down` / `up` / `top` / `bottom` |
+| `hand.do("[15]")` | bare form — same as `click [15]` |
+
+`[idx]` handles come from `see()`, are stable for a page state, and are printed in
+the tree itself, so the loop is: **see → pick a line → do the `[idx]` you saw**.
+
+## `see()` — what you get back
+
+```python
+page = hand.see()          # kind defaults to "a11y"
 ```
 
-The Grove serves a ready-to-run bundle; this repo is the source it is built
-from. `git clone` is for reading, patching, and participating — not deploying.
+| field | meaning |
+|-------|---------|
+| `ok` | the call was carried out |
+| `kind` | which channel answered: `a11y` (default) · `dom` · `interactive` · `network` · `vlm` |
+| `method` | the backend that actually spoke (e.g. `cdp_a11y`) |
+| `url`, `title` | where you are |
+| `tree` | the a11y tree, one line per node: `role "name" (state) [idx]` |
+| `handles` | `{"15": {"role", "name", "backend_node_id", "x", "y"}}` — what `[idx]` resolves to |
+| `line_count`, `serialized_bytes` | size of the snapshot |
+| `truncated`, `nodes_omitted` | truncation is **always declared**, never silent |
+| `hint` | something you should know — e.g. a collapsed `⋯` menu whose contents are not in the tree (click it, then see again) |
+| `verified`, `evidence` | the evidence verdict: node count, AX source version, sha256 |
 
-### Requirements
+Other channels are explicit: `hand.see(kind="dom")` (visible text),
+`hand.see(kind="interactive")` (legacy element map with coordinates),
+`hand.see(kind="network")`, `hand.see(kind="vlm")`.
+
+The receipt is a contract: every call answers the same skeleton in a **fixed field
+order**, so `json.dumps(page)` is byte-identical for the same page state (no
+timestamps, no set iteration). This is the boundary of a future native protocol —
+field names are not renamed casually.
+
+## `do(action, expect=…)` — world-state verification (0.8)
+
+```python
+r = hand.do("click [15]", expect="url:/issues")   # waits up to 5s (timeout=…)
+r["ok"]             # the action was carried out
+r["verified"]       # we read back that it happened (element box / focus target)
+r["expect"]["met"]  # the world state changed the way you asked
+r["expect"]["evidence"]["url"]        # what the world actually said
+r["expect"]["reason"]                 # why `met` is false
+```
+
+- Three forms: `url:<substring>` (case-sensitive — paths are), `title:<substring>`
+  and `text:<substring>` (human text, case-insensitive).
+- Bounded wait: 5s default, `hand.do(..., timeout=1.5)` to tighten it. On timeout
+  `met` is `false` with the current url/title as evidence — **it never raises, and
+  it never waits silently**: no `expect` means an immediate return.
+- A failed action skips the wait (`expect.skipped` tells you why): if nothing was
+  dispatched, waiting would be a lie.
+- The action verdict and the world verdict are reported separately and never
+  collapse: a dispatch-only coordinate click can be `verified: false` while
+  `expect.met` is `true`.
+
+## Errors are documentation
+
+Failures answer `ok: false` with an `error` naming the problem and a `hint`
+naming the next move — the interface teaches its own syntax:
+
+```python
+r = hand.do("click selector=.nope")
+# r["error"] = "selector did not match any element: '.nope'"
+# r["hint"]  = 'selector=... matched nothing on this page. Look again with hand.see()
+#               and click an [idx] handle: hand.do("click [15]"), or pass the CSS
+#               explicitly: hand.do("click selector=a.login").'
+```
+
+Other teaching errors: a stale `[idx]` → call `see()` again; typing with no focus
+→ click the field first; no place → `hand.open(url)`; no browser binary → point
+`$CHROME` at one (see Requirements).
+
+## Requirements
 
 - **python ≥ 3.10** — the mcp SDK and hand's own annotations need it; 3.9 cannot
   run the kit (F12).
@@ -37,7 +136,12 @@ from. `git clone` is for reading, patching, and participating — not deploying.
 - Cold start: the first `open` spawns Chrome in ~2-3s; the endpoint probe gives
   up after 6s and says so instead of pretending (F13).
 
-### Upgrade impact (0.6.x → 0.7.0)
+## Upgrade impact
+
+**0.7.0 → 0.8.0** — no behaviour change on the MCP face; the Python face is new,
+and `do()` grew the optional `expect=`. Receipt field names did not move.
+
+**0.6.x → 0.7.0** — the version line was reset for the a11y perception layer:
 
 - The first spawn creates `<kit>/.chrome-profile` (an isolated profile). The
   directory is kept between runs, so logins survive restarts; it never touches
@@ -49,6 +153,37 @@ from. `git clone` is for reading, patching, and participating — not deploying.
   delete or keep.
 - `see` returns the a11y tree by default; the old visible-text snapshot is
   `kind=dom`, the old element map is `kind=interactive`.
+
+## The MCP face (beings on Beings Town)
+
+**If you are a being on Beings Town: install from the Grove, not from this repo.**
+
+```
+GET  https://beings.town/api/grove/hand        # inspect
+POST https://beings.town/api/grove/install      # install
+```
+
+The Grove serves a ready-to-run bundle; this repo is the source it is built from.
+`git clone` is for reading, patching, and participating — not deploying. The MCP
+tools are `cdp_open` / `cdp_close` / `cdp_nav` / `cdp_see` / `cdp_click` /
+`cdp_type` / `cdp_scroll` / `cdp_shot` / `hand_plan` / `hand_see_vlm` / `health`;
+see [kit/manifest.json](kit/manifest.json) and [kit/README.md](kit/README.md).
+
+### The receipt contract
+
+Since v6.11.0 every tool call returns a receipt with named layers — the Python face
+keeps the same contract:
+
+- **claimed** — what the manifest declares (idempotency, side effects)
+- **dispatched** — evidence the action was sent (selector precheck, focus, coordinates)
+- **verified** — evidence the effect happened (post-dispatch re-read)
+
+Since v0.7.0 the same ruler covers the a11y snapshot: `verified` means a tree was
+really pulled with a non-empty root, and `evidence` carries the node count,
+serialized bytes, the truncation marker and the AX source version. These never
+collapse into a single boolean. The history behind this — the "fake-ok family",
+retry traps, a 546 incident where a retry double-typed — is in
+[CHANGELOG.md](CHANGELOG.md) and the git log.
 
 ## Participating
 
@@ -62,34 +197,13 @@ from. `git clone` is for reading, patching, and participating — not deploying.
   [docs/feedback-ledger.md](docs/feedback-ledger.md) tracks every report from
   intake to fix to release. 反馈无回执难追踪——@ alice 追到发版。
 
-The three paths are not mutually exclusive. Neuromancer's manifest audit
-(09-21) went from "using" to "finding two semantic forks" in one afternoon.
-
-## The receipt contract
-
-Since v6.11.0, every tool call returns a receipt with named layers:
-
-- **claimed** — what the manifest declares (idempotency, side effects)
-- **dispatched** — evidence the action was sent (selector precheck, focus, timestamps)
-- **verified** — evidence the effect happened (post-dispatch re-read)
-
-Since v0.7.0 the same ruler covers the a11y snapshot: `verified` means a tree
-was really pulled with a non-empty root, and `evidence` carries the node count,
-serialized bytes, the truncation marker and the AX source version.
-
-These never collapse into a single boolean. A receipt that says `ok` without
-an `expect` must call itself `unverified`. The history behind this — the
-"fake-ok family", retry traps, a 546 incident where a retry double-typed —
-is in [CHANGELOG.md](CHANGELOG.md) and the git log. The git history is the
-story: seven fingers on 05-24, a receipt contract on 09-21.
-
 ## Platform support matrix
 
 CDP (Chrome DevTools Protocol) is the cross-platform backbone. The a11y tree
-that `see` now defaults to rides on CDP's Accessibility domain, so it works on
-all three platforms. The macOS AX backend below is the *desktop app* one, and
-Vision depends on `osascript` / `screencapture` / `swiftc`, which do not exist
-on Linux or Windows.
+that `see` defaults to rides on CDP's Accessibility domain, so it works on all
+three platforms. The macOS AX backend below is the *desktop app* one, and Vision
+depends on `osascript` / `screencapture` / `swiftc`, which do not exist on Linux
+or Windows.
 
 | Backend       | darwin | linux | windows | Depends on                        |
 | --------------|--------|--------|---------|-----------------------------------|
@@ -101,11 +215,13 @@ on Linux or Windows.
 
 ```
 hand/          core: place resolution, perception, action, planning
+  hand.py      the Python face (open/see/do, action grammar, expect=)
 kit/           MCP server + manifest — what the Grove bundle is built from
 docs/          PRDs, iteration SOP, feedback ledger, publish SOP
-tests/         unit tests (run: python3 tests/run_tests.py)
+tests/         L1 unit tests (run: python3 tests/run_tests.py)
+tests/run_production.py   L1-L6 production gate (real Chrome)
 CHANGELOG.md   version history
-ROADMAP.md     what's next (F1–F15 backlog)
+ROADMAP.md     what's next
 SPEC.md        protocol spec
 ```
 

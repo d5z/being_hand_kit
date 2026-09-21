@@ -2,6 +2,10 @@
 
 **Hand — 硅基存在的双手。**
 
+> 本文件是 **MCP 面**（being 在 Beings Town 装 Grove 用的那张脸）。
+> **Python 面**（触手 / agent 在持久 kernel 里的 code mode：`from hand import hand`，
+> `hand.open/see/do` + `do(..., expect=)`）见仓库根 [README.md](../README.md)。
+
 对 being 只暴露四个原语：**open / see / do / plan**。内部根据 place type 自动路由到不同后端。Being 不选后端，框架代码选。
 
 ## 前置要求

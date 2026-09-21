@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.8.0-dev] — unreleased
+
+> 第二张脸：**code mode**。0.7 换了眼睛，0.8 给同一身体长出一张 Python 脸——
+> 同一 router、同一 CDP 后端、同一 a11y-v2 感知、同一回执契约，两种用户：
+> being 走 MCP，触手/agent 环境走 code mode。0.8 不加新能力。
+
+#### Added
+- **S1 Python face**：`from hand import hand` → `hand.open(url)` / `hand.see()` /
+  `hand.do(action)`（另有 `shot/close/handles/resolve/history/help/reset`），
+  进程级懒单例 `hand.browser()`：持久 kernel 里变量、句柄、Chrome 进程跨调用存活。
+  - 回执归一：MCP 面的 `"open": "ok"` → `ok: true`，统一骨架
+    `ok / action / kind / method / url / title / verified / error / hint`
+    （`ok`=调用判定，`verified`=证据判定，不合并）。
+  - **序列化确定性**：`FIELD_ORDER` 固定字段顺序、无时间戳/无 set 迭代 →
+    同页面状态 `json.dumps` 字节可复现。这是未来原生化协议的边界，字段名不轻改。
+  - 动作语法一条规则：`click [15]` / `click selector=a.login` / `click text=Sign in` /
+    `click xy=100,200` / `type hello` / `type [3] hello` / `scroll down`；无动词=点该目标。
+  - **教学式错误**（错误消息即文档）：selector 未命中 → 指向 `[idx]` 句柄或 `selector=`；
+    句柄过期 → 指向 `see()`；type 无焦点 → 指向先 click 字段；无 place → 指向 `hand.open`。
+  - 点击后不猜世界状态：`do()` 的 `url`/`title` 恒为 None（点击是异步的）。
+- **S2 `expect=` 世界状态验证**：`hand.do("click [15]", expect="url:/issues")`。
+  动作验证（`verified`/`evidence`）与世界状态验证（`expect.met`）分开报告；
+  有界等待默认 5s（`timeout=` 可调），超时 `met:false` 带当前 url/title 证据、不抛异常；
+  无 `expect` 立即返回且不读世界；动作失败则跳过等待（`expect.skipped`）。
+  形态：`url:`（大小写敏感）/`title:`/`text:`（忽略大小写）；非法形态是调用方错误
+  （`ok=false` + 命名问题 + 合法形态提示），动作层结果仍如实报告。
+- **S3 文档**：README 重写为 Python-first（Python 入口置顶、动作语法一页纸、
+  `see()` 返回 schema、持久性一句话、点击后重 see 确认 URL、`expect` 语义），
+  MCP 面退为第二视角。
+
+#### Dev
+- 版本：`hand.__version__ = "0.8.0-dev"`（dev 周期），`kit/manifest.json` 保持已发布的
+  0.7.0，发布 commit 统一改。相关版本断言改为「dev 周期规则」：semver 允许 `-dev`、
+  包版本不落后于已发布版本、manifest 永不带 `-dev`。
+- 测试：`tests/test_hand_api.py` 58 例（S1 42 + S2 16），注册进 `tests/run_tests.py`
+  与 `tests/run_production.py` 的 L1 列表。
+- live 冒烟（真 Chrome）：open → see（157 行 a11y 树/157 句柄）→ 教学提示 →
+  `do("click [68]")` 端到端 → `expect="url:github"` met=true；超时 case met=false
+  带证据；无 expect 0.01s 返回。
+
 ## [0.7.0] - 2026-09-21
 
 > **版本线重置**：0.7.0 不是 6.11.0 的渐进迭代，而是**感知层范式切换**——`cdp_see` 默认从
