@@ -145,3 +145,175 @@ class Journey:
 
 
 JOUNREYS_PLACEHOLDER = None
+
+
+# ── step helpers (data-driven journeys) ──────────────────────────────
+
+def _fail(reason, **fields):
+    out = {"error": reason, "verified": False,
+           "evidence": {"verified": False, "reason": reason}}
+    out.update(fields)
+    return out
+
+
+def step_open(url, key="open"):
+    def f(ctx):
+        from hand import router
+        r = router.route_open(url)
+        ctx[key] = r
+        return r
+    return f
+
+
+def step_see(kind="a11y", key="see", settle=0.0):
+    def f(ctx):
+        import time as _t
+        from hand import router
+        if settle:
+            _t.sleep(settle)
+        r = router.route_see(kind=kind)
+        ctx[key] = r
+        return r
+    return f
+
+
+def step_find_link(candidates, key="target_idx", roles=("link", "tab", "button")):
+    """Locate a handle whose accessible name matches one of `candidates`."""
+    def f(ctx):
+        see = ctx.get("see") or {}
+        handles = see.get("handles") or {}
+        for idx, h in handles.items():
+            if h.get("role") not in roles:
+                continue
+            name = h.get("name") or ""
+            for c in candidates:
+                if c.lower() in name.lower():
+                    ctx[key] = idx
+                    ctx["target_name"] = name
+                    ctx["target_role"] = h.get("role")
+                    return {"method": "find", "handle": f"[{idx}]", "name": name,
+                            "role": h.get("role"), "result": "ok", "verified": True,
+                            "evidence": {"role": h.get("role"), "name": name,
+                                         "handle": f"[{idx}]"}}
+        return _fail(f"no handle matching {candidates!r} among {len(handles)} nodes",
+                     searched=list(candidates))
+    return f
+
+
+def step_click_handle(key="target_idx"):
+    def f(ctx):
+        from hand import router
+        idx = ctx.get(key)
+        if not idx:
+            return _fail("no target handle located in a previous find step")
+        return router.route_do(f"[{idx}]")
+    return f
+
+
+def step_find_role(role, key="target_idx"):
+    def f(ctx):
+        see = ctx.get("see") or {}
+        for idx, h in (see.get("handles") or {}).items():
+            if h.get("role") == role:
+                ctx[key] = idx
+                ctx["target_name"] = h.get("name")
+                return {"method": "find", "handle": f"[{idx}]", "name": h.get("name"),
+                        "role": role, "result": "ok", "verified": True,
+                        "evidence": {"role": role, "name": h.get("name")}}
+        return _fail(f"no handle with role {role!r} in tree")
+    return f
+
+
+def step_type_focused(text, key="type"):
+    def f(ctx):
+        from hand.action.cdp_act import cdp_type_focused
+        r = cdp_type_focused(text)
+        ctx[key] = r
+        return r
+    return f
+
+
+def step_read_input(selector, key="read_back"):
+    def f(ctx):
+        from hand.perception.cdp_core import (
+            list_pages, resolve_page, cdp_connect, cdp_call, _init_domains)
+        pages = list_pages()
+        _, page = resolve_page(None, pages)
+        ws = cdp_connect(page["webSocketDebuggerUrl"])
+        try:
+            _init_domains(ws, "Runtime")
+            expr = ("(function(){var e=document.querySelector("
+                    + __import__("json").dumps(selector) + ");"
+                    "return e?e.value:null;})()")
+            raw = cdp_call(ws, "Runtime.evaluate",
+                           {"expression": expr, "returnByValue": True}, msg_id=88)
+            value = raw.get("result", {}).get("value")
+        finally:
+            ws.close()
+        ctx[key] = value
+        return {"method": "read_back", "selector": selector, "value": value,
+                "verified": value is not None,
+                "evidence": {"selector": selector, "value": value}}
+    return f
+
+
+def _step_receipts(ctx, step):
+    for rec in ctx.get("trace", {}).get("steps", []):
+        if rec["step"] == step:
+            return rec["receipt"]
+    return None
+
+
+# ── journey judges ───────────────────────────────────────────────────
+
+def judge_navigation_journey(ctx):
+    """open -> see -> find target -> click -> see again, ending on expect_url."""
+    from tests.harness import judge as J
+    name = ctx["trace"]["journey"]
+    r_open = _step_receipts(ctx, "open")
+    r_see = _step_receipts(ctx, "see")
+    r_find = _step_receipts(ctx, "find")
+    r_click = _step_receipts(ctx, "click")
+    r_see2 = _step_receipts(ctx, "see-again")
+
+    vo = J.judge_open(r_open, task=f"{name}/open")
+    if vo.state != J.HIT:
+        return J.miss(name, f"open failed: {vo.reason}", receipts={"open": r_open})
+    vs = J.judge_a11y(r_see, task=f"{name}/see")
+    if not vs.ok():
+        return J.miss(name, f"see failed: {vs.reason}", receipts={"see": r_see})
+    if r_find is None or r_find.get("error"):
+        return J.near(name, f"target not found in this page state (site drift): "
+                            f"{(r_find or {}).get('error')}", searched=ctx.get("candidates"))
+    vc = J.judge_click(r_click, task=f"{name}/click")
+    if not vc.ok():
+        return J.miss(name, f"click failed: {vc.reason}", receipts={"click": r_click})
+    after_url = (r_see2 or {}).get("url") or ""
+    expect = ctx.get("expect_url")
+    if expect and expect.lower() in after_url.lower():
+        return J.hit(name, f"journey landed on {after_url}",
+                     url=after_url, target=ctx.get("target_name"))
+    if after_url and after_url != (r_see or {}).get("url"):
+        return J.near(name, f"click navigated to {after_url} (expected *{expect}*) — site drift",
+                      url=after_url, expect=expect)
+    return J.miss(name, f"click landed but page did not change (url={after_url})",
+                  receipts={"click": r_click, "see-again": r_see2})
+
+
+def judge_form_journey(ctx):
+    from tests.harness import judge as J
+    name = ctx["trace"]["journey"]
+    r_open = _step_receipts(ctx, "open")
+    r_see = _step_receipts(ctx, "see")
+    r_focus = _step_receipts(ctx, "focus")
+    r_type = _step_receipts(ctx, "type")
+    if not J.judge_open(r_open, task=f"{name}/open").ok():
+        return J.miss(name, "open failed")
+    if not J.judge_a11y(r_see, task=f"{name}/see").ok():
+        return J.miss(name, "see failed")
+    vf = J.judge_click(r_focus, task=f"{name}/focus")
+    if not vf.ok():
+        return J.miss(name, f"focus click failed: {vf.reason}")
+    text = ctx.get("type_text", "")
+    return J.judge_type(r_type, text, read_back=ctx.get("read_back"),
+                        task=f"{name}/type")
