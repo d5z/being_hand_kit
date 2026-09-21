@@ -18,18 +18,16 @@ from tests.harness import scenarios as S
 from tests.harness.scenarios import FixtureServer, Journey
 
 _FX = None
-_SKIP = None
+_CHROME = runner.chrome_available()
 
 BEINGS = "https://beings.town"
 GITHUB = "https://github.com/d5z/being_hand_kit"
 
 
 def setUpModule():
-    global _FX, _SKIP
-    if not runner.chrome_available():
-        _SKIP = "Chrome CDP endpoint not reachable"
-        return
-    _FX = FixtureServer()
+    global _FX
+    if _CHROME:
+        _FX = FixtureServer()
 
 
 def tearDownModule():
@@ -96,7 +94,7 @@ def _run(self, journey, require_network=False):
         print(f"  ~ NEAR {journey.name}: {verdict.reason}")
 
 
-@unittest.skipIf(_SKIP is not None, "Chrome unavailable")
+@unittest.skipIf(not _CHROME, "Chrome unavailable")
 class L3Scenarios(unittest.TestCase):
 
     def test_journey_beings_town(self):

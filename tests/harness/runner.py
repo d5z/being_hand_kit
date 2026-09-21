@@ -106,22 +106,41 @@ def run_journey(journey, ctx=None, step_timeout=25):
 # ── close (kit cdp_close path, no mcp import) ────────────────────────
 
 def close_browser():
-    """Mirror kit/mcp_server.py::cdp_close — Browser.close on every page."""
+    """Close the CDP browser and PROBE that it actually died.
+
+    `Browser.close` needs no domain enable — issuing `Browser.enable` first
+    raises (no such method) and the whole close was silently skipped (found by
+    the L6 crash-recovery test; kit/mcp_server.py::cdp_close had the same bug).
+    The receipt is verified only when the endpoint is gone afterwards.
+    """
     try:
-        from hand.perception.cdp_core import list_pages, cdp_connect, cdp_call, _init_domains
+        from hand.perception.cdp_core import list_pages, cdp_connect, cdp_call
         pages = list_pages()
-        closed = 0
-        for page in pages:
+    except Exception as e:
+        return {"closed": "partial", "error": str(e), "verified": False,
+                "evidence": {"verified": False, "reason": str(e)}}
+    closed = 0
+    for page in pages:
+        try:
+            ws = cdp_connect(page["webSocketDebuggerUrl"])
+            cdp_call(ws, "Browser.close", {}, msg_id=1, timeout=5)
+            closed += 1
+        except Exception:
+            pass
+        finally:
             try:
-                ws = cdp_connect(page["webSocketDebuggerUrl"])
-                _init_domains(ws, "Browser")
-                cdp_call(ws, "Browser.close")
                 ws.close()
-                closed += 1
             except Exception:
                 pass
-        return {"closed": "ok", "pages_closed": closed,
-                "verified": False, "evidence": {"verified": False,
-                "reason": "cdp_close is claimed (Browser.close issued); no post-close browser probe"}}
-    except Exception as e:
-        return {"closed": "partial", "error": str(e)}
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        if not chrome_available(timeout=1):
+            break
+        time.sleep(0.4)
+    gone = not chrome_available(timeout=1)
+    return {"closed": "ok" if gone else "partial", "pages_closed": closed,
+            "endpoint_gone": gone, "verified": gone,
+            "evidence": {"verified": gone,
+                         "endpoint_gone": gone,
+                         "read_back": "GET /json/version after Browser.close",
+                         **({} if gone else {"reason": "endpoint still alive after Browser.close"})}}

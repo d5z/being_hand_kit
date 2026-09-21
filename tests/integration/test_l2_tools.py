@@ -28,15 +28,13 @@ from tests.harness import runner
 from tests.harness.scenarios import FixtureServer
 
 _FX = None
-_SKIP = None
+_CHROME = runner.chrome_available()
 
 
 def setUpModule():
-    global _FX, _SKIP
-    if not runner.chrome_available():
-        _SKIP = "Chrome CDP endpoint not reachable on localhost:9222"
-        return
-    _FX = FixtureServer()
+    global _FX
+    if _CHROME:
+        _FX = FixtureServer()
 
 
 def tearDownModule():
@@ -67,7 +65,7 @@ def _find_handle(receipt, role=None, name=None):
     return None
 
 
-@unittest.skipIf(_SKIP is not None, "Chrome unavailable")
+@unittest.skipIf(not _CHROME, "Chrome unavailable")
 class L2Tools(unittest.TestCase):
 
     # ── open ────────────────────────────────────────────────────────
@@ -168,8 +166,7 @@ class L2Tools(unittest.TestCase):
         # tab we kept open / transient zygote accounting)
         self.assertLessEqual(procs, base_procs + 1,
                              f"process leak: {base_procs} -> {procs}")
-        J.assert_verdict(self, J.judge_close(
-            {"closed": "ok", "pages_closed": 2}, task="close"))
+        # the browser itself is still alive (endpoint-level close is L6)
 
 
 if __name__ == "__main__":

@@ -163,13 +163,15 @@ def judge_screenshot(receipt, task="shot"):
 
 
 def judge_close(receipt, task="close"):
-    """cdp_close is `evidence: claimed` in the manifest — judge it honestly."""
+    """A close receipt is trusted only when the endpoint is proven gone."""
     if not isinstance(receipt, dict):
         return miss(task, f"not a dict: {receipt!r}", receipt=receipt)
-    if receipt.get("closed") == "ok":
-        return hit(task, f"closed ok, pages_closed={receipt.get('pages_closed')}", receipt=receipt)
-    if receipt.get("closed") == "partial":
-        return near(task, f"close partial: {receipt.get('error')}", receipt=receipt)
+    if receipt.get("closed") == "ok" and receipt.get("verified") is True:
+        return hit(task, f"closed, endpoint gone (pages_closed={receipt.get('pages_closed')})",
+                   receipt=receipt)
+    if receipt.get("closed") in ("ok", "partial") and receipt.get("verified") is False:
+        return near(task, f"close unverified: {_reason_of(receipt) or receipt.get('error')}",
+                    receipt=receipt)
     return miss(task, f"close receipt unknown: {receipt!r}", receipt=receipt)
 
 

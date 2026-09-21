@@ -28,18 +28,16 @@ from tests.harness import runner
 from tests.harness.scenarios import FixtureServer
 
 _FX = None
-_SKIP = None
+_CHROME = runner.chrome_available()
 
 # Fields the implemented F14 receipt contract guarantees (docs/prd-receipt-contract.md S3).
 OUTCOME_KEYS = ("open", "method", "closed")
 
 
 def setUpModule():
-    global _FX, _SKIP
-    if not runner.chrome_available():
-        _SKIP = "Chrome CDP endpoint not reachable"
-        return
-    _FX = FixtureServer()
+    global _FX
+    if _CHROME:
+        _FX = FixtureServer()
 
 
 def tearDownModule():
@@ -78,7 +76,7 @@ def _eval(expr):
         ws.close()
 
 
-@unittest.skipIf(_SKIP is not None, "Chrome unavailable")
+@unittest.skipIf(not _CHROME, "Chrome unavailable")
 class L4ReceiptContract(unittest.TestCase):
 
     # ── A. field completeness over a real call sweep ────────────────
