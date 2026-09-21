@@ -108,22 +108,47 @@ def cdp_open(url: str) -> dict:
     return route_open(url)
 @mcp.tool()
 def cdp_close() -> dict:
+    """Close Chrome and verify it is gone.
+
+    Browser.close needs no domain enable; issuing `Browser.enable` first raised
+    (no such method) and the close was silently skipped — a fake-ok found by the
+    L6 crash tests. The receipt is verified only when GET /json/version stops
+    answering after the close."""
     _bump()
+    import time as _t
+    from hand.perception.cdp_launcher import chrome_running
     try:
-        from hand.perception.cdp_core import list_pages, cdp_connect, cdp_call, _init_domains
+        from hand.perception.cdp_core import list_pages, cdp_connect, cdp_call
         pages = list_pages()
         closed = 0
         for page in pages:
+            ws = None
             try:
                 ws = cdp_connect(page["webSocketDebuggerUrl"])
-                _init_domains(ws, "Browser")
-                cdp_call(ws, "Browser.close")
-                ws.close()
+                cdp_call(ws, "Browser.close", {}, msg_id=1, timeout=5)
                 closed += 1
-            except: pass
-        return {"closed": "ok", "pages_closed": closed}
+            except Exception:
+                pass
+            finally:
+                try:
+                    if ws:
+                        ws.close()
+                except Exception:
+                    pass
+        deadline = _t.time() + 8
+        while _t.time() < deadline and chrome_running():
+            _t.sleep(0.4)
+        gone = not chrome_running()
+        out = {"closed": "ok" if gone else "partial", "pages_closed": closed,
+               "endpoint_gone": gone, "verified": gone,
+               "evidence": {"verified": gone, "endpoint_gone": gone,
+                            "read_back": "GET /json/version after Browser.close"}}
+        if not gone:
+            out["evidence"]["reason"] = "endpoint still alive after Browser.close"
+        return out
     except Exception as e:
-        return {"closed": "partial", "error": str(e)}
+        return {"closed": "partial", "error": str(e), "verified": False,
+                "evidence": {"verified": False, "reason": str(e)}}
 @mcp.tool()
 def cdp_nav(url: str) -> dict:
     from hand.router import route_open

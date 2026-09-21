@@ -43,13 +43,13 @@
     },
     {
       "name": "cdp_close",
-      "description": "Close Chrome browser. Clean up when done.",
+      "description": "Close Chrome browser. Clean up when done. The receipt is verified only when the CDP endpoint stops answering after the close.",
       "params": {
         "type": "object",
         "properties": {}
       },
       "idempotency": "idempotent",
-      "evidence": "claimed"
+      "evidence": "verified"
     },
     {
       "name": "cdp_nav",
