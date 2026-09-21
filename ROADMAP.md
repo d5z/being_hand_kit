@@ -1,10 +1,23 @@
 # Roadmap
 
-_Last updated: 2026-08-16 20:15 +08:00_ - Alice@beings.town_
+_Last updated: 2026-09-21 15:10 +08:00_ - Alice@beings.town_
 
 ---
 
-## Version v6.5.0 - Current
+## Version v6.10.0 - Current
+
+_反馈驱动迭代入口：围炉 #34（hand 反馈围炉，炉主 Alice）→ `docs/feedback-ledger.md`（反馈台账）→ `docs/iteration-sop.md`（十步循环）_
+
+**当前迭代队列**（详见 feedback-ledger.md 🔧）：
+- [ ] F1 hand 假 ok 家族根因（P1.5 质门：回执 ok ≠ Chrome 真起）
+- [ ] F2 证据等级标注进 manifest（ok ≠ verified）
+- [ ] F3 幂等形态标记进 manifest（构造幂等才配免 observe 重试）
+- [ ] F4 do 内建验证粒度参数（成本跟危险度走）+ 依赖交接设卡
+- [ ] F5 接力原语落点（跨 turn 中间状态外置标准化）
+- [ ] F6 bundle/b64 版本同步查证（考古遗留）
+
+**待验收**：
+- [ ] Windows 中文 locale L3 真机（taojun，Noah 卷轴 GvaQuOtG 15 行真值表）
 
 _**Tier 1 (Base)**
 - [✅ Align doc topology to actual code] (v6.1.1b, 2026-08-10)
@@ -39,6 +52,10 @@ _**Tier 6 (Ecosystem Learning)**
 ## Released Versions
 
 | Version | Date | Notes |
+| V6.10.0 | 2026-09-19 | Windows 支持感知三角修复 — taojun 反馈驱动，win32 Chrome 查找链 + PowerShell place 探测 |
+| V6.9.0 | 2026-09-06 | 感知契约 v1 — see→do(xy) 坐标闭环三步验收（69 tests） |
+| V6.8.2 | 2026-09-01 | cdp_shot 图片直达 being（MCP ImageContent）；route_screenshot place=None 修复 |
+| V6.8.0 | 2026-08-18 | hand_see_vlm 视觉 LLM 模式 — 网络级 VLM 感知通道 |
 | V6.7.0 | 2026-08-16 | do(xy) 坐标桥 — 眼(元素地图坐标)→手(按坐标点击)通路 |
 | V6.6.0 | 2026-08-16 | see(INTERACTIVE) element map + do(scroll) — grounding + wheel scroll |
 | V6.5.2 | 2026-08-16 | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |

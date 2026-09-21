@@ -26,6 +26,10 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.5.2 | 2026-08-16 | released | cdp_type input chain fix, route_see kind=network place-independent, kit/sync.sh |
 | V6.6.0 | 2026-08-16 | released | see(INTERACTIVE) element map, do(scroll), grounding + wheel scroll |
 | V6.7.0 | 2026-08-16 | released | do(xy) 坐标桥 — 眼(元素地图坐标)→手(按坐标点击)通路，坐标契约统一物理像素 |
+| V6.8.0 | 2026-08-18 | released | hand_see_vlm 视觉 LLM 模式（route_see_vlm，网络级 VLM 通道） |
+| V6.8.2 | 2026-09-01 | released | cdp_shot 图片直达 being（MCP ImageContent）；route_screenshot place=None 陷阱修复 |
+| V6.9.0 | 2026-09-06 | released | 感知契约 v1：see→do(xy) 坐标闭环三步验收（69 tests），acceptance-contract-v1-cdp.md |
+| V6.10.0 | 2026-09-19 | released | Windows 支持（感知三角修复：cdp_shot/hand_see_vlm/cdp_see 三件套），taojun 反馈驱动 |
 
 ## Architecture Tiers
 
