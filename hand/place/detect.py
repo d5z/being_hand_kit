@@ -20,25 +20,47 @@ def _url_host(url: str) -> str:
         return ""
 
 
-def _navigate_confirmed(target: str) -> bool:
-    """True when a live CDP page now sits on the target URL's host.
+def _navigate_confirmed(target: str, ws=None, nav_error=None):
+    """(confirmed, reason) — did the navigation actually land on `target`?
 
-    Uses `list_pages` (one HTTP GET to /json) rather than trusting that
-    Page.navigate was accepted: a DNS failure leaves the tab on
-    `chrome-error://chromewebdata/` with no error raised by the call itself.
-    Host-level matching tolerates http→https / trailing-slash redirects.
+    Two independent facts are required:
+      1. Page.navigate reported no errorText (net::ERR_NAME_NOT_RESOLVED, ...)
+      2. the *live document* (Runtime.evaluate `location.href`) sits on the
+         target host.
+
+    Checking the /json page list alone is a false positive: Chrome keeps the
+    requested URL (and the host as the title) in /json while the document is
+    actually a `chrome-error://chromewebdata/` page. Found by dogfood on
+    2026-09-21 — see tests/test_receipt_contract.py::
+    test_error_page_is_not_confirmed_even_if_json_lists_target.
     """
+    if nav_error:
+        return False, f"Page.navigate errorText: {nav_error}"
     host = _url_host(target)
     if not host:
-        return False
-    try:
-        from hand.perception.cdp_core import list_pages
-        for page in list_pages():
-            if host in (page.get("url") or "").lower():
-                return True
-    except Exception:
-        return False
-    return False
+        return False, f"目标 URL 无法解析出 host: {target!r}"
+    href = None
+    if ws is not None:
+        try:
+            from hand.perception.cdp_core import cdp_call
+            raw = cdp_call(ws, 'Runtime.evaluate',
+                           {'expression': 'location.href', 'returnByValue': True},
+                           msg_id=1)
+            href = raw.get('result', {}).get('value')
+        except Exception as e:
+            href = None
+            read_error = f"{type(e).__name__}: {e}"
+        else:
+            read_error = None
+    else:
+        read_error = "no CDP session to read the live document"
+    if not href:
+        if not read_error:
+            read_error = "Runtime.evaluate 未返回 location.href"
+        return False, (f"无法读取活文档 location.href（导航未证实）: {read_error}")
+    if host in href.lower():
+        return True, f"活文档 href={href} 命中目标 host {host}"
+    return False, f"活文档 href={href} 未命中目标 host {host}（可能是错误页/重定向到别处）"
 
 
 def _with_evidence(place: Place, evidence: dict) -> Place:
@@ -67,21 +89,22 @@ def _activate_evidence(target: str, error=None) -> dict:
     return {"level": "activate_issued", "detail": detail}
 
 
-def _browser_place(target: str, navigate_confirmed: bool, nav_error=None) -> Place:
+def _browser_place(target: str, navigate_confirmed: bool, reason=None) -> Place:
     """Browser Place + honest evidence level.
 
     navigate_confirmed=True  → level "navigate_confirmed" (path ①)
     otherwise                → level "endpoint_alive"     (path ② downgrade)
+    `reason` says exactly which fact failed — the downgrade is never silent.
     """
     if navigate_confirmed:
         evidence = {
             "level": "navigate_confirmed",
-            "detail": f"Page.navigate 后 list_pages 复核到 {target} 的 host 在场",
+            "detail": f"Page.navigate 无 errorText 且活文档命中目标 host: {reason}",
         }
     else:
         detail = "导航未证实，仅 CDP endpoint 存活"
-        if nav_error:
-            detail += f"；CDP 异常: {nav_error}"
+        if reason:
+            detail += f"；{reason}"
         evidence = {"level": "endpoint_alive", "detail": detail}
     try:
         from hand.perception.cdp_launcher import endpoint_info
@@ -165,13 +188,18 @@ def open_place(target: str) -> Place:
             if pages:
                 idx, page = resolve_page(None, pages)
                 ws = cdp_connect(page['webSocketDebuggerUrl'])
-                _init_domains(ws, 'Page')
-                nav = cdp_call(ws, 'Page.navigate', {'url': target})
-                ws.close()
-                if isinstance(nav, dict) and nav.get('errorText'):
-                    nav_error = nav['errorText']
-                time.sleep(1)
-                return _browser_place(target, _navigate_confirmed(target), nav_error)
+                try:
+                    _init_domains(ws, 'Page')
+                    nav = cdp_call(ws, 'Page.navigate', {'url': target})
+                    if isinstance(nav, dict) and nav.get('errorText'):
+                        nav_error = nav['errorText']
+                    time.sleep(1)
+                    # Read the live document *before* dropping the session —
+                    # /json alone cannot tell a landed page from an error page.
+                    confirmed, reason = _navigate_confirmed(target, ws, nav_error)
+                finally:
+                    ws.close()
+                return _browser_place(target, confirmed, reason)
         except Exception as e:
             # Path ② downgrade — never silent: the receipt must be able to say
             # "endpoint alive, navigation unproven" and name the exception.

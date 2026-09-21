@@ -40,7 +40,8 @@ class _FakeWS:
 class TestRouteOpenEvidence(unittest.TestCase):
     """S1: the three open paths must be distinguishable in the receipt."""
 
-    def _open(self, pages_before, pages_after, nav_result=None, chrome_alive=True):
+    def _open(self, pages_before, pages_after, nav_result=None, chrome_alive=True,
+              live_href=PAGE_URL):
         calls = {"list_pages": 0}
 
         def fake_list_pages():
@@ -55,6 +56,10 @@ class TestRouteOpenEvidence(unittest.TestCase):
                 if isinstance(nav_result, Exception):
                     raise nav_result
                 return nav_result or {}
+            if "location.href" in (params or {}).get("expression", ""):
+                if isinstance(live_href, Exception):
+                    raise live_href
+                return {"result": {"value": live_href}}
             return {}
 
         with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=chrome_alive), \
@@ -85,10 +90,32 @@ class TestRouteOpenEvidence(unittest.TestCase):
 
     def test_path2_endpoint_alive_on_navigate_error_text(self):
         r = self._open([_fake_page()], [_fake_page("chrome-error://chromewebdata/")],
-                       nav_result={"errorText": "net::ERR_NAME_NOT_RESOLVED"})
+                       nav_result={"errorText": "net::ERR_NAME_NOT_RESOLVED"},
+                       live_href="chrome-error://chromewebdata/")
         self.assertFalse(r["verified"])
         self.assertEqual(r["evidence"]["level"], "endpoint_alive")
         self.assertIn("ERR_NAME_NOT_RESOLVED", r["evidence"]["detail"])
+
+    def test_error_page_is_not_confirmed_even_if_json_lists_target(self):
+        """Dogfood regression: Chrome keeps the requested URL in /json while the
+        document is a chrome-error page. Host-in-/json alone is a false positive."""
+        r = self._open([_fake_page()], [_fake_page("https://no-such.invalid/")],
+                       live_href="chrome-error://chromewebdata/")
+        self.assertFalse(r["verified"])
+        self.assertEqual(r["evidence"]["level"], "endpoint_alive")
+        self.assertIn("chrome-error", r["evidence"]["detail"])
+
+    def test_unreadable_live_href_is_not_confirmed(self):
+        r = self._open([_fake_page()], [_fake_page()],
+                       live_href=RuntimeError("Runtime.evaluate failed"))
+        self.assertFalse(r["verified"])
+        self.assertEqual(r["evidence"]["level"], "endpoint_alive")
+        self.assertIn("location.href", r["evidence"]["detail"])
+
+    def test_redirect_to_https_still_confirmed(self):
+        r = self._open([_fake_page()], [_fake_page()],
+                       live_href="https://example.com/")
+        self.assertTrue(r["verified"])
 
     def test_path3_no_endpoint_still_raises(self):
         with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=False), \
@@ -217,6 +244,11 @@ class TestEnsureChromeEndpointProbe(unittest.TestCase):
         def fake_list_pages():
             return [_fake_page()]
 
+        def fake_cdp_call(ws, method, params=None, msg_id=1, timeout=30):
+            if "location.href" in (params or {}).get("expression", ""):
+                return {"result": {"value": PAGE_URL}}
+            return {}
+
         with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=True), \
              mock.patch("hand.perception.cdp_launcher.endpoint_info",
                         return_value={"Browser": "HeadlessChrome/140.0"}), \
@@ -224,7 +256,7 @@ class TestEnsureChromeEndpointProbe(unittest.TestCase):
              mock.patch("hand.perception.cdp_core.resolve_page", return_value=(0, _fake_page())), \
              mock.patch("hand.perception.cdp_core.cdp_connect", return_value=_FakeWS()), \
              mock.patch("hand.perception.cdp_core._init_domains"), \
-             mock.patch("hand.perception.cdp_core.cdp_call", return_value={}), \
+             mock.patch("hand.perception.cdp_core.cdp_call", side_effect=fake_cdp_call), \
              mock.patch("hand.place.detect.time.sleep"):
             reset_session()
             r = router.route_open("https://example.com")
