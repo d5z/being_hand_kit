@@ -39,13 +39,15 @@ _配套：`docs/iteration-sop.md`（十步循环）——本台账是 SOP 第 1-
 | F4 | **do 内建验证粒度参数**：成本跟危险度走不跟步数走（不可逆逐步验/纯读抽验）+ 依赖交接设卡（可逆输出喂不可逆动作的交接点必验） | Noah 545②；Neuromancer 546 三件套 | P2 | 研究中（等 839 拆账数据） |
 | F5 | **接力原语落点**：跨 turn 接力的中间状态外置（游标/链头写 attribute）在 hand 侧的标准化支持 | Neuromancer 583 | P3 | 未启动 |
 | F6 | **bundle 与 b64 源码版本可能不同步**（考古：bundle 6.5.1 vs b64 1.1.0，哪个实际部署无答案） | 8/13 考古遗留 | P3 | 待查证 |
-| F7 | **Chrome profile 隔离**：`_chrome_flags()` 无 `--user-data-dir`，spawn 撞人类正在运行的 Chrome（profile 锁 → 不开调试端口或复用现有实例）。修法：kit 内置隔离 profile（如 `~/.hand/chrome-profile`），共享 profile 走显式 opt-in。**安全相关：可能干扰人类伙伴的浏览器会话** | Cotton grove-feedback 09-20 ②（seed alifsU-CAsKDZbaGn5wRR） | **P1** | 已确认 6.11.0 仍在（读源码核实）。6.12.0 候选 |
-| F8 | **macOS Chrome 发现层**：`_find_chrome()` 非 Windows 路径全是 Linux 形状——playwright cache 只找 `chrome-linux64`/`headless-shell-linux64`，无 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` 候选，playwright 的 macOS cache 形状（chrome-mac）也未覆盖 | Cotton grove-feedback 09-20 ① | P1.5 | 已确认 6.11.0 仍在。6.12.0 候选 |
+| F7 | **Chrome profile 隔离**：6.11.0 `_chrome_flags()` 无 `--user-data-dir`，spawn 撞人类正在运行的 Chrome（profile 锁）。**Cotton 现场反例（935）改写修法**：6.10.0 机器上有 chrome-wrapper.sh（隔离 profile + 硬编码 /Applications 路径）实战两天零碰撞（人类 Chrome 152 / kit Chrome 153 并存）——机制在、线没接（start.sh 不调 wrapper，spawn 链静态断裂）。修法：把 wrapper 的 flags 吸收进正规链——`_chrome_flags()` 加 `--user-data-dir=<kit>/.chrome-profile`（共享 profile 走显式 opt-in env），不是复活 wrapper。wrapper 来源考古无果（repo 75 commits 无 user-data-dir、旧 workspace 无、当前 bundle 无）——可能来自 portal 安装器侧。**Cotton 机器是现成验收环境**（人类 Chrome 常驻 + kit Chrome 并存） | Cotton grove-feedback 09-20 ② + 935 现场反例 | **P1** | 6.12.0 主案 |
+| F8 | **macOS Chrome 发现层**：`_find_chrome()` 非 Windows 路径全是 Linux 形状。**Cotton 935 补笔**：wrapper 硬编码的 `/Applications/Google Chrome.app` 事实上就是 macOS 候选，只是没接进发现链——与 F7 同根（机制在、线没接）。修法：_find_chrome 加 macOS 标准路径候选 | Cotton grove-feedback 09-20 ① + 935 | P1.5 | 6.12.0（与 F7 同批） |
 | F9 | **mcp 2.x 兼容**：kit 按 mcp 1.x 写（`from mcp.server import FastMCP`），mcp 2.2.0 下 ImportError。修法：requirements.txt pin `mcp<2` 或适配 2.x | Cotton grove-feedback 09-20 ③ | P2 | **6.11.1 quick-fix 批候选** |
 | F10 | **requirements.txt 缺 websocket/requests** | Cotton grove-feedback 09-20 ④ | P2 | **6.11.1 quick-fix 批候选** |
 | F11 | **.env 无加载逻辑**：start.sh/mcp_server.py 都不读。修法：补 dotenv 或 start.sh source | Cotton grove-feedback 09-20 ⑤ | P2 | **6.11.1 quick-fix 批候选** |
 | F12 | **python ≥3.10 前置未写明**（mcp SDK 需 ≥3.10，系统 3.9 跑不了）——文档项 | Cotton grove-feedback 09-20 ⑥ | P3 | **6.11.1 quick-fix 批候选**（doc） |
 | F13 | **冷启动 2-3s 耗时写进文档**（v6.11.0 S2 端点探测上限 6s，典型 2-3s 有余量，用户应知预期） | Judy grove-feedback 09-17（seed hPwNA-zEy8GD3LMB66rpZ） | P3 | **6.11.1 quick-fix 批候选**（doc） |
+| F14 | **verified 是「派发已验」不是「效果已验」**：cdp_click/cdp_type 回执 evidence 全是动作前抓的（selector 预检/焦点目标/点击前元素），派发后零回读。单布尔把「目标已验」和「效果已验」压成一比特——与 216「拉取过≠处理过≠到达过三态压一比特」同构。便宜升级：cdp_type 派发后 Runtime.evaluate 读 el.value（顺带抓 app 变换输入——掩码/自动格式化）；cdp_click 效果是 app 定义的，加可选 expect 参数（grip 模式），顺带封 hit-check 与 click 之间的 TOCTOU 窗口 | Neuromancer 931 B（②研交卷） | **P1** | 6.12.0（回执契约走完最后一层：dispatch→effect） |
+| F15 | **cdp_type fast 路径是 replace 不是 append**：cdp_act.py:143，slow=insertText（append✓），fast=True 走 el.value=text 整值替换（构造上幂等）。当前全库无调用方传 fast=True（不可达），但 manifest 扁平 append 标签会静默过期。修法：idempotency 按路径分标或删 fast 路径 | Neuromancer 931 A（②研交卷） | P2 | 6.12.0（manifest schema 变更） |
 
 ## ⏳ 待验收（L3 真机）
 
