@@ -1,0 +1,655 @@
+{
+ "model": "z-ai/glm-5.3",
+ "page": "https://github.com/d5z/being_hand_kit",
+ "ts": "2026-09-21 17:42:54",
+ "results": [
+  {
+   "label": "github|我要看这个仓库的 issue 列表。|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#issues-tab text=Issues",
+   "tokens_in": 7654,
+   "tokens_out": 15,
+   "latency_s": 1.4
+  },
+  {
+   "label": "github|我要看这个仓库的 issue 列表。|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#issues-tab text=Issues",
+   "tokens_in": 7679,
+   "tokens_out": 15,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|我要看这个仓库的 issue 列表。|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#issues-tab text=Issues",
+   "tokens_in": 7679,
+   "tokens_out": 15,
+   "latency_s": 0.7
+  },
+  {
+   "label": "github|我要看这个仓库的 issue 列表。|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "[15] link \"Issues\"",
+   "tokens_in": 6364,
+   "tokens_out": 20,
+   "latency_s": 1.3
+  },
+  {
+   "label": "github|我要看这个仓库的 issue 列表。|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "[15] link \"Issues\"",
+   "tokens_in": 6364,
+   "tokens_out": 14,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|我要看这个仓库的 issue 列表。|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "[15] link \"Issues\"",
+   "tokens_in": 6364,
+   "tokens_out": 20,
+   "latency_s": 12.8
+  },
+  {
+   "label": "github|我要看这个仓库的 pull requ|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#pull-requests-tab text=Pull requests",
+   "tokens_in": 7672,
+   "tokens_out": 17,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|我要看这个仓库的 pull requ|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#pull-requests-tab text=Pull requests",
+   "tokens_in": 7647,
+   "tokens_out": 17,
+   "latency_s": 1.3
+  },
+  {
+   "label": "github|我要看这个仓库的 pull requ|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#pull-requests-tab text=Pull requests",
+   "tokens_in": 7647,
+   "tokens_out": 17,
+   "latency_s": 1.9
+  },
+  {
+   "label": "github|我要看这个仓库的 pull requ|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "[17] link \"Pull requests\"",
+   "tokens_in": 6332,
+   "tokens_out": 14,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|我要看这个仓库的 pull requ|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "[17] link \"Pull requests\"",
+   "tokens_in": 6357,
+   "tokens_out": 14,
+   "latency_s": 0.7
+  },
+  {
+   "label": "github|我要看这个仓库的 pull requ|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "[17] link \"Pull requests\"",
+   "tokens_in": 6357,
+   "tokens_out": 14,
+   "latency_s": 1.3
+  },
+  {
+   "label": "github|我要查看仓库的 Actions 工作|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#actions-tab text=Actions",
+   "tokens_in": 7674,
+   "tokens_out": 15,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|我要查看仓库的 Actions 工作|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#actions-tab text=Actions",
+   "tokens_in": 7674,
+   "tokens_out": 15,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|我要查看仓库的 Actions 工作|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#actions-tab text=Actions",
+   "tokens_in": 7674,
+   "tokens_out": 15,
+   "latency_s": 0.7
+  },
+  {
+   "label": "github|我要查看仓库的 Actions 工作|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "[19] link \"Actions\"",
+   "tokens_in": 6334,
+   "tokens_out": 14,
+   "latency_s": 1.2
+  },
+  {
+   "label": "github|我要查看仓库的 Actions 工作|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "[19] link \"Actions\"",
+   "tokens_in": 6334,
+   "tokens_out": 14,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|我要查看仓库的 Actions 工作|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "[19] link \"Actions\"",
+   "tokens_in": 6334,
+   "tokens_out": 14,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|这个仓库有 73 个 commit，|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=a.prc.LinkButton.flex.fgColor text=",
+   "tokens_in": 7677,
+   "tokens_out": 121,
+   "latency_s": 1.6
+  },
+  {
+   "label": "github|这个仓库有 73 个 commit，|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=a.prc.LinkButton.flex.fgColor text=",
+   "tokens_in": 7652,
+   "tokens_out": 64,
+   "latency_s": 1.3
+  },
+  {
+   "label": "github|这个仓库有 73 个 commit，|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=a.prc.LinkButton.flex.fgColor text=",
+   "tokens_in": 7677,
+   "tokens_out": 263,
+   "latency_s": 4.0
+  },
+  {
+   "label": "github|这个仓库有 73 个 commit，|B|0",
+   "ok": false,
+   "group": "B",
+   "detail": "[121] link \"View commit history for this f\"",
+   "tokens_in": 6362,
+   "tokens_out": 182,
+   "latency_s": 7.7
+  },
+  {
+   "label": "github|这个仓库有 73 个 commit，|B|1",
+   "ok": false,
+   "group": "B",
+   "detail": "[121] link \"View commit history for this f\"",
+   "tokens_in": 6362,
+   "tokens_out": 21,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|这个仓库有 73 个 commit，|B|2",
+   "ok": false,
+   "group": "B",
+   "detail": "[121] link \"View commit history for this f\"",
+   "tokens_in": 6362,
+   "tokens_out": 50,
+   "latency_s": 2.2
+  },
+  {
+   "label": "github|页面右上有「Sign in」。输出点|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=a.Primer_Brand.Primer_Brand.Primer_Brand.AuthCTAs text=",
+   "tokens_in": 7646,
+   "tokens_out": 29,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|页面右上有「Sign in」。输出点|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=a.Primer_Brand.Primer_Brand.Primer_Brand.AuthCTAs text=",
+   "tokens_in": 7671,
+   "tokens_out": 29,
+   "latency_s": 1.8
+  },
+  {
+   "label": "github|页面右上有「Sign in」。输出点|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=a.Primer_Brand.Primer_Brand.Primer_Brand.AuthCTAs text=",
+   "tokens_in": 7646,
+   "tokens_out": 29,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|页面右上有「Sign in」。输出点|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "[93] link \"Sign in\"",
+   "tokens_in": 6331,
+   "tokens_out": 14,
+   "latency_s": 1.4
+  },
+  {
+   "label": "github|页面右上有「Sign in」。输出点|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "[93] link \"Sign in\"",
+   "tokens_in": 6331,
+   "tokens_out": 14,
+   "latency_s": 1.2
+  },
+  {
+   "label": "github|页面右上有「Sign in」。输出点|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "[93] link \"Sign in\"",
+   "tokens_in": 6331,
+   "tokens_out": 14,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|这个仓库的 About 侧栏里写了什|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=当前页面元素清单中没有显示 About 侧栏的 topic 标签（侧栏内容未包含在可见元素中），无法",
+   "tokens_in": 7653,
+   "tokens_out": 189,
+   "latency_s": 2.3
+  },
+  {
+   "label": "github|这个仓库的 About 侧栏里写了什|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "unparseable: ",
+   "tokens_in": 7678,
+   "tokens_out": 1500,
+   "latency_s": 24.2
+  },
+  {
+   "label": "github|这个仓库的 About 侧栏里写了什|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=当前页面元素清单中没有包含 About 侧栏的 Topics 区域，无法从可见元素中读取到任何 to",
+   "tokens_in": 7678,
+   "tokens_out": 192,
+   "latency_s": 2.2
+  },
+  {
+   "label": "github|这个仓库的 About 侧栏里写了什|B|0",
+   "ok": false,
+   "group": "B",
+   "detail": "answer=About 侧栏中没有 topic 标签，该仓库没有设置任何 topics。",
+   "tokens_in": 6338,
+   "tokens_out": 24,
+   "latency_s": 4.2
+  },
+  {
+   "label": "github|这个仓库的 About 侧栏里写了什|B|1",
+   "ok": false,
+   "group": "B",
+   "detail": "answer=这个仓库的 About 侧栏没有显示任何 topic 标签。侧栏中 About 部分只有描述文字 \"",
+   "tokens_in": 6338,
+   "tokens_out": 115,
+   "latency_s": 6.9
+  },
+  {
+   "label": "github|这个仓库的 About 侧栏里写了什|B|2",
+   "ok": false,
+   "group": "B",
+   "detail": "answer=About 侧栏中没有列出任何 topic 标签。",
+   "tokens_in": 6332,
+   "tokens_out": 18,
+   "latency_s": 4.6
+  },
+  {
+   "label": "github|主导航（Code/Issues/..|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=7",
+   "tokens_in": 7678,
+   "tokens_out": 32,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|主导航（Code/Issues/..|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=7",
+   "tokens_in": 7653,
+   "tokens_out": 29,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|主导航（Code/Issues/..|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=7",
+   "tokens_in": 7653,
+   "tokens_out": 31,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|主导航（Code/Issues/..|B|0",
+   "ok": false,
+   "group": "B",
+   "detail": "answer=7",
+   "tokens_in": 6363,
+   "tokens_out": 85,
+   "latency_s": 1.4
+  },
+  {
+   "label": "github|主导航（Code/Issues/..|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=6",
+   "tokens_in": 6363,
+   "tokens_out": 78,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|主导航（Code/Issues/..|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=6",
+   "tokens_in": 6363,
+   "tokens_out": 8,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|README 的第一行标题是什么？原|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=Hand",
+   "tokens_in": 7646,
+   "tokens_out": 17,
+   "latency_s": 1.1
+  },
+  {
+   "label": "github|README 的第一行标题是什么？原|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=Hand",
+   "tokens_in": 7671,
+   "tokens_out": 17,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|README 的第一行标题是什么？原|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=Hand",
+   "tokens_in": 7671,
+   "tokens_out": 13,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|README 的第一行标题是什么？原|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=Hand",
+   "tokens_in": 6356,
+   "tokens_out": 16,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|README 的第一行标题是什么？原|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=Hand",
+   "tokens_in": 6356,
+   "tokens_out": 8,
+   "latency_s": 0.5
+  },
+  {
+   "label": "github|README 的第一行标题是什么？原|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=Hand",
+   "tokens_in": 6356,
+   "tokens_out": 15,
+   "latency_s": 12.2
+  },
+  {
+   "label": "github|我想给这个项目提 issue。输出点|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#issues-tab text=Issues",
+   "tokens_in": 7671,
+   "tokens_out": 25,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|我想给这个项目提 issue。输出点|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#issues-tab text=Issues",
+   "tokens_in": 7671,
+   "tokens_out": 28,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|我想给这个项目提 issue。输出点|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "selector=#issues-tab text=Issues",
+   "tokens_in": 7671,
+   "tokens_out": 80,
+   "latency_s": 1.1
+  },
+  {
+   "label": "github|我想给这个项目提 issue。输出点|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "[15] link \"Issues\"",
+   "tokens_in": 6356,
+   "tokens_out": 14,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|我想给这个项目提 issue。输出点|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "[15] link \"Issues\"",
+   "tokens_in": 6356,
+   "tokens_out": 14,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|我想给这个项目提 issue。输出点|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "[15] link \"Issues\"",
+   "tokens_in": 6356,
+   "tokens_out": 14,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|这个页面用的开源协议（license|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=MIT",
+   "tokens_in": 7674,
+   "tokens_out": 11,
+   "latency_s": 0.8
+  },
+  {
+   "label": "github|这个页面用的开源协议（license|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=MIT",
+   "tokens_in": 7649,
+   "tokens_out": 8,
+   "latency_s": 1.1
+  },
+  {
+   "label": "github|这个页面用的开源协议（license|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=MIT",
+   "tokens_in": 7674,
+   "tokens_out": 24,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|这个页面用的开源协议（license|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=MIT",
+   "tokens_in": 6359,
+   "tokens_out": 8,
+   "latency_s": 0.7
+  },
+  {
+   "label": "github|这个页面用的开源协议（license|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=MIT",
+   "tokens_in": 6359,
+   "tokens_out": 8,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|这个页面用的开源协议（license|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=MIT",
+   "tokens_in": 6359,
+   "tokens_out": 8,
+   "latency_s": 0.5
+  },
+  {
+   "label": "github|我想搜索这个仓库里的代码。输出点击操|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=button.Primer_Brand.Primer_Brand.Primer_Brand.Head text=",
+   "tokens_in": 7671,
+   "tokens_out": 216,
+   "latency_s": 2.6
+  },
+  {
+   "label": "github|我想搜索这个仓库里的代码。输出点击操|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=button.Primer_Brand.Primer_Brand.Primer_Brand.Head text=",
+   "tokens_in": 7646,
+   "tokens_out": 157,
+   "latency_s": 1.7
+  },
+  {
+   "label": "github|我想搜索这个仓库里的代码。输出点击操|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "selector=button.prc text=Go to file",
+   "tokens_in": 7671,
+   "tokens_out": 80,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|我想搜索这个仓库里的代码。输出点击操|B|0",
+   "ok": false,
+   "group": "B",
+   "detail": "act 任务给了 answer",
+   "tokens_in": 6331,
+   "tokens_out": 19,
+   "latency_s": 0.9
+  },
+  {
+   "label": "github|我想搜索这个仓库里的代码。输出点击操|B|1",
+   "ok": false,
+   "group": "B",
+   "detail": "[106] button \"Go to file\"",
+   "tokens_in": 6356,
+   "tokens_out": 32,
+   "latency_s": 10.4
+  },
+  {
+   "label": "github|我想搜索这个仓库里的代码。输出点击操|B|2",
+   "ok": false,
+   "group": "B",
+   "detail": "[106] button \"Go to file\"",
+   "tokens_in": 6331,
+   "tokens_out": 78,
+   "latency_s": 1.3
+  },
+  {
+   "label": "github|About 栏说这个仓库是谁发布的（|A|0",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=d5z",
+   "tokens_in": 7652,
+   "tokens_out": 30,
+   "latency_s": 1.2
+  },
+  {
+   "label": "github|About 栏说这个仓库是谁发布的（|A|1",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=d5z",
+   "tokens_in": 7652,
+   "tokens_out": 20,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|About 栏说这个仓库是谁发布的（|A|2",
+   "ok": true,
+   "group": "A",
+   "detail": "answer=d5z",
+   "tokens_in": 7652,
+   "tokens_out": 25,
+   "latency_s": 0.7
+  },
+  {
+   "label": "github|About 栏说这个仓库是谁发布的（|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=Alice",
+   "tokens_in": 6337,
+   "tokens_out": 8,
+   "latency_s": 0.6
+  },
+  {
+   "label": "github|About 栏说这个仓库是谁发布的（|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=Alice",
+   "tokens_in": 6362,
+   "tokens_out": 53,
+   "latency_s": 1.0
+  },
+  {
+   "label": "github|About 栏说这个仓库是谁发布的（|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=Alice",
+   "tokens_in": 6362,
+   "tokens_out": 78,
+   "latency_s": 6.1
+  }
+ ]
+}

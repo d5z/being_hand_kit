@@ -45,7 +45,7 @@ TASKS = [
          judge=lambda ans, ctx: str(ctx["tool_count"]) in ans),
     dict(page="beings.town", kind="perceive",
          prompt="「Search」卡片的描述语里有没有「see」这个词？回答有或没有。",
-         judge=lambda ans, ctx: "没" in ans or "没有" in ans or "no" in ans.lower()),
+         judge=lambda ans, ctx: "有" in ans or "yes" in ans.lower()),
     # ---- github.com/d5z/being_hand_kit（重 ARIA SPA）----
     dict(page="github", kind="act",
          prompt="我要看这个仓库的 issue 列表。输出点击操作，目标用规定格式。",
@@ -60,16 +60,16 @@ TASKS = [
          target_desc="Actions 导航 tab",
          match=lambda el: el["role"] == "link" and el["name"].strip() == "Actions"),
     dict(page="github", kind="act",
-         prompt="这个仓库有 73 个 commit，我想看提交历史。输出点击操作。",
-         target_desc="73 Commits 链接",
-         match=lambda el: el["role"] == "link" and "Commits" in el["name"]),
+         prompt="我想看这个仓库的提交历史（commits）。输出点击操作。",
+         target_desc="仓库级 Commits 链接（如 \"76 Commits\"）",
+         match=lambda el: el["role"] == "link" and "Commits" in el["name"] and "file" not in el["name"].lower()),
     dict(page="github", kind="act",
          prompt="页面右上有「Sign in」。输出点击操作。",
          target_desc="Sign in 链接",
          match=lambda el: el["role"] == "link" and el["name"].strip() == "Sign in"),
     dict(page="github", kind="perceive",
-         prompt="这个仓库的 About 侧栏里写了什么 topic 标签？全部列出。",
-         judge=lambda ans, ctx: "computer-use" in ans.lower() or "browser" in ans.lower()),
+         prompt="这个仓库的 About 侧栏里写了什么 topic 标签？全部列出；如果一个都没有，回答没有。",
+         judge=lambda ans, ctx: ("没有" in ans or "no" in ans.lower() or "none" in ans.lower()) and "看不见" not in ans and "无法" not in ans),
     dict(page="github", kind="perceive",
          prompt="主导航（Code/Issues/...）一共有几个 tab？只回答数字。",
          judge=lambda ans, ctx: str(ctx["nav_count"]) in ans),
@@ -131,7 +131,7 @@ def snap_interactive(cdp):
               return s;
             })(),
             x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height)};
-  }).filter(e => e.w > 0 && e.h > 0);
+  }).filter(e => e.w > 0 && e.h > 0));
 })()""", returnByValue=True))
     return json.loads(res["result"]["value"])
 
@@ -151,9 +151,10 @@ def call_llm(prompt, temperature=1.0):
     body = json.dumps({
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 300,
+        "max_tokens": 1500,
         "temperature": temperature,
         "response_format": {"type": "json_object"},
+        "reasoning": {"effort": "low"},
     }).encode()
     req = urllib.request.Request(OR_URL, data=body, headers={
         "Authorization": f"Bearer {OR_KEY}",
@@ -163,13 +164,17 @@ def call_llm(prompt, temperature=1.0):
     with urllib.request.urlopen(req, timeout=120) as r:
         data = json.load(r)
     dt = time.time() - t0
-    msg = data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    content = msg.get("content") or ""
+    reasoning = msg.get("reasoning") or ""
     usage = data.get("usage", {})
-    return msg, usage, dt
+    return content, reasoning, usage, dt
 
 
 def parse_action(text):
-    """从回复中抠 JSON（宽容：模型可能带 markdown 围栏）。"""
+    """从回复中抠 JSON（宽容：模型可能带 markdown 围栏；None 安全）。"""
+    if not text or not isinstance(text, str):
+        return None
     m = re.search(r"\{.*\}", text, re.S)
     if not m:
         return None
@@ -206,11 +211,11 @@ def main():
     # 感知类任务的 ground truth（手动标注值，从快照预计算）
     ctx = {}
     if site == "github":
-        ctx["nav_count"] = 6  # Code Issues PRs Actions Wiki Security Insights
+        ctx["nav_count"] = 7  # Code/Issues/PR/Actions/Projects/Security and quality/Insights（2026-09 新版 UI）
         ctx["h1_count"] = 1
     else:
         ctx["h1_count"] = 1
-        ctx["tool_count"] = 7
+        ctx["tool_count"] = 13  # Scroll/Search/Browse/Bonfire/Beings/Messages/Fireside/Portal/Grove/Seed/Ember/Workspace/Channel
 
     tasks = [t for t in TASKS if t["page"] == site]
     print(f"任务数: {len(tasks)} × {REPEATS} 次 × 2 组 = {len(tasks)*REPEATS*2} trials")
@@ -225,12 +230,12 @@ def main():
                 prompt = prompt_tmpl.format(prompt=t["prompt"]) + "\n\n=== 页面 ===\n" + snap
                 label = f"{t['page']}|{t['prompt'][:18]}|{group}|{rep}"
                 try:
-                    raw, usage, dt = call_llm(prompt)
+                    raw, reasoning, usage, dt = call_llm(prompt)
                 except Exception as e:
                     results.append({"label": label, "ok": False, "err": str(e)[:100], "group": group})
                     print(f"  ✗ {label}: API {e}")
                     continue
-                act = parse_action(raw)
+                act = parse_action(raw) or parse_action(reasoning)
                 # ---- 判定 ----
                 ok, detail = False, ""
                 if act is None:
@@ -261,6 +266,7 @@ def main():
                             ok = t["match"](el)
                             detail = f"[{tgt}] {el['role']} \"{el['name'][:30]}\""
                 rec = {"label": label, "ok": ok, "group": group, "detail": detail,
+                       "raw": raw[:200], "raw_reasoning": reasoning[:300],
                        "tokens_in": usage.get("prompt_tokens"), "tokens_out": usage.get("completion_tokens"),
                        "latency_s": round(dt, 1)}
                 results.append(rec)

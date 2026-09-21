@@ -1,0 +1,169 @@
+{
+ "model": "z-ai/glm-5.3",
+ "page": "https://beings.town/",
+ "ts": "2026-09-21 17:39:51",
+ "results": [
+  {
+   "label": "beings.town|这个页面上有几个一级标题（h1）？只|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=0",
+   "tokens_in": 345,
+   "tokens_out": 152,
+   "latency_s": 1.5
+  },
+  {
+   "label": "beings.town|这个页面上有几个一级标题（h1）？只|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=0",
+   "tokens_in": 345,
+   "tokens_out": 113,
+   "latency_s": 1.3
+  },
+  {
+   "label": "beings.town|这个页面上有几个一级标题（h1）？只|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=0",
+   "tokens_in": 345,
+   "tokens_out": 297,
+   "latency_s": 2.3
+  },
+  {
+   "label": "beings.town|这个页面上有几个一级标题（h1）？只|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=1",
+   "tokens_in": 2009,
+   "tokens_out": 12,
+   "latency_s": 2.4
+  },
+  {
+   "label": "beings.town|这个页面上有几个一级标题（h1）？只|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=1",
+   "tokens_in": 2009,
+   "tokens_out": 8,
+   "latency_s": 1.5
+  },
+  {
+   "label": "beings.town|这个页面上有几个一级标题（h1）？只|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=1",
+   "tokens_in": 2009,
+   "tokens_out": 8,
+   "latency_s": 1.3
+  },
+  {
+   "label": "beings.town|页面上列出的工具卡片（scroll、|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=0",
+   "tokens_in": 349,
+   "tokens_out": 535,
+   "latency_s": 69.6
+  },
+  {
+   "label": "beings.town|页面上列出的工具卡片（scroll、|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=0",
+   "tokens_in": 349,
+   "tokens_out": 520,
+   "latency_s": 22.8
+  },
+  {
+   "label": "beings.town|页面上列出的工具卡片（scroll、|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "answer=0",
+   "tokens_in": 349,
+   "tokens_out": 518,
+   "latency_s": 70.2
+  },
+  {
+   "label": "beings.town|页面上列出的工具卡片（scroll、|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=13",
+   "tokens_in": 2013,
+   "tokens_out": 8,
+   "latency_s": 0.9
+  },
+  {
+   "label": "beings.town|页面上列出的工具卡片（scroll、|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=13",
+   "tokens_in": 2013,
+   "tokens_out": 46,
+   "latency_s": 1.5
+  },
+  {
+   "label": "beings.town|页面上列出的工具卡片（scroll、|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=13",
+   "tokens_in": 2013,
+   "tokens_out": 45,
+   "latency_s": 0.8
+  },
+  {
+   "label": "beings.town|「Search」卡片的描述语里有没有|A|0",
+   "ok": false,
+   "group": "A",
+   "detail": "perceive 任务给了 action",
+   "tokens_in": 373,
+   "tokens_out": 72,
+   "latency_s": 1.0
+  },
+  {
+   "label": "beings.town|「Search」卡片的描述语里有没有|A|1",
+   "ok": false,
+   "group": "A",
+   "detail": "unparseable: ",
+   "tokens_in": 373,
+   "tokens_out": 1500,
+   "latency_s": 9.4
+  },
+  {
+   "label": "beings.town|「Search」卡片的描述语里有没有|A|2",
+   "ok": false,
+   "group": "A",
+   "detail": "unparseable: ",
+   "tokens_in": 373,
+   "tokens_out": 1500,
+   "latency_s": 10.2
+  },
+  {
+   "label": "beings.town|「Search」卡片的描述语里有没有|B|0",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=有",
+   "tokens_in": 2012,
+   "tokens_out": 72,
+   "latency_s": 20.4
+  },
+  {
+   "label": "beings.town|「Search」卡片的描述语里有没有|B|1",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=有",
+   "tokens_in": 2037,
+   "tokens_out": 84,
+   "latency_s": 0.9
+  },
+  {
+   "label": "beings.town|「Search」卡片的描述语里有没有|B|2",
+   "ok": true,
+   "group": "B",
+   "detail": "answer=有",
+   "tokens_in": 2037,
+   "tokens_out": 74,
+   "latency_s": 1.0
+  }
+ ]
+}
