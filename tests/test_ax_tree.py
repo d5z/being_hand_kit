@@ -328,12 +328,17 @@ class TestAxSnapshot(unittest.TestCase):
             node = [n for n in out["nodes"] if str(n["idx"]) == key][0]
             self.assertIn(node["role"], ax.INTERACTIVE_ROLES)
 
-    def test_receipt_evidence_block(self):
+    def test_natural_evidence_fields(self):
         out, _, _ = self._snapshot()
-        self.assertTrue(out["verified"])
         self.assertGreater(out["serialized_bytes"], 0)
+        self.assertEqual(out["node_count"], out["line_count"])
+        self.assertEqual(out["curated_node_count"], len(ax.filter_nodes(FIXTURE)))
+        self.assertIn("product", out["ax_version"])
+        # The verified/evidence wrapper belongs to the router (S3), not here.
+        self.assertNotIn("verified", out)
+        self.assertNotIn("evidence", out)
 
-    def test_empty_tree_is_unverified_not_ok(self):
+    def test_empty_tree_reports_zero_nodes(self):
         def fake_call(ws, method, params=None, msg_id=1, timeout=10):
             if method == "Accessibility.getFullAXTree":
                 return {"nodes": []}
@@ -347,8 +352,9 @@ class TestAxSnapshot(unittest.TestCase):
              mock.patch.object(ax, "_init_domains", return_value=None), \
              mock.patch.object(ax, "_write_last", return_value=None):
             out = ax.ax_snapshot(handle_map_path="/tmp/does-not-matter.json")
-        self.assertFalse(out["verified"])
-        self.assertIn("reason", out["evidence"])
+        self.assertEqual(out["node_count"], 0)
+        self.assertEqual(out["tree"], "")
+        self.assertFalse(out["truncated"])
 
 
 if __name__ == "__main__":
@@ -420,3 +426,16 @@ class TestStaticTextCuration(unittest.TestCase):
     def test_duplicate_detection_ignores_whitespace_differences(self):
         nodes = [_n("1", "link", "Sign in"), _n("2", "StaticText", " Sign in ", parent="1")]
         self.assertEqual(len(ax.serialize(nodes)["lines"]), 1)
+
+
+class TestZeroAreaBox(unittest.TestCase):
+    def test_degenerate_quad_is_not_a_click_target(self):
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "DOM.pushNodesByBackendIdsToFrontend":
+                return {"nodeIds": [11]}
+            if method == "DOM.getBoxModel":
+                return {"model": {"content": [5, 5, 5, 5, 5, 5, 5, 5]}}   # zero area
+            return {}
+
+        out = ax.backend_ids_to_coords(fake_call, mock.Mock(), [9], dpr=1.0)
+        self.assertIsNone(out[9])

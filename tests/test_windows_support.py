@@ -64,9 +64,11 @@ class TestWindowsSupport(unittest.TestCase):
         try:
             with mock.patch.object(__import__("hand.platform", fromlist=["PLATFORM"]), "PLATFORM", "win32"):
                 router_win = importlib.reload(router)
+                # 0.7.0: the a11y tree leads the chain (PRD S2); cdp_dom stays
+                # as graceful degradation.
                 self.assertEqual(
                     router_win.SEE_PRIORITY["unknown"],
-                    ["cdp_dom", "cdp_interactive"],
+                    ["cdp_a11y", "cdp_dom", "cdp_interactive"],
                 )
                 self.assertIn("cdp_dom", router_win.SEE_PRIORITY["unknown"])
             # darwin: mac-only tail preserved (vision_ocr before ax_ui)
@@ -74,7 +76,7 @@ class TestWindowsSupport(unittest.TestCase):
                 router_darwin = importlib.reload(router)
                 self.assertEqual(
                     router_darwin.SEE_PRIORITY["unknown"],
-                    ["cdp_dom", "cdp_interactive", "vision_ocr", "ax_ui"],
+                    ["cdp_a11y", "cdp_dom", "cdp_interactive", "vision_ocr", "ax_ui"],
                 )
                 self.assertLess(
                     router_darwin.SEE_PRIORITY["unknown"].index("vision_ocr"),
@@ -84,6 +86,10 @@ class TestWindowsSupport(unittest.TestCase):
             importlib.reload(router)
 
     @mock.patch(
+        "hand.perception.ax_tree.ax_snapshot",
+        side_effect=RuntimeError("a11y backend disabled in this test"),
+    )
+    @mock.patch(
         "hand.perception.cdp_snapshot.cdp_snapshot_see",
         return_value={"method": "cdp_snapshot", "text": "window text"},
     )
@@ -91,7 +97,11 @@ class TestWindowsSupport(unittest.TestCase):
         "hand.perception.cdp_core.list_pages",
         return_value=[{"id": "1", "type": "page", "webSocketDebuggerUrl": "ws://localhost/1"}],
     )
-    def test_route_see_unknown_probes_cdp(self, mock_list_pages, mock_cdp_snapshot_see):
+    def test_route_see_unknown_probes_cdp(self, mock_list_pages, mock_cdp_snapshot_see,
+                                          mock_ax_snapshot):
+        # The a11y backend is pinned to failure so the DOM fallback (and the
+        # place probe) is what this test observes — a live Chrome on 9222 in the
+        # dev environment must not change the outcome.
         reset_session()
         result = router.route_see(place=Place(type="unknown", identifier="stale"))
         self.assertEqual(result.get("method"), "cdp_snapshot")

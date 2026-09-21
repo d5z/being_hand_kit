@@ -286,6 +286,11 @@ def backend_ids_to_coords(call, ws, backend_ids, dpr=1.0):
             continue
         xs = quad[0::2]
         ys = quad[1::2]
+        if max(xs) - min(xs) <= 0 or max(ys) - min(ys) <= 0:
+            # Degenerate box (zero-area node, e.g. a visually hidden skip link):
+            # not a clickable target — None, so nobody clicks a phantom.
+            out[bid] = None
+            continue
         out[bid] = {
             "x": round((min(xs) + max(xs)) / 2 * dpr),
             "y": round((min(ys) + max(ys)) / 2 * dpr),
@@ -366,9 +371,10 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                 resolve_coords=True, handle_map_path=None):
     """Perceive the page as an a11y v2 tree. Returns a receipt dict.
 
-    verified=True only when a tree was actually pulled and curated to a non-empty
-    tree (PRD S3); evidence always carries node/byte counts, the truncation
-    marker and the AX source version.
+    Natural evidence only: node/byte counts, the truncation marker, the AX source
+    version, sha256 and the handle map. The verified/evidence wrapper is applied
+    by hand.router._with_receipt (S3) so every perception backend is judged by
+    the same ruler.
     """
     pages = list_pages()
     idx, page = resolve_page(page_sel, pages)
@@ -417,27 +423,10 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
 
         tree = snapshot_text(ser)
         text_bytes = len(tree.encode("utf-8"))
-        verified = bool(ser["kept_count"]) and bool(ser["lines"])
-        evidence = {
-            "verified": verified,
-            "format": AX_FORMAT_VERSION,
-            "node_count": len(ser["lines"]),
-            "raw_node_count": ser["raw_node_count"],
-            "curated_node_count": ser["kept_count"],
-            "serialized_bytes": text_bytes,
-            "line_count": len(ser["lines"]),
-            "truncated": ser["truncated"],
-            "nodes_omitted": ser["nodes_omitted"],
-            "max_lines": ser["max_lines"],
-            "ax_version": ax_version,
-            "sha256": ser["sha256"],
-            "handles": len(handles),
-            "coords_resolved": sum(1 for v in coords.values() if v),
-            "handle_map": handle_map_path,
-        }
-        if not verified:
-            evidence["reason"] = ("Accessibility.getFullAXTree returned no curated "
-                                  "node (empty tree) — nothing was perceived")
+        # NOTE: this function reports natural evidence only. The
+        # {"verified": bool, "evidence": {...}} wrapper is applied by
+        # hand.router._with_receipt — one ruler for every perception backend
+        # (PRD S3: "新眼睛过同一把尺").
         try:
             metrics = cdp_call(ws, "Page.getLayoutMetrics", {}, msg_id=62, timeout=5)
             vp = metrics.get("cssLayoutViewport") or {}
@@ -459,16 +448,18 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "coords": coords,
             "coord": coord,
             "hint": overflow_hint(ser["nodes"]),
-            "verified": verified,
-            "evidence": evidence,
             "node_count": len(ser["lines"]),
             "raw_node_count": ser["raw_node_count"],
+            "curated_node_count": ser["kept_count"],
             "line_count": len(ser["lines"]),
             "serialized_bytes": text_bytes,
             "truncated": ser["truncated"],
             "nodes_omitted": ser["nodes_omitted"],
+            "max_lines": ser["max_lines"],
             "sha256": ser["sha256"],
             "ax_version": ax_version,
+            "handle_map": handle_map_path,
+            "coords_resolved": sum(1 for v in coords.values() if v),
         }
         _write_last(idx)
         return out

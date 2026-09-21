@@ -31,10 +31,15 @@ def _available(backends: list) -> list:
 
 # ── Perception backends ────────────────────────────────────────────
 
+# Browser perception, fastest-and-richest first. Since 0.7.0 the AX tree
+# (cdp_a11y) is the DEFAULT browser snapshot — the A/B experiment showed 87% vs
+# 58% for GLM-5.3 (experiments/a11y_ab/REPORT_phase2.md). cdp_dom stays in the
+# chain as graceful degradation: if the AX tree cannot be pulled, the DOM text
+# snapshot still answers, and the receipt says which backend actually spoke.
 SEE_PRIORITY = {
-    "browser":      _available(["cdp_dom", "cdp_network", "cdp_interactive", "ax_ui", "vision_ocr"]),
+    "browser":      _available(["cdp_a11y", "cdp_dom", "cdp_network", "cdp_interactive", "ax_ui", "vision_ocr"]),
     "desktop_app":  _available(["ax_app", "ax_ui", "vision_ocr"]),
-    "unknown":      _available(["cdp_dom", "cdp_interactive", "vision_ocr", "ax_ui"]),
+    "unknown":      _available(["cdp_a11y", "cdp_dom", "cdp_interactive", "vision_ocr", "ax_ui"]),
 }
 
 # ── Action backends ─────────────────────────────────────────────────
@@ -127,6 +132,23 @@ def _with_receipt(result: dict) -> dict:
         ev["chars"] = result.get("chars")
         if not result.get("url") and not result.get("page_title"):
             verified, reason = False, "cdp_dom returned neither url nor title"
+    elif method == "cdp_a11y":
+        # S3: a11y v2 snapshot (0.7.0). verified = a tree was really pulled AND
+        # curated to a non-empty tree; evidence = node/byte counts, truncation
+        # marker and the AX source version. A truncated tree is still verified —
+        # truncation is declared, not hidden.
+        ev["node_count"] = result.get("node_count")
+        ev["raw_node_count"] = result.get("raw_node_count")
+        ev["serialized_bytes"] = result.get("serialized_bytes")
+        ev["truncated"] = result.get("truncated")
+        ev["nodes_omitted"] = result.get("nodes_omitted")
+        ev["format"] = result.get("format")
+        ev["ax_version"] = result.get("ax_version")
+        ev["sha256"] = result.get("sha256")
+        if not result.get("node_count"):
+            verified, reason = False, (
+                "Accessibility.getFullAXTree produced 0 curated nodes "
+                "(empty tree) — nothing was perceived")
     elif method == "cdp_interactive":
         ev["count"] = result.get("count")
         ev["total"] = result.get("total")
@@ -209,8 +231,14 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
 
     Routing:
       desktop_app → ax_app (0ms) → ax_ui (tree) → vision_ocr (~500ms)
-      browser     → cdp_dom       → ax_ui        → vision_ocr
-      unknown     → vision_ocr    → ax_ui
+      browser     → cdp_a11y (AX tree, 0.7.0 default) → cdp_dom → cdp_network
+                    → cdp_interactive → ax_ui → vision_ocr
+      unknown     → cdp_a11y → cdp_dom → cdp_interactive → vision_ocr → ax_ui
+
+    Explicit `kind` channels (place-independent, checked before Place
+    resolution): "a11y" (AX tree, the default), "dom" (text snapshot),
+    "interactive" (legacy element map — kept as the coordinate escape hatch),
+    "network", "vlm".
 
     On success, updates session cache.
     """
@@ -229,6 +257,46 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
                 return result
         except Exception as e:
             return _error_receipt("cdp_network failed", details=str(e))
+
+    if kind == "a11y":
+        # a11y v2 tree is the DEFAULT browser snapshot since 0.7.0 and is a
+        # place-independent channel, like network/interactive: it talks to
+        # whatever CDP page is live. Handled before Place resolution so it can
+        # never be shadowed by the desktop/vision fallback.
+        try:
+            from hand.perception.ax_tree import ax_snapshot
+            result = ax_snapshot()
+            if result and result.get("method"):
+                result = _with_receipt(result)
+                session = get_session()
+                session.last_see = result
+                if session.place is None:
+                    # Perception implies a place: keeps a following do([idx])
+                    # routable without an explicit open.
+                    session.place = Place(type="browser", identifier="cdp-detected")
+                return result
+            return _error_receipt("cdp_a11y returned no snapshot",
+                                  details="ax_snapshot produced no receipt")
+        except Exception as e:
+            return _error_receipt(f"cdp_a11y failed: {type(e).__name__}: {e}",
+                                  details=str(e))
+
+    if kind == "dom":
+        # Explicit legacy channel (0.7.0): the DOM text snapshot, without the
+        # a11y default getting in the way.
+        try:
+            from hand.perception.cdp_snapshot import cdp_snapshot_see
+            result = cdp_snapshot_see()
+            if result and result.get("method"):
+                result = _with_receipt(result)
+                session = get_session()
+                session.last_see = result
+                return result
+            return _error_receipt("cdp_dom returned no snapshot",
+                                  details="cdp_snapshot_see produced no receipt")
+        except Exception as e:
+            return _error_receipt(f"cdp_dom failed: {type(e).__name__}: {e}",
+                                  details=str(e))
 
     if kind == "interactive":
         # Interactive element map is a place-independent channel too — the
@@ -307,6 +375,9 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
             elif backend == "cdp_interactive":
                 from hand.perception.cdp_snapshot import interactive_map
                 result = interactive_map()
+            elif backend == "cdp_a11y":
+                from hand.perception.ax_tree import ax_snapshot
+                result = ax_snapshot()
 
             if result is not None and result.get("method"):
                 result = _with_receipt(result)
@@ -327,6 +398,14 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
 
 # ── Do ───────────────────────────────────────────────────────────────
 
+def _handle_action(action) -> bool:
+    """Is this action an [idx] handle (optionally `[idx]|text`)? See S2."""
+    if not isinstance(action, str):
+        return False
+    from hand.perception.ax_tree import looks_like_handle
+    return looks_like_handle(action.split("|", 1)[0])
+
+
 def _run_pre_actions(app_name: str, action: str, app_name_param: str):
     """Run any needed pre-actions for this app+action combo."""
     from hand.action.keystroke import keystroke_do
@@ -346,6 +425,20 @@ def route_do(action: str, place: Optional[Place] = None) -> dict:
     if place is None:
         session = get_session()
         place = session.place
+
+    if place is None and _handle_action(action):
+        # A [idx] handle is a coordinate/handle action, not a semantic app
+        # intent: it names a node of the last a11y snapshot. If a CDP browser is
+        # live, that is enough context (the MCP server is lazily spawned, so a
+        # fresh process may have lost session.place but not the browser).
+        try:
+            from hand.perception.cdp_core import list_pages
+            if list_pages():
+                session = get_session()
+                session.place = Place(type="browser", identifier="cdp-detected")
+                place = session.place
+        except Exception:
+            pass
 
     if place is None:
         return {"error": "no place — call route_open first"}

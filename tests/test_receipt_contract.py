@@ -438,8 +438,13 @@ class TestSeeAndShotReceipts(unittest.TestCase):
     """S3: perception receipts carry the evidence that backs them."""
 
     def test_see_dom_receipt_verified(self):
+        # Browser place → the a11y default speaks first; pin it to failure so the
+        # DOM fallback (this test's subject) is deterministic even when a real
+        # Chrome is listening on 9222.
         reset_session()
-        with mock.patch("hand.perception.cdp_snapshot.cdp_snapshot_see",
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        side_effect=RuntimeError("a11y backend disabled in this test")), \
+             mock.patch("hand.perception.cdp_snapshot.cdp_snapshot_see",
                         return_value={"method": "cdp_snapshot", "page_title": "Example",
                                       "url": "https://example.com/", "text": "hi"}):
             r = router.route_see(place=Place(type="browser", identifier="https://example.com/"))
