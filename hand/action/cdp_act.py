@@ -156,9 +156,29 @@ def cdp_type(selector, text, page_sel=None, fast=False):
                     '})()')
             result = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True})
             value_str = result.get('result', {}).get('value', '{}')
-            data = json.loads(value_str)
+            try:
+                data = json.loads(value_str)
+            except Exception as e:
+                return _receipt_fail('cdp_type',
+                                     f"fast-path result unreadable: {type(e).__name__}: {e}",
+                                     selector=selector, text=text)
             _write_last(idx)
-            return {'method': 'cdp_type', 'page_index': idx, 'fast': True, 'text': text, **data}
+            out = {'method': 'cdp_type', 'page_index': idx, 'fast': True,
+                   'text': text, **data}
+            if data.get('error'):
+                out.update(_receipt_fail('cdp_type',
+                                         f"fast path failed: {data['error']}",
+                                         selector=selector, text=text))
+                out['page_index'] = idx
+                out['fast'] = True
+            else:
+                # JS path writes the value and dispatches input/change — it does
+                # not go through focus/keyboard, so the evidence says exactly that.
+                out['verified'] = True
+                out['evidence'] = {'element': selector, 'value_length': len(text),
+                                   'method_detail': 'el.value set + input/change events dispatched',
+                                   'keyboard_events': False}
+            return out
         pass  # Input domain needs no enable
         hit = _selector_hit(ws, selector)
         if not hit.get('found'):

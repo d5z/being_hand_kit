@@ -384,6 +384,29 @@ class TestActionReceipts(unittest.TestCase):
         self.assertFalse(r["verified"])
         self.assertEqual([c for c in calls if c[0] == "Input.insertText"], [])
 
+    def test_type_fast_path_receipts_evidence(self):
+        def dispatcher(method, params):
+            expr = params.get("expression", "")
+            if "el.value=" in expr and "el" in expr:
+                return {"result": {"value": '{"result":"ok","fast":true}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_type
+        r, _ = self._run(dispatcher, cdp_type, "input#q", "hi", fast=True)
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["evidence"]["element"], "input#q")
+
+    def test_type_fast_path_miss_is_unverified(self):
+        def dispatcher(method, params):
+            if "el.value=" in params.get("expression", ""):
+                return {"result": {"value": '{"error":"element not found"}'}}
+            return {}
+
+        from hand.action.cdp_act import cdp_type
+        r, _ = self._run(dispatcher, cdp_type, "input#ghost", "hi", fast=True)
+        self.assertFalse(r["verified"])
+        self.assertIn("reason", r["evidence"])
+
     # ── cdp_scroll ──────────────────────────────────────────────────
 
     def test_scroll_evidence_reads_back(self):
