@@ -50,11 +50,28 @@ class L5ManifestUpgrade(unittest.TestCase):
             cls.manifest = json.load(f)
 
     def test_version_line_reset_is_clean(self):
+        """0.7.0 reset the version line — never 6.x again.
+
+        Version policy (dev cycle): the manifest carries the last PUBLISHED
+        version while the package may run ahead as `<next>-dev`
+        (0.8.0-dev vs a published 0.7.0). The invariants: both are well-formed,
+        the manifest is never a dev version, and the package is never behind the
+        published manifest.
+        """
         import hand
-        self.assertEqual(self.manifest["version"], hand.__version__)
-        self.assertEqual(hand.__version__, "0.7.0")
+        pattern = r"^\d+\.\d+\.\d+(-dev)?$"
+        self.assertRegex(hand.__version__, pattern)
+        self.assertRegex(self.manifest["version"], pattern)
         self.assertFalse(hand.__version__.startswith("6."),
                          "0.7.0 is an intentional version-line reset, not 6.x")
+        self.assertFalse(self.manifest["version"].startswith("6."))
+        self.assertNotIn("-dev", self.manifest["version"])
+
+        def parts(v):
+            return tuple(int(x) for x in v.split("-")[0].split("."))
+
+        self.assertGreaterEqual(parts(hand.__version__),
+                                parts(self.manifest["version"]))
 
     def test_manifest_tools_declare_idempotency_and_evidence(self):
         tools = self.manifest.get("tools") or []
