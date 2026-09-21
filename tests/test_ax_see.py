@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import hand.router as router
 import hand.perception.ax_tree as ax
+from hand.perception import cdp_core
 from hand.action import cdp_act
 from hand.session import get_session, reset_session
 
@@ -226,11 +227,39 @@ class TestHandleClick(unittest.TestCase):
         self.assertEqual(out["selector"], "a.x")
 
     def test_text_and_xy_paths_still_route(self):
+        # Hermetic: the text=/xy: paths call list_pages → resolve_page →
+        # cdp_connect → cdp_call directly (never the cdp_click selector path).
+        # Before 2026-09-21 these were NOT mocked — the test leaked to the
+        # live browser and passed only when an inherited browser had pages
+        # open (fresh browser: RuntimeError 'No open pages', 3/3 in gate).
+        calls = []
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            calls.append((method, params))
+            if method == 'Runtime.evaluate':
+                expr = (params or {}).get('expression', '')
+                if expr.strip() == 'window.devicePixelRatio':
+                    return {'result': {'value': 1}}
+                # XPath text search hit
+                return {'result': {'value': json.dumps(
+                    {'x': 100, 'y': 200, 'tag': 'A', 'text': 'Learn more'})}}
+            return {}
+
         with mock.patch.object(cdp_act, "cdp_click",
-                               return_value={"method": "cdp_click"}) as m:
-            cdp_act.cdp_click_do("text=Learn more")
-            cdp_act.cdp_click_do("xy:10,20")
+                               return_value={"method": "cdp_click"}) as m, \
+             mock.patch.object(cdp_act, "list_pages", return_value=[PAGE]), \
+             mock.patch.object(cdp_act, "resolve_page", return_value=(0, PAGE)), \
+             mock.patch.object(cdp_act, "cdp_connect", return_value=_FakeWS()), \
+             mock.patch.object(cdp_act, "cdp_call", side_effect=fake_call), \
+             mock.patch.object(cdp_core, "cdp_call", side_effect=fake_call), \
+             mock.patch.object(cdp_core, "_init_domains", return_value=None):
+            r_text = cdp_act.cdp_click_do("text=Learn more")
+            r_xy = cdp_act.cdp_click_do("xy:10,20")
         self.assertFalse(m.called)  # neither goes through the selector path
+        # both paths completed with their own honest receipts
+        self.assertEqual(r_text.get('text_match'), 'Learn more')
+        self.assertFalse(r_xy.get('verified', True))  # xy: is dispatch-only
+        self.assertTrue(any(c[0] == 'Input.dispatchMouseEvent' for c in calls))
 
 
 class TestHandleType(unittest.TestCase):
