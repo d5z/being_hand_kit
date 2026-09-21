@@ -86,7 +86,7 @@ def _activate_evidence(target: str, error=None) -> dict:
     detail = ("已发出激活请求（未做 AX 复核，需要 cdp_see/see 才能确认前台）")
     if error:
         detail += f"；{error}"
-    return {"level": "activate_issued", "detail": detail}
+    return {"level": "activate_issued", "detail": detail, "verified": False}
 
 
 def _browser_place(target: str, navigate_confirmed: bool, reason=None) -> Place:
@@ -100,12 +100,13 @@ def _browser_place(target: str, navigate_confirmed: bool, reason=None) -> Place:
         evidence = {
             "level": "navigate_confirmed",
             "detail": f"Page.navigate 无 errorText 且活文档命中目标 host: {reason}",
+            "verified": True,
         }
     else:
         detail = "导航未证实，仅 CDP endpoint 存活"
         if reason:
             detail += f"；{reason}"
-        evidence = {"level": "endpoint_alive", "detail": detail}
+        evidence = {"level": "endpoint_alive", "detail": detail, "verified": False}
     try:
         from hand.perception.cdp_launcher import endpoint_info
         info = endpoint_info()

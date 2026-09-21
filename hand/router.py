@@ -90,6 +90,9 @@ def route_open(target: str) -> dict:
             "level": "unknown",
             "detail": f"open_place 未提供证据（target={target!r}）",
         }
+    # F14 unified shape: evidence itself carries the verdict it backs, so a
+    # consumer reading only `evidence` still sees verified vs claimed.
+    evidence.setdefault("verified", evidence.get("level") == "navigate_confirmed")
 
     return {
         "open": "ok",
@@ -551,7 +554,8 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
                 "verified": True,
                 "evidence": {"source": "cdp",
                              "data_length": len(result["data"]),
-                             "format": result["format"]},
+                             "format": result["format"],
+                             "verified": True},
             }
             if with_data:
                 out["data"] = result["data"]
@@ -567,7 +571,8 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
         "path": path,
         "verified": True,
         "evidence": {"source": "vision_ocr", "path": path,
-                     "read_back": "screencapture wrote a file"},
+                     "read_back": "screencapture wrote a file",
+                     "verified": True},
     }
 
 # ── Plan ─────────────────────────────────────────────────────────────

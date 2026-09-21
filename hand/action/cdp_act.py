@@ -219,6 +219,7 @@ def cdp_click_handle(handle, page_sel=None):
                     "space": "physical", "dpr": dpr, "dispatched": dispatched,
                     "read_back": "getBoundingClientRect via DOM.resolveNode",
                     "source": "cdp_see(kind=a11y) handle map",
+                    "verified": True,
                 }}
     finally:
         ws.close()
@@ -272,6 +273,7 @@ def cdp_type_handle(handle, text, page_sel=None):
                     "backend_node_id": entry["backend_node_id"],
                     "focus": _focus_label(focus),
                     "method_detail": "DOM.resolveNode → focus() → Input.insertText",
+                    "verified": True,
                 }}
     finally:
         ws.close()
@@ -311,9 +313,13 @@ def cdp_click(selector, page_sel=None):
             _js_submit(ws, selector, msg_id=20)
 
         _write_last(idx)
+        ev = _element_evidence(info)
+        ev['verified'] = True
+        ev['selector'] = selector
+        ev['read_back'] = 'document.querySelector hit + getBoundingClientRect'
         return {'method': 'cdp_click', 'selector': selector, 'page_index': idx,
                 'result': 'ok', 'tiers': '4-tier',
-                'verified': True, 'evidence': _element_evidence(info)}
+                'verified': True, 'evidence': ev}
     finally:
         ws.close()
 
@@ -354,7 +360,7 @@ def cdp_type(selector, text, page_sel=None, fast=False):
                 out['verified'] = True
                 out['evidence'] = {'element': selector, 'value_length': len(text),
                                    'method_detail': 'el.value set + input/change events dispatched',
-                                   'keyboard_events': False}
+                                   'keyboard_events': False, 'verified': True}
             return out
         pass  # Input domain needs no enable
         hit = _selector_hit(ws, selector)
@@ -374,9 +380,13 @@ def cdp_type(selector, text, page_sel=None, fast=False):
             cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
             time.sleep(0.001)
         _write_last(idx)
+        ev = _element_evidence(info)
+        ev['verified'] = True
+        ev['selector'] = selector
+        ev['read_back'] = 'document.querySelector hit + Input.insertText'
         return {'method': 'cdp_type', 'page_index': idx, 'selector': selector,
                 'text': text, 'result': 'ok',
-                'verified': True, 'evidence': _element_evidence(info)}
+                'verified': True, 'evidence': ev}
     finally:
         ws.close()
 
@@ -451,11 +461,14 @@ def cdp_click_do(action, app_name=None):
             dpr = _get_dpr(ws)
             _click_at(ws, x, y, dpr)
             _write_last(idx)
+            ev = _element_evidence({'tag': info.get('tag'),
+                                    'text': info.get('text')})
+            ev['verified'] = True
+            ev['text_match'] = text_val
+            ev['read_back'] = 'XPath text() hit + getBoundingClientRect'
             return {'method': 'cdp_click', 'text_match': text_val,
                     'tag': info.get('tag'), 'page_index': idx, 'result': 'ok',
-                    'verified': True,
-                    'evidence': _element_evidence({'tag': info.get('tag'),
-                                                   'text': info.get('text')})}
+                    'verified': True, 'evidence': ev}
         finally:
             ws.close()
     if action.startswith('xy:'):
@@ -534,7 +547,8 @@ def cdp_type_focused(text, page_sel=None):
                 'result': 'ok', 'verified': True,
                 'evidence': {'focus': _focus_label(focus), 'tag': tag,
                              'focus_id': focus.get('id') or '',
-                             'focus_type': focus.get('type') or ''}}
+                             'focus_type': focus.get('type') or '',
+                             'verified': True}}
     finally:
         ws.close()
 
@@ -604,7 +618,7 @@ def cdp_scroll(direction='down', amount=None, page_sel=None):
                 'verified': True,
                 'evidence': {'scrollY_before': before, 'scrollY_after': after,
                              'moved': after != before, 'direction': d,
-                             'read_back': 'window.scrollY'}}
+                             'read_back': 'window.scrollY', 'verified': True}}
     finally:
         ws.close()
 
