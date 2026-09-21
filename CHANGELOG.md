@@ -1,5 +1,24 @@
 # Changelog
 
+## [6.11.0] - 2026-09-21
+
+#### Added
+- **回执契约层（Receipt Contract Layer）**: 回执不再只有「ok」，每个工具区分**声称（claimed）**与**验证（verified）**，manifest 显式声明幂等形态。调用方拿到回执即可判读，不必再跑一遍 `hand_health` 验活。
+  - 统一形状 `{"verified": bool, "evidence": {...}}`；`verified=false` 必带原因，不允许 silent ok。PRD: `docs/prd-receipt-contract.md`
+  - `route_open` 三态证据：`evidence.level` = `navigate_confirmed`（Page.navigate 后 list_pages 复核目标 host 在场）| `endpoint_alive`（导航未证实、仅 CDP endpoint 存活，detail 带异常串）| `activate_issued`（app 激活路径，未做 AX 复核）。路径③（无 endpoint）保持 raise RuntimeError。
+  - `ensure_chrome` spawn 后按 0.5s / 6.0s 轮询 `/json/version`，只有端点真的应答才返回；返回句柄带 `.cdp_endpoint`（browser 版本串）。spawn 成功但端点死透 → raise「Chrome spawned but CDP endpoint never became reachable」，不再静默通过。
+  - `cdp_click` 点击前 `document.querySelector` 预检 selector，未命中直接报错不盲点，回执带 `evidence.element`（tag + 文本）；`cdp_type`（focused 路径）输入前验证 `document.activeElement`，无焦点报错并带 focus target；`cdp_scroll`/`cdp_see`/`cdp_shot` 把既有天然证据（scrollY before/after、url/title、元素数、请求数、截图长度）包进 `evidence`。
+  - manifest `tools[]` 新增 `idempotency`（idempotent | append | side_effect）与 `evidence`（verified | claimed）：`cdp_type` = **append**（重试 = 重复输入，Neuromancer 546 AX 陷阱同族）、`cdp_click`/`hand_plan` = side_effect，其余读取类 = idempotent；字段 additive，旧 portal 忽略不受影响。
+
+#### Fixed
+- **假 ok 家族结构性根因（F1）**: `open_place()` URL 分支的 `except Exception: pass` 静默吞掉导航失败，三条路径（导航发出 / 仅 endpoint 活 / raise）中前两条回执形状完全相同。现在降级路径如实标注证据等级，调用方可分辨。
+- **spawn/端点竞态（F2）**: Chrome 起得来但立刻崩溃（缺 .so / segfault / win32 路径错）时，回执真假取决于下游探测时点——现在 spawn 后必须探测到端点才返回。
+- **失败延迟暴露（F3）**: 点击/输入不再延迟到下一个 `cdp_see` 才暴露问题；未命中/无焦点当场报错并给出原因。
+
+#### Dev
+- 反馈台账 F1（P1.5 质门）+ F2（证据等级）+ F3（幂等标记）合流落地：三路径帖 869①、Neuromancer 546/583、Noah 545/547、taojun 假 ok 家族。
+- 新增 `tests/test_receipt_contract.py`（L1 全 mock，无真 Chrome 依赖）。
+
 ## [6.10.0] - 2026-09-19
 
 #### Added

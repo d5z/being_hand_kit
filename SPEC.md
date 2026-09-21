@@ -30,6 +30,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.8.2 | 2026-09-01 | released | cdp_shot 图片直达 being（MCP ImageContent）；route_screenshot place=None 陷阱修复 |
 | V6.9.0 | 2026-09-06 | released | 感知契约 v1：see→do(xy) 坐标闭环三步验收（69 tests），acceptance-contract-v1-cdp.md |
 | V6.10.0 | 2026-09-19 | released | Windows 支持（感知三角修复：cdp_shot/hand_see_vlm/cdp_see 三件套），taojun 反馈驱动 |
+| V6.11.0 | 2026-09-21 | released | 回执契约层：回执区分 claimed/verified，route_open 三态证据 + ensure_chrome 端点探测 + manifest 幂等声明 |
 
 ## Architecture Tiers
 

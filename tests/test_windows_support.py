@@ -172,7 +172,7 @@ class TestWindowsSupport(unittest.TestCase):
         manifest_path = os.path.join(os.path.dirname(__file__), "..", "kit", "manifest.json")
         with open(manifest_path) as f:
             manifest = json.load(f)
-        self.assertEqual(manifest.get("version"), "6.10.0")
+        self.assertEqual(manifest.get("version"), "6.11.0")
         supported = manifest["platforms"]["supported"]
         backend = manifest["platforms"]["backend_matrix"]
         self.assertIn("windows", supported)

@@ -1,6 +1,6 @@
 {
   "name": "hand",
-  "version": "6.10.0",
+  "version": "6.11.0",
   "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI. Receipts distinguish verified vs claimed; tools declare idempotency.",
   "platforms": {
     "supported": [

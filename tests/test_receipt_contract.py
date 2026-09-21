@@ -508,5 +508,32 @@ class TestManifestDeclarations(unittest.TestCase):
             self.assertIn('"verified"', blob, f"{name} declared verified but no evidence field emitted")
 
 
+class TestVersionAndDocs(unittest.TestCase):
+    """S5: version bump + docs must land together with the code."""
+
+    def setUp(self):
+        self.root = os.path.join(os.path.dirname(__file__), "..")
+
+    def test_version_is_6110_everywhere(self):
+        import hand
+        self.assertEqual(hand.__version__, "6.11.0")
+        with open(MANIFEST_PATH) as f:
+            self.assertEqual(json.load(f)["version"], "6.11.0")
+
+    def test_changelog_entry(self):
+        body = open(os.path.join(self.root, "CHANGELOG.md")).read()
+        self.assertIn("## [6.11.0]", body)
+        self.assertIn("F1", body)
+        self.assertIn("F2", body)
+        self.assertIn("F3", body)
+        self.assertIn("navigate_confirmed", body)
+        self.assertIn("idempotency", body)
+
+    def test_spec_version_table_row(self):
+        body = open(os.path.join(self.root, "SPEC.md")).read()
+        self.assertIn("| V6.11.0 |", body)
+        self.assertIn("回执契约层", body)
+
+
 if __name__ == "__main__":
     unittest.main()
