@@ -245,15 +245,20 @@ class TestVersion(unittest.TestCase):
     def test_version(self):
         import re
         import hand
-        # 版本号必须是 semver 格式（MAJOR.MINOR.PATCH）
-        self.assertRegex(hand.__version__, r"^\d+\.\d+\.\d+$")
-        # 且与 kit/manifest.json 里声明的版本一致（单一真相源）
+        # 版本号必须是 semver（MAJOR.MINOR.PATCH）；dev 周期允许 -dev 后缀，
+        # 发布 commit 去掉它（0.8.0-dev → 0.8.0）。
+        self.assertRegex(hand.__version__, r"^\d+\.\d+\.\d+(-dev)?$")
+        # kit/manifest.json 是**已发布**版本的单一真相源：dev 周期里包版本可以
+        # 领先一个 minor，但不能落后于 manifest。
         import json, os
         manifest_path = os.path.join(os.path.dirname(hand.__file__), "..", "kit", "manifest.json")
         if os.path.exists(manifest_path):
             with open(manifest_path) as f:
                 manifest = json.load(f)
-            self.assertEqual(hand.__version__, manifest.get("version"))
+            published = manifest.get("version") or "0.0.0"
+            self.assertNotIn("-dev", published)
+            as_parts = lambda v: tuple(int(x) for x in v.split("-")[0].split("."))
+            self.assertGreaterEqual(as_parts(hand.__version__), as_parts(published))
 
 
 if __name__ == '__main__':

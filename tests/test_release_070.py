@@ -27,13 +27,16 @@ def _tools():
 
 
 class TestVersion(unittest.TestCase):
-    def test_package_version(self):
+    def test_package_version_is_the_dev_line(self):
+        # 0.8.0-dev is the code-mode cycle; the suffix is dropped by the release
+        # commit (S5), not by a feature commit.
         import hand
-        self.assertEqual(hand.__version__, "0.7.0")
+        self.assertEqual(hand.__version__, "0.8.0-dev")
 
-    def test_manifest_version_matches_the_package(self):
-        import hand
-        self.assertEqual(_manifest()["version"], hand.__version__)
+    def test_manifest_version_is_the_last_published(self):
+        # The manifest is bumped with the release, not during the dev cycle
+        # (泽平: 发布时统一改).
+        self.assertEqual(_manifest()["version"], "0.7.0")
 
     def test_spec_version_table_row(self):
         with open(os.path.join(ROOT, "SPEC.md"), encoding="utf-8") as f:

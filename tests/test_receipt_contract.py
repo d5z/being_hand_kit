@@ -576,13 +576,22 @@ class TestVersionAndDocs(unittest.TestCase):
         self.root = os.path.join(os.path.dirname(__file__), "..")
 
     def test_version_is_consistent_everywhere(self):
-        # 6.11.0 shipped the receipt contract; 0.7.0 resets the version line for
-        # the AX perception layer. Package and manifest must always agree.
+        # The manifest carries the last PUBLISHED version; the package version
+        # may run ahead during a dev cycle ("0.8.0-dev" while the manifest still
+        # says "0.7.0"). The invariant that must hold: both are well-formed and
+        # the package is never behind the published manifest.
         import hand
         with open(MANIFEST_PATH) as f:
             manifest_version = json.load(f)["version"]
-        self.assertEqual(hand.__version__, manifest_version)
-        self.assertNotEqual(manifest_version, "")
+        pattern = r"^\d+\.\d+\.\d+(-dev)?$"
+        self.assertRegex(hand.__version__, pattern)
+        self.assertRegex(manifest_version, pattern)
+        self.assertNotIn("-dev", manifest_version)   # never publish a dev version
+
+        def parts(v):
+            return tuple(int(x) for x in v.split("-")[0].split("."))
+
+        self.assertGreaterEqual(parts(hand.__version__), parts(manifest_version))
 
     def test_changelog_entry(self):
         body = open(os.path.join(self.root, "CHANGELOG.md")).read()
