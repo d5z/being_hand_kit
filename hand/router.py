@@ -63,8 +63,15 @@ def route_open(target: str) -> dict:
     Set the current place. Creates a new session.
 
     target: app name ("Notes"), URL ("https://..."), file path, etc.
+
+    Receipt (v6.11.0): the plain `{"open": "ok"}` was indistinguishable between
+    "navigation confirmed", "only the CDP endpoint is alive" and "no endpoint".
+    The receipt now carries the evidence level reported by `open_place`:
+    `evidence.level` = "navigate_confirmed" | "endpoint_alive" | "activate_issued",
+    with `verified` true only for a confirmed navigation. Path ③ (no endpoint)
+    still raises out of `open_place` — unchanged.
     """
-    from hand.place.detect import open_place
+    from hand.place.detect import open_place, get_open_evidence
 
     # Open/launch the place — returns a Place with type auto-detected
     place = open_place(target)
@@ -72,12 +79,21 @@ def route_open(target: str) -> dict:
     session = get_session()
     session.place = place
 
+    evidence = get_open_evidence(place)
+    if not evidence:
+        evidence = {
+            "level": "unknown",
+            "detail": f"open_place 未提供证据（target={target!r}）",
+        }
+
     return {
         "open": "ok",
         "place": {
             "type": place.type,
             "identifier": place.identifier,
         },
+        "verified": evidence.get("level") == "navigate_confirmed",
+        "evidence": evidence,
     }
 
 
