@@ -6,7 +6,7 @@ Python kernel speak this module:
     from hand import hand
     hand.open("https://beings.town")
     page = hand.see()                       # a11y tree + [idx] handles
-    hand.do("click [15]")
+    hand.do("click [15]", expect="url:/issues")
     hand.do("type hello")
 
 Nothing here is a new capability — it is the 0.7 body (router + CDP backends +
@@ -29,7 +29,8 @@ a contract, not a convenience:
     same page state (they live in the last snapshot's handle map).
   * truncation is declared, never silent (`truncated` / `nodes_omitted`).
   * `do()` does NOT guess world state: `url`/`title` are None on an action
-    receipt because a click is asynchronous — call `see()` again to confirm.
+    receipt because a click is asynchronous. Either call `see()` again or pass
+    `expect=` (bounded wait, separate verdict).
 
 Do not rename these fields casually: a rename is a protocol break.
 
@@ -68,6 +69,8 @@ __all__ = ["Browser", "browser", "reset", "open", "see", "do", "shot", "close",
            "handles", "resolve", "history", "help", "ACTION_GRAMMAR",
            "FIELD_ORDER", "DEFAULT_EXPECT_TIMEOUT"]
 
+DEFAULT_EXPECT_TIMEOUT = 5.0
+EXPECT_POLL_INTERVAL = 0.25
 HISTORY_LIMIT = 50
 
 # Fixed field order of every receipt (the protocol contract; append-only).
@@ -75,6 +78,8 @@ FIELD_ORDER = (
     # skeleton
     "ok", "action", "kind", "verb", "target", "method", "url", "title",
     "verified", "error", "hint",
+    # world-state verdict (only when expect= was given)
+    "expect",
     # open
     "place",
     # see
@@ -109,6 +114,8 @@ ACTION_GRAMMAR = (
     ("type hello", "type into the focused element — click the field first"),
     ("type [3] hello", "focus handle [3], then type"),
     ("scroll down", "scroll down | up | top | bottom"),
+    ("do(action, expect='url:/issues')",
+     "after the action, wait up to 5s for the world state; reports met + evidence"),
 )
 
 _GRAMMAR_TEXT = "\n".join(f'  hand.do("{form}")'.ljust(46) + meaning
@@ -134,7 +141,7 @@ def _order(receipt: dict) -> dict:
 
 
 def _receipt(action, raw=None, *, kind=None, verb=None, target=None, error=None,
-             hint=None, url=None, title=None, extra=None) -> dict:
+             hint=None, expect=None, url=None, title=None, extra=None) -> dict:
     raw = dict(raw or {})
     if error is None:
         error = raw.get("error")
@@ -160,6 +167,9 @@ def _receipt(action, raw=None, *, kind=None, verb=None, target=None, error=None,
         out["verb"] = verb
     if target is not None:
         out["target"] = target
+    # `expect` is always present (None unless do(expect=...) was used): a stable
+    # skeleton beats a key that appears and disappears.
+    out["expect"] = expect
     out["evidence"] = raw.get("evidence")
     if extra:
         out.update(extra)
@@ -219,6 +229,10 @@ _FAILURE_HINTS = (
 
 def _failure_hint(error, raw) -> str | None:
     text = str(error or "")
+    if "expect" in text:
+        return ("expect= takes a world-state check: expect='url:/issues', "
+                "'title:Issues' or 'text:hello'. The action itself still ran — "
+                "see() shows the current url/title.")
     for needle, hint in _FAILURE_HINTS:
         if needle in text:
             return hint
@@ -286,6 +300,85 @@ def _is_handle(token) -> bool:
     return looks_like_handle(token)
 
 
+# ── world state (expect) ─────────────────────────────────────────────
+
+def _page_state(need_text=False) -> dict:
+    """Cheap world-state read: {url, title[, text]}. Never raises."""
+    try:
+        from hand.perception.cdp_core import (
+            list_pages, resolve_page, cdp_connect, cdp_call)
+        pages = list_pages()
+        idx, page = resolve_page(None, pages)
+        ws = cdp_connect(page["webSocketDebuggerUrl"])
+        try:
+            fields = "url:location.href,title:document.title"
+            if need_text:
+                fields += ",text:((document.body&&document.body.innerText)||'').substring(0,2000)"
+            raw = cdp_call(ws, "Runtime.evaluate",
+                           {"expression": "JSON.stringify({%s})" % fields,
+                            "returnByValue": True}, msg_id=77, timeout=5)
+            value = (raw.get("result") or {}).get("value") or "{}"
+            data = json.loads(value)
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+        return data if isinstance(data, dict) else {"error": "non-dict page state"}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def parse_expect(expect):
+    """'url:/issues' / 'url=/issues' / 'title:Issues' / 'text:hello'."""
+    if not isinstance(expect, str) or ":" not in expect and "=" not in expect:
+        return {"error": f"expect must look like 'url:/issues' (got {expect!r})",
+                "hint": "forms: expect='url:/issues', 'title:Issues', 'text:hello'"}
+    sep = ":" if ":" in expect else "="
+    kind, _, needle = expect.partition(sep)
+    kind, needle = kind.strip().lower(), needle.strip()
+    if kind not in ("url", "title", "text"):
+        return {"error": f"expect kind {kind!r} is not one of url/title/text",
+                "hint": "expect kinds: url / title / text — "
+                        "e.g. expect='url:/issues', 'title:Issues', 'text:hello'"}
+    if not needle:
+        return {"error": f"expect {expect!r} has an empty value",
+                "hint": "forms: expect='url:/issues', 'title:Issues', 'text:hello'"}
+    return {"kind": kind, "needle": needle, "spec": expect.strip()}
+
+
+def _matches(kind, value, needle) -> bool:
+    if not isinstance(value, str):
+        return False
+    # URLs are case-sensitive (paths are); human text is not.
+    return needle in value if kind == "url" else needle.lower() in value.lower()
+
+
+def _wait_for_world(parsed, timeout) -> dict:
+    """Bounded wait for a world state. Never raises, never blocks forever."""
+    deadline = time.time() + max(0.0, float(timeout))
+    checks = 0
+    state = {}
+    started = time.time()
+    while True:
+        state = _page_state(need_text=parsed["kind"] == "text")
+        checks += 1
+        if _matches(parsed["kind"], state.get(parsed["kind"]), parsed["needle"]):
+            return {"spec": parsed["spec"], "kind": parsed["kind"],
+                    "needle": parsed["needle"], "met": True,
+                    "waited_ms": int((time.time() - started) * 1000), "checks": checks,
+                    "evidence": {k: state.get(k) for k in ("url", "title") if k in state}}
+        if time.time() >= deadline:
+            return {"spec": parsed["spec"], "kind": parsed["kind"],
+                    "needle": parsed["needle"], "met": False,
+                    "waited_ms": int((time.time() - started) * 1000), "checks": checks,
+                    "timeout_s": float(timeout),
+                    "evidence": {k: state.get(k) for k in ("url", "title") if k in state},
+                    "reason": (f'{parsed["kind"]} never contained '
+                               f'{parsed["needle"]!r} within {timeout}s')}
+        time.sleep(min(EXPECT_POLL_INTERVAL, max(0.0, deadline - time.time())))
+
+
 # ── the singleton ────────────────────────────────────────────────────
 
 class Browser:
@@ -307,7 +400,8 @@ class Browser:
         self.last_receipt = receipt
         summary = {"n": self.calls, "action": receipt.get("action"),
                    "verb": receipt.get("verb"), "target": receipt.get("target"),
-                   "ok": receipt.get("ok"), "error": receipt.get("error")}
+                   "ok": receipt.get("ok"), "error": receipt.get("error"),
+                   "met": (receipt.get("expect") or {}).get("met")}
         self._history.append(summary)
         del self._history[:-HISTORY_LIMIT]
         if receipt.get("action") == "see" and receipt.get("ok"):
@@ -331,7 +425,7 @@ class Browser:
 
     # -- primitives
 
-    def open(self, url=None) -> dict:
+    def open(self, url=None, expect=None, timeout=DEFAULT_EXPECT_TIMEOUT) -> dict:
         if not isinstance(url, str) or not url.strip():
             return self._record(_receipt(
                 "open", error="open needs a URL",
@@ -359,7 +453,7 @@ class Browser:
         requested = kind if kind in _SEE_KINDS else None
         return self._record(_receipt("see", raw, kind=requested))
 
-    def do(self, action) -> dict:
+    def do(self, action, expect=None, timeout=DEFAULT_EXPECT_TIMEOUT) -> dict:
         parsed = parse_action(action)
         if "error" in parsed:
             return self._record(_receipt("do", error=parsed["error"],
@@ -371,10 +465,20 @@ class Browser:
             raw = {"error": f"{type(e).__name__}: {e}", "verified": False,
                    "evidence": {"verified": False, "reason": str(e)}}
 
-        # do() does not guess world state: url/title stay None (a click is
-        # asynchronous) — call see() again to confirm, see the README.
+        expect_out = None
+        spec_error = None
+        if expect is not None:
+            expect_out = self._expect(expect, timeout, raw)
+            # A spec we cannot honour is a caller error, not a world verdict: the
+            # action still ran, so `verified`/`evidence` keep reporting it, while
+            # `ok` says the call as specified could not be carried out.
+            spec_error = expect_out.get("reason") if expect_out.get("spec_error") else None
+
+        # do() does not guess world state: url/title stay None unless expect
+        # measured them (a click is asynchronous — see the README).
         return self._record(_receipt("do", raw, verb=verb, target=target,
-                                     url=None, title=None,
+                                     expect=expect_out, url=None, title=None,
+                                     error=spec_error,
                                      extra={"result": raw.get("result")}))
 
     def _dispatch(self, parsed) -> dict:
@@ -391,6 +495,20 @@ class Browser:
         if parsed.get("handle"):
             return cdp_type_handle(parsed["handle"], parsed["text"])
         return cdp_type_focused(parsed["text"])
+
+    def _expect(self, expect, timeout, raw) -> dict:
+        parsed = parse_expect(expect)
+        if "error" in parsed:
+            return {"spec": expect, "met": False, "skipped": True,
+                    "spec_error": True, "reason": parsed["error"],
+                    "hint": parsed.get("hint")}
+        if raw.get("error"):
+            # The action never landed: waiting for a world state would be a lie
+            # about what was attempted (and a 5s stall).
+            return {"spec": parsed["spec"], "kind": parsed["kind"],
+                    "needle": parsed["needle"], "met": False, "skipped": True,
+                    "reason": f"action failed: {raw.get('error')}"}
+        return _wait_for_world(parsed, timeout)
 
     def shot(self, path=None, with_data=False) -> dict:
         try:
@@ -507,16 +625,16 @@ def reset():
 
 # ── module-level API (the same singleton) ────────────────────────────
 
-def open(url=None):
-    return browser().open(url)
+def open(url=None, expect=None, timeout=DEFAULT_EXPECT_TIMEOUT):
+    return browser().open(url, expect=expect, timeout=timeout)
 
 
 def see(kind=None):
     return browser().see(kind)
 
 
-def do(action):
-    return browser().do(action)
+def do(action, expect=None, timeout=DEFAULT_EXPECT_TIMEOUT):
+    return browser().do(action, expect=expect, timeout=timeout)
 
 
 def shot(path=None, with_data=False):
@@ -553,9 +671,10 @@ def help(as_receipt=False):
         "  verified  did we read back that it happened (bool | None)\n"
         "  error     why it failed (None on success)\n"
         "  hint      what to do next (None when nothing needs saying)\n"
+        "  expect    {'met': bool, 'waited_ms': int, 'evidence': {...}} with expect=\n"
         "  evidence  raw evidence behind the verdicts\n\n"
         "handles: see() numbers every node [idx]; do(\"click [15]\") uses them.\n"
-        "do() does not guess world state — call see() again to confirm.\n"
+        "do() does not guess world state — see() again or pass expect=.\n"
     )
     if not as_receipt:
         return text

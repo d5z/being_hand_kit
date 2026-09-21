@@ -244,6 +244,7 @@ class TestDoGrammar(unittest.TestCase):
         r, _, _, _ = self._do("type [3] hello")
         self.assertEqual(r["verb"], "type")
         self.assertEqual(r["target"], "[3]")
+        self.assertIsNone(r["expect"])
 
     def test_empty_action_is_rejected_with_the_table(self):
         r, routed, _, _ = self._do("")
@@ -359,7 +360,8 @@ class TestSerializationContract(unittest.TestCase):
 class TestHelp(unittest.TestCase):
     def test_help_documents_the_action_table(self):
         text = face.help()
-        for token in ("click [15]", "selector=", "text=", "xy=", "type", "scroll"):
+        for token in ("click [15]", "selector=", "text=", "xy=", "type", "scroll",
+                      "expect="):
             self.assertIn(token, text, token)
 
     def test_help_is_also_a_receipt_shape(self):
@@ -395,6 +397,159 @@ class TestClose(unittest.TestCase):
             r = face.close(timeout=0.1)
         self.assertFalse(r["ok"])
         self.assertIn("error", r)
+
+
+class TestExpect(unittest.TestCase):
+    """S2: `expect=` — bounded wait on world state, reported separately.
+
+    The action verdict (verified/evidence) and the world verdict (expect.met)
+    are two different claims; these tests pin both, and pin that neither
+    collapses into the other.
+    """
+
+    def setUp(self):
+        face.reset()
+        self._interval = mock.patch("hand.hand.EXPECT_POLL_INTERVAL", 0.02)
+        self._interval.start()
+        self.addCleanup(self._interval.stop)
+
+    def _do(self, action="click [15]", raw=None, states=None, **kw):
+        """states: list of page states returned by successive polls."""
+        raw = raw if raw is not None else {"method": "cdp_click", "result": "ok",
+                                           "verified": True, "evidence": {}}
+        seen = []
+        queue = list(states or [])
+
+        def fake_state(need_text=False):
+            seen.append(need_text)
+            if len(queue) > 1:
+                return queue.pop(0)
+            return queue[0] if queue else {"url": "https://x/", "title": "X"}
+
+        with mock.patch("hand.router.route_do", return_value=raw), \
+             mock.patch("hand.hand._page_state", side_effect=fake_state) as state:
+            r = face.do(action, **kw)
+        return r, state, seen
+
+    def test_expect_met_immediately(self):
+        r, state, _ = self._do(expect="url:/issues",
+                               states=[{"url": "https://github.com/o/r/issues",
+                                        "title": "Issues"}])
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["expect"]["met"], True)
+        self.assertEqual(r["expect"]["spec"], "url:/issues")
+        self.assertEqual(r["expect"]["kind"], "url")
+        self.assertEqual(r["expect"]["checks"], 1)
+        self.assertIn("issues", r["expect"]["evidence"]["url"])
+        self.assertEqual(r["expect"]["evidence"]["title"], "Issues")
+
+    def test_expect_met_after_polling(self):
+        r, _, _ = self._do(expect="url:/issues",
+                           states=[{"url": "https://github.com/o/r", "title": "R"},
+                                   {"url": "https://github.com/o/r", "title": "R"},
+                                   {"url": "https://github.com/o/r/issues",
+                                    "title": "Issues"}])
+        self.assertEqual(r["expect"]["met"], True)
+        self.assertEqual(r["expect"]["checks"], 3)
+
+    def test_expect_timeout_is_reported_not_raised(self):
+        r, _, _ = self._do(expect="url:/issues", timeout=0.2,
+                           states=[{"url": "https://github.com/o/r", "title": "Repo"}])
+        self.assertTrue(r["ok"])                      # the action did happen
+        self.assertFalse(r["expect"]["met"])
+        self.assertIn("issues", r["expect"]["reason"])
+        self.assertEqual(r["expect"]["evidence"]["url"], "https://github.com/o/r")
+        self.assertEqual(r["expect"]["evidence"]["title"], "Repo")
+        self.assertLess(r["expect"]["waited_ms"], 1500)
+
+    def test_timeout_is_bounded_by_the_parameter(self):
+        r, _, _ = self._do(expect="url:/nope", timeout=0.3,
+                           states=[{"url": "https://x/", "title": "X"}])
+        self.assertGreaterEqual(r["expect"]["waited_ms"], 250)
+        self.assertLess(r["expect"]["waited_ms"], 1500)
+        self.assertEqual(r["expect"]["timeout_s"], 0.3)
+
+    def test_no_expect_returns_immediately_and_never_reads_the_world(self):
+        r, state, _ = self._do()
+        self.assertIsNone(r["expect"])
+        self.assertFalse(state.called)
+
+    def test_action_verdict_and_world_verdict_are_separate(self):
+        """A dispatched-but-unverified action can still meet the world state."""
+        raw = {"method": "cdp_click", "result": "ok", "verified": False,
+               "evidence": {"verified": False, "reason": "coordinate click: "
+                                                         "dispatch-only"}}
+        r, _, _ = self._do(raw=raw, expect="url:/issues",
+                           states=[{"url": "https://x/issues", "title": "I"}])
+        self.assertFalse(r["verified"])               # action: unconfirmed
+        self.assertTrue(r["expect"]["met"])           # world: confirmed
+        self.assertIn("dispatch-only", r["hint"])
+
+    def test_failed_action_skips_the_wait(self):
+        raw = {"error": "selector did not match any element: 'a.x'",
+               "verified": False, "evidence": {"verified": False}}
+        r, state, _ = self._do(raw=raw, expect="url:/issues")
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["expect"]["met"])
+        self.assertTrue(r["expect"]["skipped"])
+        self.assertIn("action failed", r["expect"]["reason"])
+        self.assertFalse(state.called)                # no 5s stall on a failed click
+
+    def test_malformed_expect_is_a_caller_error(self):
+        r, _, _ = self._do(expect="issues")           # no url:/title:/text: form
+        self.assertFalse(r["ok"])
+        self.assertIn("expect", r["error"])
+        self.assertTrue(r["expect"]["skipped"])
+        self.assertIn("url:", r["expect"]["hint"])
+
+    def test_unknown_expect_kind_is_named(self):
+        r, _, _ = self._do(expect="href:foo")
+        self.assertFalse(r["ok"])
+        for kind in ("url", "title", "text"):
+            self.assertIn(kind, r["expect"]["hint"])
+
+    def test_empty_expect_value_is_rejected(self):
+        r, _, _ = self._do(expect="url:")
+        self.assertFalse(r["ok"])
+        self.assertIn("empty", r["expect"]["reason"])
+
+    def test_url_matching_is_case_sensitive(self):
+        r, _, _ = self._do(expect="url:/ISSUES",
+                           states=[{"url": "https://x/issues", "title": "I"}],
+                           timeout=0.1)
+        self.assertFalse(r["expect"]["met"])
+
+    def test_title_and_text_matching_ignore_case(self):
+        r, _, _ = self._do(expect="title:issues",
+                           states=[{"url": "https://x/", "title": "Open Issues"}])
+        self.assertTrue(r["expect"]["met"])
+
+    def test_text_expect_reads_the_page_text(self):
+        r, state, seen = self._do(expect="text:Welcome",
+                                  states=[{"url": "https://x/", "title": "X",
+                                           "text": "Welcome aboard"}])
+        self.assertTrue(r["expect"]["met"])
+        self.assertEqual(seen, [True])                # need_text=True
+
+    def test_expect_on_type_actions(self):
+        raw = {"method": "cdp_type", "result": "ok", "verified": True,
+               "evidence": {"focus": "INPUT#q"}}
+        with mock.patch("hand.action.cdp_act.cdp_type_focused", return_value=raw), \
+             mock.patch("hand.hand._page_state",
+                        return_value={"url": "https://x/?q=hello", "title": "X"}):
+            r = face.do("type hello", expect="url:q=hello")
+        self.assertTrue(r["expect"]["met"])
+        self.assertEqual(r["verb"], "type")
+
+    def test_expect_field_is_always_in_the_skeleton(self):
+        r, _, _ = self._do()
+        self.assertIn("expect", r)
+        self.assertIsNone(r["expect"])
+
+    def test_help_documents_expect(self):
+        text = face.help()
+        self.assertIn("expect=", text)
+        self.assertIn("met", text)
 
 
 if __name__ == "__main__":
