@@ -131,16 +131,31 @@ def cdp_nav(url: str) -> dict:
     return route_open(url)
 @mcp.tool()
 def cdp_see(kind: str = None) -> dict:
+    """See the current page. Default (kind=a11y) is the accessibility tree:
+    indented `role "name" (state) [idx]` lines where [idx] is a handle for
+    cdp_click/cdp_type. kind=dom (visible text), kind=interactive (legacy
+    element map with coordinates), kind=network, kind=vlm are explicit
+    channels. The receipt carries verified/evidence and a `hint` when a
+    collapsed menu hides part of the tree (click it, then see again)."""
     from hand.router import route_see
     _bump()
     return route_see(kind=kind)
 @mcp.tool()
 def cdp_click(selector: str) -> dict:
+    """Click an element. `selector` accepts a CSS selector ('a.login'), an
+    [idx] handle from cdp_see(kind=a11y) ('[93]'), 'text=...' or 'xy:X,Y'
+    (physical pixels). Handle clicks re-read the element box at click time, so
+    a handle whose node is gone comes back unverified with a reason instead of
+    clicking a phantom."""
     from hand.router import route_do
     _bump()
     return route_do(selector)
 @mcp.tool()
 def cdp_type(text: str) -> dict:
+    """Type text into the currently focused element (Input.insertText).
+    Click the field first — including by [idx] handle: cdp_click('[93]'). The
+    receipt verifies document.activeElement before typing; no focus → unverified
+    with a reason. Retrying appends (idempotency: append)."""
     from hand.action.cdp_act import cdp_type_focused
     _bump()
     return cdp_type_focused(text)

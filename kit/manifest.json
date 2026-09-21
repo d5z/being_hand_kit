@@ -1,7 +1,7 @@
 {
   "name": "hand",
-  "version": "6.11.0",
-  "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand \u2014 built by Alice for every being who needs to reach into a GUI. Receipts distinguish verified vs claimed; tools declare idempotency.",
+  "version": "0.7.0",
+  "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand — built by Alice for every being who needs to reach into a GUI. Since 0.7.0 cdp_see returns the accessibility tree by default (role/name/state + stable [idx] handles that cdp_click/cdp_type accept); kind=dom and kind=interactive remain as escape hatches. Receipts distinguish verified vs claimed; tools declare idempotency.",
   "platforms": {
     "supported": [
       "darwin",
@@ -70,13 +70,14 @@
     },
     {
       "name": "cdp_see",
-      "description": "See what's on the current page \u2014 title, URL, and all visible text. kind=interactive returns the interactive element map (role/text/selector/coordinates); kind=network returns the request/response flow.",
+      "description": "See what's on the current page. Default (kind=a11y) returns the accessibility tree: an indented `role \"name\" (state) [idx]` tree where [idx] is a stable handle for cdp_click/cdp_type. kind=dom returns the visible-text snapshot, kind=interactive the legacy element map (role/text/selector/coordinates), kind=network the request/response flow, kind=screenshot the image path. The receipt carries verified/evidence (node count, serialized bytes, truncation marker, AX source version) and a `hint` when a collapsed menu hides part of the tree.",
       "params": {
         "type": "object",
         "properties": {
           "kind": {
             "type": "string",
             "enum": [
+              "a11y",
               "dom",
               "interactive",
               "network",
@@ -90,7 +91,7 @@
     },
     {
       "name": "cdp_click",
-      "description": "Click an element on the page by CSS selector.",
+      "description": "Click an element on the page. Accepts a CSS selector (e.g. 'a.login') or an [idx] handle from cdp_see(kind=a11y) (e.g. '[93]'), which is resolved through the last snapshot's handle map and verified by re-reading the element box at click time. Also accepts 'text=...' and 'xy:X,Y' (physical pixels).",
       "params": {
         "type": "object",
         "properties": {
@@ -107,7 +108,7 @@
     },
     {
       "name": "cdp_type",
-      "description": "Type text into the currently focused element.",
+      "description": "Type text into the currently focused element. Click a field first — including by [idx] handle from cdp_see(kind=a11y) (cdp_click '[93]'), or use the '[93]|text' form of the internal type path, which focuses the handle's element and verifies the focus target before typing.",
       "params": {
         "type": "object",
         "properties": {
@@ -120,7 +121,8 @@
         ]
       },
       "idempotency": "append",
-      "evidence": "verified"
+      "evidence": "verified",
+      "idempotency_note": "append: this tool inserts text at the focus (Input.insertText), so a retry appends twice. The internal fast path cdp_type(selector, text, fast=True) replaces the whole value (el.value = text) and is therefore idempotent; it is not exposed as an MCP tool. Path-split labelling per F15."
     },
     {
       "name": "cdp_shot",
@@ -191,7 +193,7 @@
     },
     {
       "name": "health",
-      "description": "Check if Hand is alive and well \u2014 uptime, usage count, Chrome status.",
+      "description": "Check if Hand is alive and well — uptime, usage count, Chrome status.",
       "params": {
         "type": "object",
         "properties": {}

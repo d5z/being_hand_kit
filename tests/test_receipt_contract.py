@@ -574,11 +574,14 @@ class TestVersionAndDocs(unittest.TestCase):
     def setUp(self):
         self.root = os.path.join(os.path.dirname(__file__), "..")
 
-    def test_version_is_6110_everywhere(self):
+    def test_version_is_consistent_everywhere(self):
+        # 6.11.0 shipped the receipt contract; 0.7.0 resets the version line for
+        # the AX perception layer. Package and manifest must always agree.
         import hand
-        self.assertEqual(hand.__version__, "6.11.0")
         with open(MANIFEST_PATH) as f:
-            self.assertEqual(json.load(f)["version"], "6.11.0")
+            manifest_version = json.load(f)["version"]
+        self.assertEqual(hand.__version__, manifest_version)
+        self.assertNotEqual(manifest_version, "")
 
     def test_changelog_entry(self):
         body = open(os.path.join(self.root, "CHANGELOG.md")).read()

@@ -1,5 +1,5 @@
 """
-Hand V6 — 图形界面统一框架
+Hand — 图形界面统一框架（0.7.0 起为 AX 感知层）
 
 Hand is a unified framework for beings to perceive and act on graphical interfaces.
 Three primitives: open, see, do.
@@ -9,5 +9,5 @@ V5 → V6: browser CDP code reborn as perception/action backends,
 same primitives translated to desktop via accessibility tree + keystroke + Vision OCR.
 """
 
-__version__ = "6.11.0"
+__version__ = "0.7.0"
 __author__ = "Alice, from the river"

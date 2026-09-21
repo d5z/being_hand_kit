@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.7.0] - 2026-09-21
+
+> **版本线重置**：0.7.0 不是 6.11.0 的渐进迭代，而是**感知层范式切换**——`cdp_see` 默认从
+> 可见文本/元素地图换成 a11y 树。Grove 按版本号排序时 0.7.0 会排在 6.x 之后，这是有意的：
+> 这条线从「浏览器控制」重开为「AX 感知」。升级前请读「升级影响」。
+
+#### Added
+- **AX 感知层（a11y v2 默认）**：`cdp_see` 默认返回可访问性树——YAML 风格缩进树，
+  每行 `role "name" (state) [idx]`，`[idx]` 是稳定句柄。实验依据：90 trials A/B，
+  a11y v2 **87%** vs 旧 interactive 层 **58%**（感知类 50%→88%，操作类 57%→71%，
+  输入 token -17%、输出 -77%；`experiments/a11y_ab/REPORT_phase2.md`）。PRD:
+  `docs/prd-ax-perception.md`
+  - **S1** `hand/perception/ax_tree.py`：实验原型产品化。curation（滤 ignored/纯布局角色、
+    level 只对 heading 有意义、折叠无名 generic 单子链、StaticText 空名/重名不占行）、
+    稳定句柄、`backendNodeId → 坐标` 映射。
+  - **确定性是格式契约**（`a11y-v2`）：同一页面状态序列化**字节一致**。为此 `STATE_PROPS`
+    从 set 改为有序 tuple（str set 迭代序随 PYTHONHASHSEED 变化，会静默破坏可复现性），
+    并加跨进程确定性单测。截断显式声明（`truncated` + `nodes_omitted`，默认 600 行，
+    可完整容纳实验最重页面 478 行），不会产出没有对应句柄的 `[idx]`。
+  - **S2** `[idx]` 句柄直达动作层：`cdp_click "[93]"` / `cdp_type "[93]|text"`。
+    点击时用 `DOM.resolveNode` + `getBoundingClientRect()` **重读**元素盒（快照里的 x,y
+    只是信息位，用旧坐标点就是盲点），验证来自这次重读；节点消失/零尺寸 → verified=false
+    并提示「call cdp_see again」。`kind=interactive`/`kind=dom`/`kind=network` 保留为显式通道。
+  - **S3** 回执契约套到 a11y 快照：`verified` = 树确实拉到且根节点非空；
+    `evidence` = 节点数/序列化字节数/truncated/nodes_omitted/AX 来源版本/sha256/root_role。
+    溢出菜单盲区（实验已知）检测 hasPopup 控件后给 `hint`：先点开再 see（两步策略）。
+- **S4（F7）Chrome profile 策略**：`_chrome_flags()` 默认 `--user-data-dir=<kit>/.chrome-profile`
+  （isolated，永不与人类 Chrome 抢 profile 锁、不碰人类 cookie），目录保留（登录态跨重启存活）；
+  `HAND_PROFILE=persistent` / `HAND_PROFILE_DIR=<path>` / `HAND_HEADLESS=0` 三个显式 opt-in
+  （taojun 954 无头指纹限流 + Cotton 935 人类 Chrome 常驻，是方向相反的同一条需求）。
+  spawn 句柄带 `.cdp_flags`/`.cdp_profile`，验收协议「ps 核 flags」有程序化对照物。
+- **S5（F8）macOS 发现层**：`_find_chrome()` 加 darwin 候选（/Applications Chrome → Chromium
+  → Canary → Edge → ~/Applications），排在 Playwright 缓存之前。Cotton 935 的硬编码路径
+  正式进链，不再靠 wrapper。
+- **S6（F9-F13）quick-fix**：requirements pin `mcp<2`、补 `websocket-client`（真 import 却
+  未声明）与 `requests`；`start.sh` 加载 `<kit>/.env`（`set -a` 导出给 MCP 进程）；
+  README 写明 python ≥3.10 前置、冷启动 2-3s 预期与端点探测上限 6s。
+
+#### Changed
+- `SEE_PRIORITY["browser"]`/`["unknown"]` 链首换成 `cdp_a11y`，`cdp_dom` 降为优雅降级
+  （AX 拉不到时仍能回答，回执的 `method` 说明是谁说的）。
+- `kind="dom"` 成为显式通道：a11y 上默认后不能再靠「链首恰好是 dom」生效。
+- `cdp_see` 的 manifest 声明补 `a11y`（默认）与各逃生口，`cdp_click`/`cdp_type` 声明
+  `[idx]` 句柄用法。
+
+#### Fixed
+- **F15（幂等标签复核）**：`cdp_type` 的扁平 `append` 标签会随内部 fast 路径静默过期——
+  现在按路径分标：MCP `cdp_type` = append（`Input.insertText` at focus），内部
+  `fast=True` 路径 = 整值 replace（构造上幂等、非 MCP 暴露），manifest 增
+  `idempotency_note` 写明（enum 不变，schema 变更仍留 6.12.0 观察）。
+
+#### Upgrade impact（升级影响）
+- 首次 spawn 创建 `<kit>/.chrome-profile`（保留，不删）；安装器生成的
+  `chrome-wrapper.sh` **可删可留**（无害冗余，flags 已进正规链）。
+- `cdp_see` 默认输出变了：旧行为用 `kind=dom`，旧元素地图用 `kind=interactive`
+  （保留一个过渡版本）。
+
+#### Dev
+- 新增测试：`tests/test_ax_tree.py`（curation/句柄/截断/跨进程确定性/坐标/句柄表）、
+  `tests/test_ax_see.py`（kind 路由/句柄动作）、`tests/test_chrome_profile.py`（F7）、
+  `tests/test_macos_discovery.py`（F8）、`tests/test_kit_quickfixes.py`（F9-F13）、
+  `tests/test_release_070.py`（manifest/版本/release note）；`test_receipt_contract.py`
+  增 a11y 快照与句柄动作的回执断言。
+- 保真验证：用 `experiments/a11y_ab/github_ax.json` 重放，归一化（StaticText 噪音规则、
+  level 修正、页面相对时间）后与实验 `github_snapshot_v2.txt` 完全一致。
+- 真实浏览器实测（github.com/d5z/being_hand_kit）：`see(kind=a11y)` 0.21s / 487 行 /
+  17939 字节 / 91 个可操作面拿到坐标；同页两次 see 字节一致；`cdp_click "[25]"` 点开
+  溢出菜单后树从 487 行变 492 行。
+- 反馈台账 F7/F8/F9/F10/F11/F12/F13/F15 销账为 0.7.0。
+
 ## [6.11.0] - 2026-09-21
 
 #### Added

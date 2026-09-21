@@ -31,6 +31,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.9.0 | 2026-09-06 | released | 感知契约 v1：see→do(xy) 坐标闭环三步验收（69 tests），acceptance-contract-v1-cdp.md |
 | V6.10.0 | 2026-09-19 | released | Windows 支持（感知三角修复：cdp_shot/hand_see_vlm/cdp_see 三件套），taojun 反馈驱动 |
 | V6.11.0 | 2026-09-21 | released | 回执契约层：回执区分 claimed/verified，route_open 三态证据 + ensure_chrome 端点探测 + manifest 幂等声明 |
+| V0.7.0 | 2026-09-21 | released | AX 感知层：a11y v2 树为默认 see（role/name/state + [idx] 句柄）、句柄直达 click/type、F7 profile 策略 / F8 macOS 发现层 / F9-F13 quick-fix |
 
 ## Architecture Tiers
 
@@ -114,6 +115,42 @@ hand/
   tests/
     test_plan.py
 ```
+
+## AX Perception Layer (0.7.0)
+
+`cdp_see` defaults to the accessibility tree (PRD `docs/prd-ax-perception.md`).
+Experiment basis: 90 A/B trials, a11y v2 87% vs interactive 58%
+(`experiments/a11y_ab/REPORT_phase2.md`).
+
+```
+- RootWebArea "Example Page" [1]
+  - heading "Welcome" (h1) [2]
+  - navigation "Main" [4]
+    - link "Sign in" [5]
+```
+
+- **Curation**: ignored nodes and pure-layout roles (InlineTextBox/ListMarker)
+  dropped; `level` only shown for headings (AX mis-attaches it to list/listitem);
+  nameless single-child generic chains collapsed; StaticText with an empty or
+  duplicate name consumes an index but emits no line.
+- **Format is a data contract** (`AX_FORMAT_VERSION = a11y-v2`): the same page
+  state serializes to byte-identical output. State properties are emitted in a
+  declared order (`STATE_PROPS` is a tuple — a str set would vary with
+  PYTHONHASHSEED). Format changes require a version bump.
+- **Handles**: `[idx]` is a position in the curated traversal, stable for a page
+  state, and resolvable later (`cdp_click "[93]"`, `cdp_type "[93]|text"`).
+  Handle clicks re-read the element box at click time (DOM.resolveNode +
+  getBoundingClientRect) — the snapshot's x,y are informational.
+- **Truncation** beyond `max_lines` (default 600) sets `truncated` +
+  `nodes_omitted`; no `[idx]` is emitted without a handle entry.
+- **Coordinates**: `coords` / handle-map x,y are physical px (CSS × dpr), the
+  same contract as interactive_map and `do(xy:)`.
+- **Receipt** (S3): `verified` = a tree was pulled with a non-empty root;
+  `evidence` = node counts, serialized bytes, truncation marker, AX source
+  version, sha256. A `hint` names a hasPopup control when a collapsed menu hides
+  part of the tree (click it, then see again).
+- **Escape hatches**: `kind=dom` (visible text), `kind=interactive` (legacy
+  element map with coordinates), `kind=network`. Desktop apps are unaffected.
 
 ## Grove Publish Status
 
