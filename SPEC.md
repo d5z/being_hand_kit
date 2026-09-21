@@ -31,7 +31,7 @@ Beings use Hand to see screens, understand interfaces, and perform actions.
 | V6.9.0 | 2026-09-06 | released | 感知契约 v1：see→do(xy) 坐标闭环三步验收（69 tests），acceptance-contract-v1-cdp.md |
 | V6.10.0 | 2026-09-19 | released | Windows 支持（感知三角修复：cdp_shot/hand_see_vlm/cdp_see 三件套），taojun 反馈驱动 |
 | V6.11.0 | 2026-09-21 | released | 回执契约层：回执区分 claimed/verified，route_open 三态证据 + ensure_chrome 端点探测 + manifest 幂等声明 |
-| V0.8.0-dev | 2026-09-21 | in dev | code mode 第二张脸：Python face（hand.open/see/do 单例 + 教学式错误 + 固定字段序回执）、do(expect=) 世界状态有界等待验证、README Python-first |
+| V0.8.0 | 2026-09-21 | released | code mode 第二张脸：Python face（hand.open/see/do 单例 + 教学式错误 + 固定字段序回执）、do(expect=) 世界状态有界等待验证、README Python-first；a11y-v2.1（MAX_NAME 200 + 截断声明） |
 | V0.7.0 | 2026-09-21 | released | AX 感知层：a11y v2 树为默认 see（role/name/state + [idx] 句柄）、句柄直达 click/type、F7 profile 策略 / F8 macOS 发现层 / F9-F13 quick-fix |
 
 ## Architecture Tiers

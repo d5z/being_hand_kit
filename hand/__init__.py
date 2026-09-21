@@ -1,5 +1,5 @@
 """
-Hand — 图形界面统一框架（0.8.0-dev：Python face / code mode）
+Hand — 图形界面统一框架（0.8.0：Python face / code mode）
 
 Hand is a unified framework for beings to perceive and act on graphical interfaces.
 Three primitives: open, see, do.
@@ -26,7 +26,7 @@ same primitives translated to desktop via accessibility tree + keystroke + Visio
 0.8.0: code mode — the Python face, and expect= world-state verification.
 """
 
-__version__ = "0.8.0-dev"
+__version__ = "0.8.0"
 __author__ = "Alice, from the river"
 
 # Top-level Python face (lazy singleton behind these names).

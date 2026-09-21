@@ -22,10 +22,11 @@ hand.open("https://beings.town")      # spawn/navigate Chrome (or reuse the live
 page = hand.see()                     # the accessibility tree, with [idx] handles
 print(page["tree"])                   # human/LLM-readable indented tree
 
-link = hand.do("click [68]")          # do something you saw
+# find the link you want in the tree, e.g.  - link "Browse the Grove →" [80]
+link = hand.do("click [80]")          # do something you saw (idx from YOUR see())
 print(link["ok"], link["verified"])   # call verdict + evidence verdict
 
-hand.do("click [68]", expect="url:/grove")   # …and wait for the world to agree
+hand.do("click [80]", expect="url:/grove")   # …and wait for the world to agree
 print(hand.see()["url"])              # confirm where you actually are
 hand.close()                          # explicit teardown
 ```
@@ -44,7 +45,7 @@ is still in flight when `do()` returns. Calling `see()` again right away is **ra
 purpose:
 
 ```python
-hand.do("click [68]", expect="url:/grove")   # preferred: bounded wait for the new world
+hand.do("click [80]", expect="url:/grove")   # preferred: bounded wait for the new world
 ```
 
 Nothing waits silently in the background.
@@ -80,7 +81,9 @@ hand.do("click [80]")              # still resolves — same page, handles alive
 Handles do **not** survive a page navigation. Clicking one from the previous page
 teaches you so: `handle [7] element is gone (backendNodeId … does not resolve) —
 call cdp_see again`. Rule: **one page, one handle set** — re-see after you navigate;
-re-seeing after merely switching channels is optional.
+re-seeing after merely switching channels is optional. Note that `open()` is itself
+a navigation: it reuses the same tab, and that reuse is what kills the previous
+page's handles.
 
 ## `see()` — what you get back
 
@@ -91,15 +94,20 @@ page = hand.see()          # kind defaults to "a11y"
 | field | meaning |
 |-------|---------|
 | `ok` | the call was carried out |
-| `kind` | which channel answered: `a11y` (default) · `dom` · `interactive` · `network` · `vlm` |
+| `kind` | which channel answered: `a11y` (default) · `dom` · `interactive` · `network` · `vlm` · `screenshot` |
 | `method` | the backend that actually spoke (e.g. `cdp_a11y`) |
 | `url`, `title` | where you are |
 | `tree` | the a11y tree, one line per node: `role "name" (state) [idx]` |
 | `handles` | `{"15": {"role", "name", "backend_node_id", "x", "y"}}` — what `[idx]` resolves to |
 | `line_count`, `serialized_bytes` | size of the snapshot |
-| `truncated`, `nodes_omitted` | truncation is **always declared**, never silent |
+| `truncated`, `nodes_omitted` | truncation is **always declared**, never silent. The a11y cap is 600 tree lines; `nodes_omitted` counts dropped *tree lines* |
+| `text_truncated_count` | node names cut at 200 chars (declared per node, counted here) |
 | `hint` | something you should know — e.g. a collapsed `⋯` menu whose contents are not in the tree (click it, then see again) |
 | `verified`, `evidence` | the evidence verdict: node count, AX source version, sha256 |
+
+Receipts are **self-describing**: the table lists the semantic anchors, but a new
+field may appear — print the receipt and read what it actually says before
+assuming the full shape from memory.
 
 That table is the **a11y** shape. Each kind answers a different shape, so read the
 fields the kind actually returns instead of assuming `tree`:
@@ -116,6 +124,15 @@ fields the kind actually returns instead of assuming `tree`:
 hand.see(kind="dom")["text"]            # this shape has no "tree" key
 hand.see(kind="network")["requests"]    # …this one neither
 ```
+
+**`see()` is whole-document, not viewport-scoped.** The a11y tree is in DOM order,
+not visual order — a page footer can be near the top of the tree. Scrolling changes
+nothing in the snapshot (the tree is structural). Don't reason "tree order = visual
+order".
+
+**`dom` doubles as a read-only API reader.** `hand.open("https://…/api/…")` then
+`see(kind="dom")["text"]` returns the raw JSON body (capped at 8000 chars) — handy
+for counting things, but the cap means you see only the head of a big payload.
 
 **`dom` gives original text, capped at 8000 characters.** Truncation is declared
 (`truncated: true`, and `total_chars` reports the real length), but the 8000 cap is

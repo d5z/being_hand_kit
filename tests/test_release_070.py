@@ -27,16 +27,19 @@ def _tools():
 
 
 class TestVersion(unittest.TestCase):
-    def test_package_version_is_the_dev_line(self):
-        # 0.8.0-dev is the code-mode cycle; the suffix is dropped by the release
-        # commit (S5), not by a feature commit.
-        import hand
-        self.assertEqual(hand.__version__, "0.8.0-dev")
+    """Historical assertions: 0.7.0 shipped on 2026-09-21. Current-version
+    assertions live in test_release_080 (and, later, in the next cycle's file) —
+    a released version's tests lock what shipped, not what is current."""
 
-    def test_manifest_version_is_the_last_published(self):
-        # The manifest is bumped with the release, not during the dev cycle
-        # (泽平: 发布时统一改).
-        self.assertEqual(_manifest()["version"], "0.7.0")
+    def test_070_is_in_the_version_table(self):
+        with open(os.path.join(ROOT, "SPEC.md"), encoding="utf-8") as f:
+            body = f.read()
+        row = body.split("| V0.7.0 |")[1].split("\n")[0]
+        self.assertIn("released", row)
+
+    def test_changelog_keeps_the_070_entry(self):
+        with open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8") as f:
+            self.assertIn("## [0.7.0]", f.read())
 
     def test_spec_version_table_row(self):
         with open(os.path.join(ROOT, "SPEC.md"), encoding="utf-8") as f:

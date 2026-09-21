@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.0-dev] — unreleased
+## [0.8.0] — 2026-09-21
 
 > 第二张脸：**code mode**。0.7 换了眼睛，0.8 给同一身体长出一张 Python 脸——
 > 同一 router、同一 CDP 后端、同一 a11y-v2 感知、同一回执契约，两种用户：
@@ -29,6 +29,19 @@
 - **S3 文档**：README 重写为 Python-first（Python 入口置顶、动作语法一页纸、
   `see()` 返回 schema、持久性一句话、点击后重 see 确认 URL、`expect` 语义），
   MCP 面退为第二视角。
+
+#### Fixed
+- **a11y-v2.1（S4 被试抓到的契约洞）**：v2 的 StaticText 名字在 60 字符处静默截断——
+  回执 `truncated=False`、`nodes_omitted=0`，但中文长句读到半句话不自知（被试 task 1
+  被坑，被迫用 dom 复核，直接推高 turns）。「截断永远声明」对行数成立、对单节点文本
+  不成立。v2.1：`MAX_NAME` 60→200（覆盖 Chrome AX 实际给出的绝大多数名字），超限
+  截断**声明**——回执 `text_truncated_count`、每节点 meta `text_truncated` flag。
+  格式即契约，版本号 a11y-v2 → a11y-v2.1；golden file 换
+  `github_snapshot_v2_1.txt`（v2 快照保留为历史）。
+- **README 7 条文档洞**（被试 findings #1/#3-#8）：kind 各自返回形态表（dom 无
+  `tree`）、click 后立刻 see 有竞态（~0.4s 滞后）→ `expect=` 为推荐姿势、句柄存活
+  语义（kind 切换不死、跨页导航死）、dom 8000 字符上限、network 现场监听式（非历史、
+  无响应体）、see 无子树参数、a11y 定位 + dom 读原文配合姿势。
 
 #### Dev
 - 版本：`hand.__version__ = "0.8.0-dev"`（dev 周期），`kit/manifest.json` 保持已发布的
