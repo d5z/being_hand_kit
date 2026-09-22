@@ -31,7 +31,7 @@ import time
 import urllib.request
 import json
 
-CDP_PORT = 9222
+CDP_PORT = int(os.environ.get("HAND_CDP_PORT", "9222"))
 CDP_HOST = f"http://localhost:{CDP_PORT}"
 
 # Library dir for bundled Linux .so deps (libasound, libatk, ...).

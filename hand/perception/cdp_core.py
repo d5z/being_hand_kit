@@ -2,10 +2,10 @@
 CDP Core - shared CDP connection, helpers, page resolution.
 Extracted from Hand V5 browser_cdp.py. Production-tested.
 """
-import json, time, urllib.request, websocket
+import json, os, time, urllib.request, websocket
 from typing import Optional
 
-CDP_HOST = 'http://localhost:9222'
+CDP_HOST = f"http://localhost:{os.environ.get('HAND_CDP_PORT', '9222')}"
 CONNECT_TIMEOUT = 10
 LOAD_TIMEOUT = 30
 LAST_STATE_FILE = '/tmp/hand_cdp_last_idx'
