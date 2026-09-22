@@ -11,7 +11,7 @@ import unittest
 
 sys.path.insert(0, "/home/alice/Hand")
 
-MODULES = ["tests.test_plan", "tests.test_tier2_3", "tests.test_platform", "tests.test_vision_llm", "tests.test_cdp_contract", "tests.test_cdp_contract_real", "tests.test_windows_support", "tests.test_receipt_contract", "tests.test_truncation", "tests.test_ax_tree", "tests.test_ax_see", "tests.test_macos_discovery", "tests.test_chrome_profile", "tests.test_kit_quickfixes", "tests.test_release_070", "tests.test_hand_api"]
+MODULES = ["tests.test_plan", "tests.test_tier2_3", "tests.test_platform", "tests.test_vision_llm", "tests.test_cdp_contract", "tests.test_cdp_contract_real", "tests.test_windows_support", "tests.test_receipt_contract", "tests.test_truncation", "tests.test_ax_tree", "tests.test_ax_see", "tests.test_macos_discovery", "tests.test_chrome_profile", "tests.test_kit_quickfixes", "tests.test_release_070", "tests.test_hand_api", "tests.test_visual_state"]
 
 
 def build_suite():

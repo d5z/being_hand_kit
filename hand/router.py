@@ -528,7 +528,9 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
     with_data: include raw base64 in return dict (for MCP image content).
     """
     if place is None:
-        from hand.session import get_session
+        # NB: get_session is module-level imported; a local re-import here would
+        # shadow it for the whole function and break the place=... path
+        # (UnboundLocalError) — see tests/test_visual_state.py.
         session = get_session()
         place = session.place
 
@@ -562,6 +564,11 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
                              "format": result["format"],
                              "verified": True},
             }
+            # S2 (0.9): the visual state marker rides along with the shot.
+            if result.get("visual_state") is not None:
+                out["visual_state"] = result["visual_state"]
+                out["visual_signals"] = result.get("visual_signals")
+                out["evidence"]["visual_state"] = result["visual_state"]
             if with_data:
                 out["data"] = result["data"]
             return out

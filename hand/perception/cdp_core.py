@@ -175,11 +175,20 @@ def cdp_screenshot(page_sel=None, format='png', quality=None) -> dict:
         if img_w is None:
             img_w, img_h = 0, 0
         coord = _build_coord(css_w, css_h, dpr, img_w, img_h)
+        # S2 (0.9): carry the visual state marker on the shot too. Local import
+        # keeps the module graph acyclic (visual_state lazily imports cdp_call).
+        try:
+            from hand.perception.visual_state import probe as visual_probe
+            visual = visual_probe(ws, call=cdp_call)
+        except Exception:
+            visual = {'visual_state': 'unknown', 'visual_signals': ['probe-failed']}
         return {
             'data': data,
             'format': format,
             'page_index': idx,
             'coord': coord,
+            'visual_state': visual['visual_state'],
+            'visual_signals': visual['visual_signals'],
         }
     finally:
         ws.close()

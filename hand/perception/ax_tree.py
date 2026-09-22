@@ -52,6 +52,7 @@ from hand.perception.cdp_core import (
     _init_domains, _header, _write_last, _get_dpr, _build_coord,
 )
 from hand.receipt import truncation, skipped, merge_hints
+from hand.perception.visual_state import probe as visual_probe
 
 AX_FORMAT_VERSION = "a11y-v2.1"
 
@@ -475,6 +476,9 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                     "not in the render tree (display:none / detached)"))
         hint = merge_hints(overflow_hint(ser["nodes"]), notes)
 
+        # S2 (0.9): what the page *looks* like right now (DOM heuristic).
+        visual = visual_probe(ws, call=cdp_call)
+
         out = {
             "method": "cdp_a11y",
             "format": AX_FORMAT_VERSION,
@@ -502,6 +506,8 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "ax_version": ax_version,
             "handle_map": handle_map_path,
             "coords_resolved": sum(1 for v in coords.values() if v),
+            "visual_state": visual["visual_state"],
+            "visual_signals": visual["visual_signals"],
         }
         if ser.get("truncation"):
             out["truncation"] = ser["truncation"]

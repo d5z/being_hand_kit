@@ -84,7 +84,7 @@ FIELD_ORDER = (
     "place",
     # see
     "tree", "handles", "coords", "truncated", "nodes_omitted", "text_truncated_count",
-    "truncation", "node_count",
+    "truncation", "visual_state", "visual_signals", "node_count",
     "line_count", "serialized_bytes", "sha256", "format", "ax_version", "header",
     "page_index", "coord",
     # do / shot / close
@@ -303,8 +303,12 @@ def _is_handle(token) -> bool:
 
 # ── world state (expect) ─────────────────────────────────────────────
 
-def _page_state(need_text=False) -> dict:
-    """Cheap world-state read: {url, title[, text]}. Never raises."""
+def _page_state(need_text=False, need_visual=False) -> dict:
+    """Cheap world-state read: {url, title[, text][, visual_state]}. Never raises.
+
+    `need_visual` (0.9 S2) adds the DOM-side visual state marker so
+    `expect="visual_state:loading"` can be evaluated.
+    """
     try:
         from hand.perception.cdp_core import (
             list_pages, resolve_page, cdp_connect, cdp_call)
@@ -320,6 +324,9 @@ def _page_state(need_text=False) -> dict:
                             "returnByValue": True}, msg_id=77, timeout=5)
             value = (raw.get("result") or {}).get("value") or "{}"
             data = json.loads(value)
+            if need_visual:
+                from hand.perception.visual_state import probe as visual_probe
+                data.update(visual_probe(ws, call=cdp_call))
         finally:
             try:
                 ws.close()
@@ -330,27 +337,47 @@ def _page_state(need_text=False) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+EXPECT_KINDS = ("url", "title", "text", "visual_state")
+
+
 def parse_expect(expect):
-    """'url:/issues' / 'url=/issues' / 'title:Issues' / 'text:hello'."""
+    """'url:/issues' / 'url=/issues' / 'title:Issues' / 'text:hello'
+    / 'visual_state:loading' (0.9 S2)."""
     if not isinstance(expect, str) or ":" not in expect and "=" not in expect:
         return {"error": f"expect must look like 'url:/issues' (got {expect!r})",
-                "hint": "forms: expect='url:/issues', 'title:Issues', 'text:hello'"}
+                "hint": "forms: expect='url:/issues', 'title:Issues', "
+                        "'text:hello', 'visual_state:loading'"}
     sep = ":" if ":" in expect else "="
     kind, _, needle = expect.partition(sep)
     kind, needle = kind.strip().lower(), needle.strip()
-    if kind not in ("url", "title", "text"):
-        return {"error": f"expect kind {kind!r} is not one of url/title/text",
-                "hint": "expect kinds: url / title / text — "
-                        "e.g. expect='url:/issues', 'title:Issues', 'text:hello'"}
+    if kind not in EXPECT_KINDS:
+        return {"error": f"expect kind {kind!r} is not one of "
+                         f"{'/'.join(EXPECT_KINDS)}",
+                "hint": "expect kinds: url / title / text / visual_state — "
+                        "e.g. expect='url:/issues', 'title:Issues', "
+                        "'text:hello', 'visual_state:loading'"}
     if not needle:
         return {"error": f"expect {expect!r} has an empty value",
-                "hint": "forms: expect='url:/issues', 'title:Issues', 'text:hello'"}
+                "hint": "forms: expect='url:/issues', 'title:Issues', "
+                        "'text:hello', 'visual_state:loading'"}
+    if kind == "visual_state":
+        from hand.perception.visual_state import VISUAL_STATES
+        needle_l = needle.lower()
+        if needle_l not in VISUAL_STATES:
+            return {"error": f"visual_state {needle!r} is not one of "
+                             f"{'/'.join(VISUAL_STATES)}",
+                    "hint": "expect='visual_state:loading' where the state is "
+                            "one of loading/error/blank/interactive/unknown"}
+        needle = needle_l
     return {"kind": kind, "needle": needle, "spec": expect.strip()}
 
 
 def _matches(kind, value, needle) -> bool:
     if not isinstance(value, str):
         return False
+    if kind == "visual_state":
+        # an enum, not a substring: the state either is or is not the one asked
+        return value.lower() == needle.lower()
     # URLs are case-sensitive (paths are); human text is not.
     return needle in value if kind == "url" else needle.lower() in value.lower()
 
@@ -361,22 +388,31 @@ def _wait_for_world(parsed, timeout) -> dict:
     checks = 0
     state = {}
     started = time.time()
+    ev_keys = ("url", "title", "visual_state")
+    if parsed["kind"] == "visual_state":
+        reason = (f"'visual_state' was never {parsed['needle']!r} "
+                  f"within {timeout}s")
+    else:
+        reason = (f'{parsed["kind"]} never contained '
+                  f'{parsed["needle"]!r} within {timeout}s')
     while True:
-        state = _page_state(need_text=parsed["kind"] == "text")
+        if parsed["kind"] == "visual_state":
+            state = _page_state(need_visual=True)
+        else:
+            state = _page_state(need_text=parsed["kind"] == "text")
         checks += 1
         if _matches(parsed["kind"], state.get(parsed["kind"]), parsed["needle"]):
             return {"spec": parsed["spec"], "kind": parsed["kind"],
                     "needle": parsed["needle"], "met": True,
                     "waited_ms": int((time.time() - started) * 1000), "checks": checks,
-                    "evidence": {k: state.get(k) for k in ("url", "title") if k in state}}
+                    "evidence": {k: state.get(k) for k in ev_keys if k in state}}
         if time.time() >= deadline:
             return {"spec": parsed["spec"], "kind": parsed["kind"],
                     "needle": parsed["needle"], "met": False,
                     "waited_ms": int((time.time() - started) * 1000), "checks": checks,
                     "timeout_s": float(timeout),
-                    "evidence": {k: state.get(k) for k in ("url", "title") if k in state},
-                    "reason": (f'{parsed["kind"]} never contained '
-                               f'{parsed["needle"]!r} within {timeout}s')}
+                    "evidence": {k: state.get(k) for k in ev_keys if k in state},
+                    "reason": reason}
         time.sleep(min(EXPECT_POLL_INTERVAL, max(0.0, deadline - time.time())))
 
 

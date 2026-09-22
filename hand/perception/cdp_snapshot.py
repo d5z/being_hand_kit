@@ -12,6 +12,7 @@ from hand.perception.cdp_core import (
     _get_dpr, _build_coord
 )
 from hand.receipt import truncation
+from hand.perception.visual_state import probe as visual_probe
 
 
 def cdp_snapshot(max_chars=8000, page_sel=None):
@@ -54,6 +55,10 @@ def cdp_snapshot(max_chars=8000, page_sel=None):
         css_w = css_viewport.get('clientWidth', 0)
         css_h = css_viewport.get('clientHeight', 0)
         data['coord'] = _build_coord(css_w, css_h, dpr)
+        # S2 (0.9): the visual state marker (DOM heuristic, no screenshot).
+        visual = visual_probe(ws, call=cdp_call)
+        data['visual_state'] = visual['visual_state']
+        data['visual_signals'] = visual['visual_signals']
         return data
     finally:
         ws.close()
