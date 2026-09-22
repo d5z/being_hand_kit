@@ -80,6 +80,17 @@ tar tzf /tmp/verify.tar.gz | grep -c '^<源码包>/'   # 确认源码包在内
 5. bundle 必须含源码包，否则 No module named 'xxx'
 6. **http 原语 body 截断阈值 ~8KB**：实测 base64 在 7096~9248 字符之间断（44KB bundle 必断），大 bundle 必须走 Portal curl
 7. **loom token ≠ Grove Bearer token**：loom link 里的 `?token=` 是 LOOM_TOKEN（Loom/cowork 认证），不能当 Grove Bearer 用。Grove 专用 token 必须走 `/api/grove/token` 铸
+8. **编译产物 staleness（Judy 1166，2026-09-22）**：`vision_ocr_bin` 是 V6 初始 commit 带的 Mach-O（6-19），源码 9-22 更新 bounds 输出后 bin 没重编——`vision_ocr.py` 只在 bin **缺失**时 swiftc，无 staleness 检查；Python 端 old-format fallback 静默接住旧输出 → bounds 静默丢失。**发布前必须重编或核对 bin mtime > 源码 mtime**；Linux 端编不了 Mach-O，核对后从 tar 排除或标注平台。0.9 会把 stale bin 检测做进代码（fallback 触发时 stderr 显式警告）
+9. **grove 服务端路径消毒**：发布管线把 `/home/alice` 替换成 `{{KIT_HOME}}` 占位符（engine.py opencode 候选路径、sync.sh 注释）——下载包与本地构建 hash 不一致时先想到这个变换，影响良性（isfile 不存在自动落下一项），且堵了绝对路径信息泄露
+
+## 发布检查单（每次发布前过一遍）
+
+1. **版本号**：kit/manifest.json 与 hand/__init__.py 同步 bump
+2. **测试**：python3 tests/run_tests.py 全绿 ×1（发布前）；发布后下载包再验 ×1
+3. **编译产物**：见踩坑 8——重编或核对 mtime，否则不发
+4. **tar 打包**：`--exclude` 必须在文件参数前；排除 .venv、__pycache__、.git
+5. **发布字段名**：grove publish 用 `bundle`（b64 tar），不是 `code`
+6. **下载验证**：sha256 对 hash + 解包核对文件数/version/关键 diff（记住踩坑 9 的消毒变换）
 
 ## 历史阻塞（已解决）
 - 2026-08-11：含 bundle 的 POST 返回 manifest.name is required —— 根因是 body 过大被截断，不是 manifest 缺失。
