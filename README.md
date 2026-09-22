@@ -161,6 +161,24 @@ Steps a tool *skips on purpose* (e.g. a coordinate that cannot be resolved becau
 the node is not in the render tree) are not errors — but they are visible, in the
 `hint`: `skipped: coordinates for 2 interactive node(s) (not in the render tree)`.
 
+### Visual state (0.9)
+
+`see()` and `shot()` receipts carry `visual_state` — what the page *looks* like
+right now — decided by a DOM-side heuristic (no screenshot):
+
+| state | signal |
+|-------|--------|
+| `error` | an h1/h2/title hits the error word list (error / 404 / 错误 / …), or a visible `<img alt>` names an error |
+| `loading` | a visible spinner/skeleton/`progressbar`, `[aria-busy=true]`, or `document.readyState != complete` |
+| `blank` | visible text < 20 chars **and** no visible img/canvas/video |
+| `interactive` | normal content |
+| `unknown` | the probe could not observe the page — we do **not** guess |
+
+Priority is `error > loading > blank > interactive`; `unknown` only when there is
+no signal at all. `visual_signals` records the signals that decided it (auditable
+— e.g. `["aria-busy"]`, `["error-heading:404"]`). Assert it with
+`hand.do("click [15]", expect="visual_state:loading")`.
+
 **`network` is a live tap, not a history.** It listens for 3s (`duration`) and
 reports only the requests that fire *inside that window*; called after the page has
 finished loading it returns `requests: 0`. It does not return response bodies —
@@ -206,8 +224,10 @@ r["expect"]["evidence"]["url"]        # what the world actually said
 r["expect"]["reason"]                 # why `met` is false
 ```
 
-- Three forms: `url:<substring>` (case-sensitive — paths are), `title:<substring>`
-  and `text:<substring>` (human text, case-insensitive).
+- Four forms: `url:<substring>` (case-sensitive — paths are), `title:<substring>`
+  and `text:<substring>` (human text, case-insensitive), and `visual_state:<state>`
+  (0.9 — an exact enum match: `loading` / `error` / `blank` / `interactive` /
+  `unknown`).
 - Bounded wait: 5s default, `hand.do(..., timeout=1.5)` to tighten it. On timeout
   `met` is `false` with the current url/title as evidence — **it never raises, and
   it never waits silently**: no `expect` means an immediate return.

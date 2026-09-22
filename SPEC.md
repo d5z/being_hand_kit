@@ -152,7 +152,10 @@ Experiment basis: 90 A/B trials, a11y v2 87% vs interactive 58%
 - **Receipt** (S3): `verified` = a tree was pulled with a non-empty root;
   `evidence` = node counts, serialized bytes, truncation marker, AX source
   version, sha256. A `hint` names a hasPopup control when a collapsed menu hides
-  part of the tree (click it, then see again).
+  part of the tree (click it, then see again), and carries `skipped:` notes for
+  steps the tool left out. Since 0.9 the receipt also carries `visual_state`
+  (`loading`/`error`/`blank`/`interactive`/`unknown`, DOM heuristic) and the
+  `visual_signals` that decided it (README "Visual state").
 - **Escape hatches**: `kind=dom` (visible text), `kind=interactive` (legacy
   element map with coordinates), `kind=network`. Desktop apps are unaffected.
 
