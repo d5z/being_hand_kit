@@ -54,6 +54,7 @@ _配套：`docs/iteration-sop.md`（十步循环）——本台账是 SOP 第 1-
 | F19 | **cdp_open about:blank 误路由 desktop_app(ApplicationFrameHost)**：Windows 上 cdp_open("about:blank") 附着到桌面应用窗口而非 Chrome。复现路径待补（窗口匹配/launcher 逻辑疑点） | taojun 1123 小样本① | P3 | 待复现 |
 | F20 | **Windows 裸命令 `bash` 解析为 `kits\hand\bash`**（taojun 1155④a）：引擎并非「不查 PATH」——`resolve_command_with_environment`（loader.rs:249-297）顺序是 ①kit_dir ②kit 环境 PATH ③兜底 kit_dir（防劫持设计，注释明言不回落宿主 PATH）。Windows 上 git-bash 不在 Portal 进程可见的 PATH → 落到兜底 `kits\hand\bash` → not found。Linux 上 `/usr/bin` 在 PATH 内所以裸 `bash` 一直没事。workaround：manifest command 写绝对路径（taojun 现行）。**根修在 portal repo**：manifest schema 加 per-platform command 变体（`command.windows`/`command.posix`），否则 hand 永远要 Windows 用户手改 | taojun 1155④a + 源码钉死 | P2（Windows 采用面） | 根修在 portal repo，随 F17/F18 一起转 sw |
 | F21 | **PS 5.1 重写 manifest 必坏**（taojun 1155④b）：`ConvertTo-Json + Set-Content -Encoding UTF8` 写出带 BOM 的 UTF8，serde_json 拒收（"Parsing kit manifest"）。workaround：`[IO.File]::WriteAllText`（无 BOM）。**根修在 portal repo**：loader 读 manifest 前剥 BOM（一行）。Windows 用户编辑任何 kit manifest 都会踩 | taojun 1155④b | P3 | 根修在 portal repo，随 F17/F18 一起转 sw |
+| F22 | **headless 下原生 `<select>` 不可操作 + cdp_type 落点不验证（假 ok 新变体）**（Alice dogfood 2026-09-22，双实验升格）：①option 在 AX 树可见但 not in render tree → click 诚实报错 "element has no box"（这部分是声明的失败，不是坑）。②cdp_type 对 focused select 无效：`Input.insertText` 不走 `document.activeElement`，走浏览器 text-input context——有旧可编辑目标时**落点漂移**（exp1：搜索框 "BOM"→"BOM已修复"），无旧目标时**静默丢弃**（exp2：21 条全显示，文本零落地）。③回执缺口：两例回执均 `ok + verified`，verified 验的是 focus 不是落点——exp2 是干净的「回执 ok 但文本零落地」。修法方向：cdp_type 加 post-flight read-back（对齐 click 的 read_back 语义）；非可编辑 tag（SELECT 等）直接诚实拒绝或声明漂移。原生 select 在 headless 下经 hand 全路径不可操作（click 无 box / type 无 typeahead / 无键盘事件工具）——测试目标页应避免原生 select，或走页面自身 API | Alice dogfood 双实验（exp1 污染样本 + exp2 干净复现） | P2（回执诚实主线） | 0.9.x 候选：type read-back |
 
 ## ⏳ 待验收（L3 真机）
 
@@ -104,3 +105,4 @@ _Neuromancer 583 观察：四个来源从各自的坑里独立长出，对上口
 ## 变更记录
 
 - 2026-09-21 立。首版收 #34 seq 538-913 全量反馈（73 帖）+ Grove 周脉搏 #2 观察项。已修复 5 条 / 待修复 6 条 / 待验收 2 条 / 边界 5 条 / 研究规则 9 条 / 组合层词汇 4 条。
+- 2026-09-22 +F22（Alice dogfood，hand-dogfood console 双实验）：headless 原生 select 不可操作 + cdp_type 落点不验证（假 ok 新变体）。同场闭合 network 通道截断审计：requests 列表无上限、body 截断有声明块、total_requests 进 verified——无隐性截断。
