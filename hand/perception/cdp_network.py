@@ -77,8 +77,19 @@ def network_snapshot(page_sel=None, duration=3.0, kind=None, fetch_body_id=None,
                         'size': 0,
                         'body': None,
                     }
-                requests[fetch_body_id]['body'] = body_result.get('body', '')
+                body = body_result.get('body', '')
+                requests[fetch_body_id]['body'] = body
                 requests[fetch_body_id]['base64_encoded'] = body_result.get('base64Encoded', False)
+                # 0.9 honesty: a fetched body larger than max_small_body is
+                # cut and the cut is declared — never silently. (The parameter
+                # existed in the signature since 0.8 but was never applied.)
+                if isinstance(body, str) and len(body) > max_small_body:
+                    requests[fetch_body_id]['body'] = body[:max_small_body]
+                    requests[fetch_body_id]['body_truncation'] = {
+                        'field': 'body', 'reason': 'max_small_body',
+                        'dropped': len(body) - max_small_body,
+                        'total': len(body),
+                    }
             except Exception:
                 pass
 

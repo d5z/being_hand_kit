@@ -324,3 +324,45 @@ class TestFaceReceiptPreservesDeclarations(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNetworkBodyTruncation(unittest.TestCase):
+    """0.9: fetch_body bodies larger than max_small_body are cut and declared.
+
+    The max_small_body parameter sat unused in the signature since 0.8 —
+    a fetched 10MB body went into the receipt whole, silently. Found while
+    hardening 0.9 before release.
+    """
+
+    def _snapshot(self, body, max_small_body=64):
+        import hand.perception.cdp_network as net
+        big = "x" * 200
+        with mock.patch.object(net, "list_pages", return_value=[
+                {"webSocketDebuggerUrl": "ws://x", "id": "p0"}]), \
+             mock.patch.object(net, "cdp_connect"), \
+             mock.patch.object(net, "cdp_call_raw",
+                               return_value={"body": body, "base64Encoded": False}), \
+             mock.patch.object(net, "_write_last"):
+            return net.network_snapshot(
+                fetch_body_id="R1", duration=0.05,
+                max_small_body=max_small_body)
+
+    def test_big_body_is_cut_and_declared(self):
+        r = self._snapshot("y" * 200, max_small_body=64)
+        req = r["requests"][0]
+        self.assertEqual(len(req["body"]), 64)
+        self.assertEqual(req["body_truncation"],
+                         {"field": "body", "reason": "max_small_body",
+                          "dropped": 136, "total": 200})
+
+    def test_small_body_passes_through_undeclared(self):
+        r = self._snapshot("y" * 10, max_small_body=64)
+        req = r["requests"][0]
+        self.assertEqual(req["body"], "y" * 10)
+        self.assertNotIn("body_truncation", req)
+
+    def test_boundary_exact_limit_is_not_a_cut(self):
+        r = self._snapshot("y" * 64, max_small_body=64)
+        req = r["requests"][0]
+        self.assertEqual(len(req["body"]), 64)
+        self.assertNotIn("body_truncation", req)
