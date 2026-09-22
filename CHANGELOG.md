@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.9.0] — 2026-09-22
+
+> 诚实回执完成体：截断永远声明、页面视觉状态标记、expect 规范冻结。发布前真实页面加固抓出三个分类器边界 + 两个签名撒谎，全部修复。
+
+### Added
+- **统一截断声明块 `truncation`**（S1）：`{field, reason, dropped, total}`，任何被丢弃的东西都声明——a11y 树（max_lines）、dom 文本（max_chars）、节点名（200 chars）、VLM 输出（max_tokens/finish_reason）、跳过的 fallback 后端（hint 里 `skipped: <what> (<why>)`）。不截断时键缺席 = 完整。旧字段 `truncated`/`nodes_omitted` 保留一个版本。
+- **`visual_state` + `visual_signals`**（S2）：页面此刻的视觉状态五枚举 `loading · error · blank · interactive · unknown`，DOM 启发式（无截图），信号可审计。`expect="visual_state:…"` 可等。
+- **`ocr_diff`**：两次 vision-ocr bounds 输出的文本变化区域定位。
+- **`expect=` spec v1.0 冻结**（docs/expect-spec-v1.md）：四种形式 url/title/text/visual_state。
+
+### Fixed（发布前真实页面加固）
+- **visual_state 三个真实页面边界**（GitHub 仓库页/404 页实测）：
+  - README 章节 "Errors are documentation"（h2）让整个仓库页误判 error → h1/h2 命中需正文 <500 chars，否则 interactive + `error-word-in-content` 诚实信号
+  - 404 页全站 footer 撑大 text_len（933）漏报 error → title 命中升为强信号（`error-title:`），不受正文长度门槛约束
+  - 语言统计条（role=progressbar，视口外 y=752）误判 loading → vis() 加视口相交检查
+- **`open()` 静默忽略 `expect=`**（0.8 引入的签名撒谎）→ 修复 + 回归测试
+- **`network fetch_body` 的 `max_small_body` 死参数**（0.8 起签名收了从未应用）→ body 超限截断 + `body_truncation` 声明
+
+### Verified
+- 371 单测全绿（0.8.3 的 362 → +9 真实页面回归）
+- 真页面三态矩阵：仓库页（19k chars）→ interactive；404 → error；example.com → interactive
+- expect= 真链路四场景（met/timeout 各半，timeout reason 诚实）
+- truncation 数学自洽：dom 11143+8000=19143；a11y 1191+600=1791
+
 ## [0.8.3] — 2026-09-22
 
 > 社区第一笔 PR 落地（Judy，PR #1）：vision-ocr 从 6.11.0 fork 移植 bounds 输出 + 回执契约三处修复。
