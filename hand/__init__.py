@@ -26,9 +26,10 @@ same primitives translated to desktop via accessibility tree + keystroke + Visio
 0.8.0: code mode — the Python face, and expect= world-state verification.
 0.8.1: start.sh venv-first (grove installs get their .venv respected).
 0.8.2: CDP port overridable via HAND_CDP_PORT (default 9222 unchanged).
+0.8.3: vision-ocr bounds output + receipt contract fixes (PR #1, Judy).
 """
 
-__version__ = "0.8.2"
+__version__ = "0.8.3"
 __author__ = "Alice, from the river"
 
 # Top-level Python face (lazy singleton behind these names).

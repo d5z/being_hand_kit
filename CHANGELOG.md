@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.3] — 2026-09-22
+
+> 社区第一笔 PR 落地（Judy，PR #1）：vision-ocr 从 6.11.0 fork 移植 bounds 输出 + 回执契约三处修复。
+
+- **vision-ocr bounds 输出**：tab 分隔 x/y/w/h/center 坐标（从 Judy 的 6.11.0 fork 移植，adaptation pattern）
+- **回执契约修复**：
+  - manifest evidence 语义 verified→claimed（与 F14 判读对齐）
+  - hand_see_ocr 声明 idempotency/claimed，receipt contract 50/50 全绿
+  - find_text 显式路径不存在时报错，不再静默 fallback 截图（F16 同族判定）
+- 验证：干净 origin/main 对照跑，零新挂（预存失败均为版本断言/环境类）
+
 ## [0.8.2] — 2026-09-22
 
 > 一行修复版：CDP 端口可覆盖。F16 收案。
