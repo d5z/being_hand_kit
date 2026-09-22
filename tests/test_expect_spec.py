@@ -169,5 +169,32 @@ class TestVerdictShapes(unittest.TestCase):
         self.assertFalse(r["expect"]["met"])
 
 
+class TestParseErrorTemplatesAreExact(unittest.TestCase):
+    """§5's four parse-error templates are pinned to the parser verbatim."""
+
+    CASES = [
+        ("issues", "expect must look like 'url:/issues' (got 'issues')"),
+        ("href:foo", "expect kind 'href' is not one of url/title/text/visual_state"),
+        ("url:", "expect 'url:' has an empty value"),
+        ("visual_state:spinning",
+         "visual_state 'spinning' is not one of "
+         "loading/error/blank/interactive/unknown"),
+    ]
+
+    def test_parser_matches_the_documented_templates(self):
+        for spec, expected in self.CASES:
+            self.assertEqual(face.parse_expect(spec)["error"], expected, spec)
+
+    def test_document_contains_the_same_templates(self):
+        doc = _read_spec()
+        for line in (
+            "expect must look like 'url:/issues' (got <repr>)",
+            "expect kind <kind> is not one of url/title/text/visual_state",
+            "expect <spec> has an empty value",
+            "visual_state <value> is not one of loading/error/blank/interactive/unknown",
+        ):
+            self.assertIn(line, doc)
+
+
 if __name__ == "__main__":
     unittest.main()
