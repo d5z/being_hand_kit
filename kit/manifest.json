@@ -197,11 +197,13 @@
       "params": {
         "type": "object",
         "properties": {
-          "query": {"type": "string"}
+          "query": {
+            "type": "string"
+          }
         }
       },
       "idempotency": "idempotent",
-      "evidence": "verified"
+      "evidence": "claimed"
     },
     {
       "name": "health",

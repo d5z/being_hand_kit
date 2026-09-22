@@ -131,10 +131,17 @@ def vision_ocr_see() -> dict:
 def find_text(query: str, image_path=None) -> dict:
     """Locate query on screen via Vision OCR; return matching lines with pixel coords.
 
-    Case-insensitive substring match. Screenshot path: use image_path if given,
-    otherwise _capture_screenshot() (osascript screencapture).
+    Case-insensitive substring match. Screenshot path: use image_path if given
+    (must exist — explicit intent is not silently overridden with a fresh screen
+    capture), otherwise _capture_screenshot() (osascript screencapture).
     """
-    if image_path and os.path.isfile(image_path):
+    if image_path is not None:
+        if not os.path.isfile(image_path):
+            return {
+                "method": "vision_ocr_find",
+                "query": query,
+                "error": f"image_path not found: {image_path}",
+            }
         path = image_path
     else:
         path = _capture_screenshot()
