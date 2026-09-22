@@ -66,3 +66,46 @@ class TestVisionLLM(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVisionOcrHonesty(unittest.TestCase):
+    """0.9 (Judy 1172): stale bin + old-format fallback must be declared,
+    never silent. Warnings ride the return value — stderr alone lands in
+    logs kit callers never see."""
+
+    def _recognize(self, stdout, bin_mtime=1000.0, src_mtime=500.0):
+        import hand.perception.vision_ocr as vo
+        with mock.patch.object(vo.os.path, "exists", return_value=True), \
+             mock.patch.object(vo.os.path, "getmtime",
+                               side_effect=lambda p: bin_mtime
+                               if p.endswith("vision_ocr_bin") else src_mtime), \
+             mock.patch.object(vo.subprocess, "run",
+                               return_value=mock.MagicMock(returncode=0, stdout=stdout)):
+            return vo._vision_recognize("/tmp/x.png")
+
+    def test_stale_bin_declared(self):
+        r = self._recognize("0.9\t1\t2\t3\t4\thello", bin_mtime=100, src_mtime=200)
+        self.assertTrue(any("stale vision_ocr_bin" in w for w in r["warnings"]))
+
+    def test_fresh_bin_no_stale_warning(self):
+        r = self._recognize("0.9\t1\t2\t3\t4\thello", bin_mtime=200, src_mtime=100)
+        self.assertFalse(any("stale" in w for w in r["warnings"]))
+
+    def test_old_format_lines_declared(self):
+        r = self._recognize("0.9: hello\n0.8: world")
+        self.assertEqual(len(r["lines"]), 2)
+        self.assertTrue(any("old format" in w for w in r["warnings"]))
+
+    def test_new_format_no_fallback_warning(self):
+        r = self._recognize("0.9\t1\t2\t3\t4\thello")
+        self.assertEqual(r["lines"][0]["text"], "hello")
+        self.assertFalse(any("old format" in w for w in r["warnings"]))
+
+    def test_find_text_carries_warnings(self):
+        import hand.perception.vision_ocr as vo
+        with mock.patch.object(vo, "_capture_screenshot", return_value="/tmp/x.png"), \
+             mock.patch.object(vo, "_vision_recognize",
+                               return_value={"lines": [{"text": "hi", "confidence": 0.9}],
+                                             "warnings": ["stale vision_ocr_bin: ..."]}):
+            r = vo.find_text("hi")
+        self.assertEqual(r["warnings"], ["stale vision_ocr_bin: ..."])

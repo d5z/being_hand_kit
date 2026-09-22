@@ -33,15 +33,33 @@ def _capture_screenshot(path: str = "/tmp/hand_screenshot.png") -> str:
     return path
 
 
-def _vision_recognize(image_path: str) -> list[dict]:
+def _vision_recognize(image_path: str) -> dict:
     """
     Run Vision OCR on an image.
-    Returns list of {text, confidence, bounds}.
-    Requires the compiled Swift binary.
+    Returns {"lines": [...], "warnings": [...]} — lines carry
+    {text, confidence, bounds} when the binary is current.
+    Warnings are returned (not just stderr): in kit scenarios stderr
+    lands in logs the caller never sees; the return value is the main
+    channel (Judy 1172, 0.9 receipt-honesty).
     """
+    warnings = []
     if not os.path.exists(VISION_OCR_BIN):
         # Fallback: compile on the fly
         _compile_vision_bin()
+
+    # Stale-binary detection (0.9): a bin older than its swift source
+    # predates the bounds output — old-format lines silently lose
+    # coordinates. Declare it instead of swallowing it.
+    swift_src = os.path.join(os.path.dirname(__file__), "vision_ocr.swift")
+    if os.path.exists(VISION_OCR_BIN) and os.path.exists(swift_src):
+        try:
+            if os.path.getmtime(VISION_OCR_BIN) < os.path.getmtime(swift_src):
+                warnings.append(
+                    "stale vision_ocr_bin: binary older than vision_ocr.swift — "
+                    "bounds output may be missing; recompile with swiftc "
+                    "-o vision_ocr_bin vision_ocr.swift")
+        except OSError:
+            pass
 
     result = subprocess.run(
         [VISION_OCR_BIN, image_path],
@@ -53,6 +71,7 @@ def _vision_recognize(image_path: str) -> list[dict]:
     # New format: confidence\tx\ty\tw\th\ttext  (tab-separated, 6 fields)
     # Old format fallback: "confidence: text"
     lines = []
+    old_format_count = 0
     for line in result.stdout.strip().split("\n"):
         if not line.strip():
             continue
@@ -81,9 +100,14 @@ def _vision_recognize(image_path: str) -> list[dict]:
                 confidence = float(parts[0])
                 text = parts[1]
                 lines.append({"confidence": confidence, "text": text})
+                old_format_count += 1
         except (ValueError, IndexError):
             continue
-    return lines
+    if old_format_count:
+        warnings.append(
+            f"{old_format_count} line(s) parsed in old format (no bounds) — "
+            "binary predates bounds output; coordinates unavailable for them")
+    return {"lines": lines, "warnings": warnings}
 
 
 def _compile_vision_bin():
@@ -102,7 +126,8 @@ def vision_ocr_see() -> dict:
         path = _capture_screenshot()
         capture_time = time.time() - start
 
-        lines = _vision_recognize(path)
+        recognized = _vision_recognize(path)
+        lines = recognized["lines"]
         ocr_time = time.time() - start - capture_time
 
         # Organize by confidence tiers
@@ -122,6 +147,7 @@ def vision_ocr_see() -> dict:
                 "low": [l["text"] for l in low_conf],
             },
             "total_lines": len(lines),
+            "warnings": recognized["warnings"],
             "timestamp": time.time(),
         }
     except Exception as e:
@@ -145,7 +171,8 @@ def find_text(query: str, image_path=None) -> dict:
         path = image_path
     else:
         path = _capture_screenshot()
-    lines = _vision_recognize(path)
+    recognized = _vision_recognize(path)
+    lines = recognized["lines"]
     needle = (query or "").lower()
     matches = [l for l in lines if needle in (l.get("text") or "").lower()]
     matches.sort(key=lambda m: m.get("confidence", 0), reverse=True)
@@ -155,4 +182,5 @@ def find_text(query: str, image_path=None) -> dict:
         "matches": matches,
         "count": len(matches),
         "screenshot": path,
+        "warnings": recognized["warnings"],
     }
