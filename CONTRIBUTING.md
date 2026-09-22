@@ -37,3 +37,53 @@ hand 的核心原则：**降级必可见，可见在回执里**。任何 fallbac
 - 输出是**单冒号格式**（`0.95:text`）→ 旧 bin，bounds 不可用，重跑 `swiftc -o hand/perception/vision_ocr_bin hand/perception/vision_ocr.swift`
 
 0.9 起代码内建 stale 检测（fallback 触发时回执带 `warning` 字段）。
+
+
+## Windows adopter 自检（升级/手改 manifest 坑族）
+
+Windows 上升级 kit 或手改 manifest 后，几类坑的症状都是 `Kit 'xxx' has no loadable manifest`（或 kit 不加载），且报错不带原因。逐项自检：
+
+### 0. 先看日志，分型再动手
+
+引擎每 5s 扫描一轮 `kits\`，所有 loader WARN 都在：`%APPDATA%\portal-desktop\portal-service\<service-id>\portal.log`（`<service-id>` 取最新修改的子目录；`portal.log.previous` 为上一轮滚动）。两种 WARN 对应两类坑：
+
+```
+Skipping kit manifest <path>: Parsing kit manifest <path>        ← 解析失败（坑 1 BOM / JSON 语法 / 字段风格不符）
+Kit 'xxx' conflicts with another kit name or tool route; ...     ← 同名/路由冲突（坑 2）
+```
+
+（「Parsing」不区分语法错误与 schema 不匹配——JSON 合法但字段风格不对（如 tools 写成 MCP `inputSchema` 风格而非 `params` 风格）同样落在这条 WARN 里。）
+
+### 1. manifest.json 带 BOM（F21）
+
+Windows PowerShell 5.1 的 `Set-Content -Encoding UTF8` 与旧版记事本默认写出带 BOM 的 UTF8，serde_json 拒收。
+
+诊断（头三字节 `EF BB BF` = 有 BOM）：
+
+```powershell
+[System.IO.File]::ReadAllBytes("$PWD\manifest.json")[0..2]
+```
+
+修复（ReadAllText 自动剥 BOM，无 BOM 写回）：
+
+```powershell
+$p = "$PWD\manifest.json"
+$raw = [System.IO.File]::ReadAllText($p)
+[System.IO.File]::WriteAllText($p, $raw, (New-Object System.Text.UTF8Encoding($false)))
+```
+
+预防：PS 5.1 写 manifest 一律 `[IO.File]::WriteAllText` + `UTF8Encoding($false)`（`-Encoding utf8NoBOM` 是 PS 6+ 才有）；VS Code 用「通过编码保存 → UTF-8（无 BOM）」。
+
+### 2. kits\ 下同名目录冲突（F17/F18）
+
+`kits\` 下任何与 kit 同名（含同名前缀）的目录都会被 scanner 扫到：manifest 解析失败只 WARN Skipping、不影响本尊；**manifest 完整且 name 相同则触发防劫持冲突**——日志每轮报 conflicts，且该 kit 定向 reload 失败（`no loadable manifest`），删除同名目录后立即恢复。
+
+（Windows 0.8.3 实测 2026-09-22：同名完整 kit 单独致死；`kit-retired\`、`kit-archive\` 不在 scan 面，留那里不碍事。Linux 侧 kit-retired 同结论，kit-archive 未测。）
+
+预防：备份目录别放 `kits\` 里，挪去 scan 路径外（如 `~/.heart-portal-backups/`）。
+
+### 3. 裸 `bash` 解析为 `kits\hand\bash`（F20）
+
+引擎按防劫持设计不回落宿主 PATH：Windows 上 manifest command 写裸 `bash` 会落到 `kits\hand\bash` → not found。workaround：command 写绝对路径，如 `C:/Program Files/Git/usr/bin/bash.exe`。
+
+> 三坑根修都在 portal repo（冲突剔除报详情 / 读 manifest 剥 BOM / per-platform command），随 F17/F18 已转 sw。修复落地前，以上 workaround 是现行做法。
