@@ -6,6 +6,7 @@ Usage:
   hand open <target>      # go to a place (app, URL, file)
   hand see                # perceive the current place
   hand do <action>        # execute an action at the current place
+  hand ocr-diff a.txt b.txt [--json]   # diff two vision-ocr bounds outputs
 
 Examples:
   hand open Notes
@@ -24,7 +25,7 @@ from hand.session import get_session, reset_session
 def cli():
     if len(sys.argv) < 2:
         print("Hand V6 — graphical interface unified framework")
-        print("Usage: hand <open|see|do> [target|action]")
+        print("Usage: hand <open|see|do|ocr-diff> [target|action|files]")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -81,6 +82,13 @@ def cli():
         for s in result.steps:
             print(f"  [{s.kind}] {s.action}")
 
+    elif command == "ocr-diff":
+        # 两次 vision-ocr bounds 输出的 diff（PRD 0.9 S3）：
+        #   hand ocr-diff before.txt after.txt [--json]
+        # <file> 可为 - 表示 stdin（两个输入不能同时为 -）。
+        from hand.perception.ocr_diff import main as _ocr_diff_main
+        sys.exit(_ocr_diff_main(sys.argv[2:]))
+
     elif command == "reset":
         reset_session()
         print("→ session reset")
@@ -94,7 +102,7 @@ def cli():
     
     else:
         print(f"Unknown command: {command}")
-        print("Try: open, see, do, plan, where, reset")
+        print("Try: open, see, do, plan, where, reset, ocr-diff")
         sys.exit(1)
 
 
