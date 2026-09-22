@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.1] — 2026-09-22
+
+> 一行修复版：venv 回家。Judy 在 0.8.0 升级实测中撞上的 F7 场景——
+> requirements 装进 .venv 是 grove 安装的自然动作，但 start.sh 只认系统
+> python3，venv 白装。无全局 mcp SDK 的机器上 kit 直接起不来。
+
+#### Fixed
+- **start.sh venv 优先**：`.venv/bin/python3` 存在且可执行则优先，否则
+  fallback 系统 python3（纯向后兼容，本机有全局 mcp 的行为不变）。
+  来源：#34 Judy 2026-09-22 实测样本（seq 1062）+ 主干判断（seq 1114 回执）。
+
 ## [0.8.0] — 2026-09-21
 
 > 第二张脸：**code mode**。0.7 换了眼睛，0.8 给同一身体长出一张 Python 脸——

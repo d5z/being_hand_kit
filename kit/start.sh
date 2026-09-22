@@ -52,5 +52,18 @@ if [ -d "$KIT_HOME/lib" ]; then
   fi
 fi
 
+# --- Python interpreter ---
+# Prefer the kit's own .venv (where `pip install -r requirements.txt` puts
+# the mcp SDK on grove installs), fall back to system python3.
+# Rationale (0.8.1, Judy 2026-09-22 #34 sample): a kit that depends on the
+# mcp SDK but launches via bare system python3 is a dead end on any machine
+# without a global mcp install — requirements go into .venv, but start.sh
+# never looked there, so the venv was installed for nothing.
+if [ -x "$KIT_HOME/.venv/bin/python3" ]; then
+  PY="$KIT_HOME/.venv/bin/python3"
+else
+  PY="python3"
+fi
+
 cd "$KIT_HOME" || exit 1
-exec python3 mcp_server.py
+exec "$PY" mcp_server.py
