@@ -70,3 +70,11 @@ S6 `29dc7ef` / S7 `7f34223`
   Cotton 协议第 5 步要求保留，故未删）。
 - 验证用的临时 Chrome（端口 9333）已 kill；实验遗留的 9222 Chrome 未动（它现在停在
   github.com/d5z/being_hand_kit）。
+
+## Field Notes（发布后现场观察）
+
+1. **语义稀疏页的 a11y 边界（taojun 1123，Windows/D5 Launcher）**：自绘 UI（D5 Launcher
+   自绘页）的 a11y 树几乎全是 `generic ""`——a11y 默认的收益强依赖页面语义质量，语义稀疏页
+   dom 快照反而更有用。与 90 trials 的静态页/SPA 样本正好互补，是 a11y-default 决策的边界
+   条件，也是 kind=dom escape hatch 存在的现场理由。0.9 设计输入：是否值得做语义稀疏检测
+   （如 generic 占比阈值）并在回执里建议切换 kind。
