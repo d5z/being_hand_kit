@@ -25,6 +25,15 @@ hand 的核心原则：**降级必可见，可见在回执里**。任何 fallbac
 
 `type(scope): summary`，例：`fix(perception): vision_ocr stale bin detection`。
 
+## 方法论：存在过 ≠ 发生过
+
+排查 kit 问题时按证据强度分级：
+
+1. **静态产物只当线索。** exe 里的字符串、文件 mtime、日志文案、记忆里的结论，都只证明「存在过」，不证明「这条路径会发生」。用字符串/静态产物推断行为（如从 exe 文案断言某个分支会走），必须补一次行为实验才算证据；未补前，结论标注为「线索」。
+2. **升格靠行为实验。** 构造最小触发条件，观察实际行为：克隆同名 kit 目录看 conflicts 是否触发、跑一张真实 UI 图看 OCR 输出格式。有行为实验支撑的结论才可写进文档定稿。阴性结果不能单独当反证，除非同批带正对照。
+3. **静态检查有盲区。** 「检查全绿」≠「产物正确」：mtime 比对（bin > 源码）对「从过期 checkout 编译」的形态是盲的（vision-ocr 案例，见 `docs/feedback-ledger.md`）；发布链路的最终护栏是运行时冒烟断言（`tests/test_bin_smoke.py`）。该断言的失败形态已于 2026-09-22 在 PR #3 验证链中观察过一次：已知坏的旧 bin（f4d02b0 版 `vision_ocr_bin`）跑 test_bin_smoke 当场红（`AssertionError: 1 not greater than or equal to 6: line not in tab format`），红在正确位置、非静默绿。该样本来自刻意构造的负对照；野外拦截样本出现时可追加。
+4. **引用先对原文。** 转述台账编号、他人结论、日志行之前先读一手原文；记忆与证据冲突时，以证据为准。
+
 ## macOS adopter 自检（0.8.3 已知问题）
 
 0.8.3 的 `vision_ocr_bin` 是旧源码编译（bounds 输出缺 tab 分隔坐标）。自检方法：
