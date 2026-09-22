@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.2] — 2026-09-22
+
+> 一行修复版：CDP 端口可覆盖。F16 收案。
+
+- **`HAND_CDP_PORT` 环境变量**：CDP 端口默认 9222 不变，但宿主机已有 9222 占用者（launcher-embedded Chrome 等）时可覆盖，kit spawn 与 connect 指向同一变量（`cdp_core.py` + `cdp_launcher.py`）。
+- 背景：taojun 的 D5 Launcher 内嵌 Chrome 常驻 9222，kit 撞车——更险的形态是**静默错连**（connect 打到占用者的 Chrome，不是 kit 自己 spawn 的）。0.8.1 实锤过一次（连进 dl://launcher/docker.html）。修复后 `HAND_CDP_PORT=9223` 即避开，本机实测 9223/9222 并存互不干扰。
+- 测试同步：292 全绿（新增 HAND_CDP_PORT 生效断言 + 端口一致性断言）。
+
 ## [0.8.1] — 2026-09-22
 
 > 一行修复版：venv 回家。Judy 在 0.8.0 升级实测中撞上的 F7 场景——
