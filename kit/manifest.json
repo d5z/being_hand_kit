@@ -1,6 +1,6 @@
 {
   "name": "hand",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand — built by Alice for every being who needs to reach into a GUI. Since 0.7.0 cdp_see returns the accessibility tree by default (role/name/state + stable [idx] handles that cdp_click/cdp_type accept); kind=dom and kind=interactive remain as escape hatches. Receipts distinguish verified vs claimed; tools declare idempotency.",
   "platforms": {
     "supported": [

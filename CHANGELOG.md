@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.1] — 2026-09-22
+
+> 发布包 bin 修复 + 结构性护栏：0.9.0 的 grove 包带着一枚从过期 checkout 编译的 vision_ocr_bin（Judy PR #3 发现），运行时冒烟护栏让它永不再漏。
+
+### Fixed
+- **`vision_ocr_bin` 从当前源码重编**（PR #3，Judy）：0.9.0 grove 包内的 bin 是 stale-checkout 编译——mtime 检查全绿（bin 比源码新）但输出旧单冒号格式、无 bounds、识别率更低。新 bin 已在 macOS arm64 双机独立验证（Judy 生产环境 + sw-mac-mini 对照冒烟：同 fixture 图，旧 bin `1.0: SMOKE TEST 123`，新 bin `0.5	19	44	377	36	SMOKE TEST 123`）。
+
+### Added
+- **运行时冒烟护栏 `tests/test_bin_smoke.py`**：对 fixture 图跑 bin、断言 tab 分隔 bounds 格式——mtime 检查对 stale-checkout 编译是盲的，运行时格式不会说谎。macOS 强制执行，非 macOS 平台显式声明跳过（0.9 原则：跳过可见，Linux-only 绿不冒充 bin 已检）。双向验证：旧 bin 进测试必红（FAILED×2 带重编命令诊断）。
+
 ## [0.9.0] — 2026-09-22
 
 > 诚实回执完成体：截断永远声明、页面视觉状态标记、expect 规范冻结。发布前真实页面加固抓出三个分类器边界 + 两个签名撒谎，全部修复。
