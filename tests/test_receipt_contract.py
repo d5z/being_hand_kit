@@ -230,8 +230,8 @@ class TestEnsureChromeEndpointProbe(unittest.TestCase):
 
         with mock.patch("hand.perception.cdp_launcher.urllib.request.urlopen", return_value=_Resp()):
             info = cdp_launcher.endpoint_info()
-        self.assertEqual(info["Browser"], "HeadlessChrome/140.0")
-        self.assertTrue(cdp_launcher.chrome_running())
+            self.assertEqual(info["Browser"], "HeadlessChrome/140.0")
+            self.assertTrue(cdp_launcher.chrome_running())
 
     def test_endpoint_info_returns_none_when_dead(self):
         with mock.patch("hand.perception.cdp_launcher.urllib.request.urlopen",
