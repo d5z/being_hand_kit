@@ -212,5 +212,34 @@ class TestInteractiveTruncation(unittest.TestCase):
         self.assertNotIn("truncation", out)
 
 
+# ── skipped steps declared in the hint channel ───────────────────────
+
+class TestSkippedStepsDeclared(unittest.TestCase):
+    def test_fallback_declares_the_backend_it_skipped(self):
+        from hand.session import reset_session, Place
+        import hand.router as r
+        reset_session()
+        with mock.patch("hand.perception.ax_tree.ax_snapshot",
+                        side_effect=RuntimeError("a11y down")), \
+             mock.patch("hand.perception.cdp_snapshot.cdp_snapshot_see",
+                        return_value={"method": "cdp_snapshot",
+                                      "url": "https://x/", "page_title": "X",
+                                      "text": "hi"}):
+            out = r.route_see(place=Place(type="browser", identifier="https://x/"))
+        self.assertEqual(out["evidence"]["backend"], "cdp_snapshot")
+        self.assertIn("skipped: cdp_a11y", out["hint"])
+        self.assertIn("backend failed", out["hint"])
+
+    def test_no_hint_when_nothing_was_skipped(self):
+        from hand.session import reset_session, Place
+        import hand.router as r
+        reset_session()
+        with mock.patch("hand.perception.cdp_snapshot.cdp_snapshot_see",
+                        return_value={"method": "cdp_snapshot", "url": "https://x/",
+                                      "page_title": "X", "text": "hi"}):
+            out = r.route_see(kind="dom")
+        self.assertIsNone(out.get("hint"))
+
+
 if __name__ == "__main__":
     unittest.main()

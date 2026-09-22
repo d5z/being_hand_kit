@@ -13,6 +13,7 @@ Priority order matters:
 
 from typing import Optional
 from hand.platform import is_macos
+from hand.receipt import skipped, merge_hints
 from hand.session import get_session, Place, reset_session
 
 # ── Permission of backends per platform ────────────────────────────
@@ -392,6 +393,13 @@ def route_see(place: Optional[Place] = None, kind: Optional[str] = None) -> dict
 
             if result is not None and result.get("method"):
                 result = _with_receipt(result)
+                # S1 (0.9): a backend that failed on the way here was *skipped*,
+                # not silently ignored — declare it in the hint channel.
+                if errors:
+                    result["hint"] = merge_hints(result.get("hint"), [
+                        skipped(e.split(":", 1)[0].strip(),
+                                "backend failed: " + e.split(":", 1)[1].strip()[:120])
+                        for e in errors])
                 # Cache in session: full result for ax_app/ax_ui, screenshot for vision
                 session = get_session()
                 if backend == "vision_ocr":
