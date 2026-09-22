@@ -36,7 +36,7 @@ hand 的核心原则：**降级必可见，可见在回执里**。任何 fallbac
 - 输出含 **tab 分隔的坐标**（`0.95\ttext`）→ 新 bin，bounds 可用
 - 输出是**单冒号格式**（`0.95:text`）→ 旧 bin，bounds 不可用，重跑 `swiftc -o hand/perception/vision_ocr_bin hand/perception/vision_ocr.swift`
 
-0.9 起代码内建 stale 检测（fallback 触发时回执带 `warning` 字段）。
+0.9 起代码内建 stale 检测（fallback 触发时回执带 `warning` 字段）。0.9.1 起仓库自带运行时冒烟护栏（`tests/test_bin_smoke.py`，含 fixture 图）：macOS 上 `python3 tests/test_bin_smoke.py` 一条命令完成上述自检——mtime 检查对「stale-checkout 编译」（bin 从过期源码编出、mtime 却比源码新）是盲的，运行时格式断言不会说谎（PR #3 案例）。
 
 
 ## Windows adopter 自检（升级/手改 manifest 坑族）
