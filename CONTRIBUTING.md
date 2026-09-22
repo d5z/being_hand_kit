@@ -45,14 +45,15 @@ Windows 上升级 kit 或手改 manifest 后，几类坑的症状都是 `Kit 'xx
 
 ### 0. 先看日志，分型再动手
 
-引擎每 5s 扫描一轮 `kits\`，所有 loader WARN 都在：`%APPDATA%\portal-desktop\portal-service\<service-id>\portal.log`（`<service-id>` 取最新修改的子目录；`portal.log.previous` 为上一轮滚动）。两种 WARN 对应两类坑：
+引擎每 5s 扫描一轮 `kits\`，所有 loader WARN 都在：`%APPDATA%\portal-desktop\portal-service\<service-id>\portal.log`（`<service-id>` 取最新修改的子目录；`portal.log.previous` 为上一轮滚动）。三种 WARN 对应三类坑：
 
 ```
 Skipping kit manifest <path>: Parsing kit manifest <path>        ← 解析失败（坑 1 BOM / JSON 语法 / 字段风格不符）
 Kit 'xxx' conflicts with another kit name or tool route; ...     ← 同名/路由冲突（坑 2）
+kit 'xxx' command binary not found                               ← 命令找不到（坑 3）
 ```
 
-（「Parsing」不区分语法错误与 schema 不匹配——JSON 合法但字段风格不对（如 tools 写成 MCP `inputSchema` 风格而非 `params` 风格）同样落在这条 WARN 里。）
+（「Parsing」不区分语法错误与 schema 不匹配——JSON 合法但字段风格不对（如 tools 写成 MCP `inputSchema` 风格而非 `params` 风格）同样落在这条 WARN 里。第三种签名是启动期 manager 级 WARN，与前两种 loader 级不同层——同族还有 `Kit 'xxx' failed to start: ...` 变体，同在一份日志里。）
 
 ### 1. manifest.json 带 BOM（F21）
 
