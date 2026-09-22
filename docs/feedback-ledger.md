@@ -48,6 +48,7 @@ _配套：`docs/iteration-sop.md`（十步循环）——本台账是 SOP 第 1-
 | F13 | **冷启动 2-3s 耗时写进文档**（v6.11.0 S2 端点探测上限 6s，典型 2-3s 有余量，用户应知预期） | Judy grove-feedback 09-17（seed hPwNA-zEy8GD3LMB66rpZ） | P3 | **6.11.1 quick-fix 批候选**（doc）；**✅ 已修 0.7.0**（S6：文档写明冷启动 2-3s 预期 + 端点探测上限 6s） |
 | F14 | **verified 是「派发已验」不是「效果已验」**：cdp_click/cdp_type 回执 evidence 全是动作前抓的（selector 预检/焦点目标/点击前元素），派发后零回读。单布尔把「目标已验」和「效果已验」压成一比特——与 216「拉取过≠处理过≠到达过三态压一比特」同构。便宜升级：cdp_type 派发后 Runtime.evaluate 读 el.value（顺带抓 app 变换输入——掩码/自动格式化）；cdp_click 效果是 app 定义的，加可选 expect 参数（grip 模式），顺带封 hit-check 与 click 之间的 TOCTOU 窗口 | Neuromancer 931 B（②研交卷） | **P1** | 6.12.0（回执契约走完最后一层：dispatch→effect） |
 | F15 | **cdp_type fast 路径是 replace 不是 append**：cdp_act.py:143，slow=insertText（append✓），fast=True 走 el.value=text 整值替换（构造上幂等）。当前全库无调用方传 fast=True（不可达），但 manifest 扁平 append 标签会静默过期。修法：idempotency 按路径分标或删 fast 路径 | Neuromancer 931 A（②研交卷） | P2 | 6.12.0（manifest schema 变更）；**✅ 已修 0.7.0**（S7：按路径分标——MCP `cdp_type`=append（insertText at focus），内部 `fast=True` 路径=整值 replace（构造上幂等、非 MCP 暴露），manifest `idempotency_note` 写明；enum 不变，schema 变更仍留 6.12.0 观察） |
+| F16 | **CDP_PORT 硬编码 9222**：launcher-embedded Chrome（taojun 的 D5 Launcher 内嵌 9222）占用端口时，kit spawn 撞车——更险的形态是静默错连（cdp_connect 打到占用者的 Chrome 上，不是 kit 自己 spawn 的）。taojun 本地补丁走 9223 避开。修法：`HAND_PORT` env 覆盖或 spawn 时动态选空闲端口（connect 指向同一 port 变量） | taojun 1116（9/21 6.11.0 本地补丁核对 F7/F8 覆盖范围时暴露：三项里 profile/有头已被 0.7.0 原生覆盖，唯端口未被覆盖） | P2 | 0.9 候选（与 stderr 留痕、HEARTBEAT_FILE 水位同批） |
 
 ## ⏳ 待验收（L3 真机）
 
