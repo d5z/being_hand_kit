@@ -24,9 +24,10 @@ V5 → V6: browser CDP code reborn as perception/action backends,
 same primitives translated to desktop via accessibility tree + keystroke + Vision OCR.
 0.7.0: a11y-v2 perception layer ([idx] handles) + receipt contract.
 0.8.0: code mode — the Python face, and expect= world-state verification.
+0.8.1: start.sh venv-first (grove installs get their .venv respected).
 """
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 __author__ = "Alice, from the river"
 
 # Top-level Python face (lazy singleton behind these names).
