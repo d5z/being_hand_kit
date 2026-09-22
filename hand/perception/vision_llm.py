@@ -121,9 +121,16 @@ def describe_screenshot(image_b64: str, prompt: str = None, model: str = None,
         return {"ok": False, "text": None, "model": model,
                 "error": data.get("error", {}).get("message", "bad response")}
 
-    text = data["choices"][0]["message"].get("content", "")
+    choice = data["choices"][0]
+    text = choice["message"].get("content", "")
+    # S1 (0.9): an LLM completion can be cut at `max_tokens`. The char/token
+    # total of what was *not* produced is unknowable, so we do NOT fabricate a
+    # numeric truncation block — we surface the provider's own verdict
+    # (`finish_reason == "length"` means the description was cut).
     return {"ok": True, "text": text, "model": data.get("model", model),
-            "error": None}
+            "error": None,
+            "finish_reason": choice.get("finish_reason"),
+            "usage": data.get("usage")}
 
 
 def _http_error(e: urllib.error.HTTPError, model: str) -> dict:

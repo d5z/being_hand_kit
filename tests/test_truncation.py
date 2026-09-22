@@ -241,5 +241,37 @@ class TestSkippedStepsDeclared(unittest.TestCase):
         self.assertIsNone(out.get("hint"))
 
 
+# ── vision LLM output cut at max_tokens ──────────────────────────────
+
+class TestVlmOutputCut(unittest.TestCase):
+    """An LLM description can be cut at max_tokens. The provider verdict is the
+    honest declaration; we never fabricate {dropped, total} for it."""
+
+    def test_length_finish_reason_is_declared(self):
+        import hand.router as r
+        with mock.patch("hand.perception.vision_llm.describe_screenshot",
+                        return_value={"ok": True, "text": "a very long descrip",
+                                      "model": "m", "error": None,
+                                      "finish_reason": "length",
+                                      "usage": {"completion_tokens": 400}}):
+            out = r.route_see_vlm(image_b64="AAAA")
+        self.assertEqual(out["finish_reason"], "length")
+        self.assertIn("max_tokens", out["hint"])
+        self.assertIn("finish_reason=length", out["hint"])
+        # no numeric block: the unproduced total is unknowable
+        self.assertNotIn("truncation", out)
+
+    def test_normal_stop_carries_no_hint(self):
+        import hand.router as r
+        with mock.patch("hand.perception.vision_llm.describe_screenshot",
+                        return_value={"ok": True, "text": "done", "model": "m",
+                                      "error": None, "finish_reason": "stop",
+                                      "usage": {}}):
+            out = r.route_see_vlm(image_b64="AAAA")
+        self.assertEqual(out["finish_reason"], "stop")
+        self.assertNotIn("hint", out)
+        self.assertNotIn("truncation", out)
+
+
 if __name__ == "__main__":
     unittest.main()

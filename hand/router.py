@@ -221,12 +221,20 @@ def route_see_vlm(prompt: Optional[str] = None, image_b64: Optional[str] = None)
     from hand.perception.vision_llm import describe_screenshot
     result = describe_screenshot(image_b64, prompt=prompt)
     if result.get("ok"):
-        return {
+        out = {
             "method": "vision_llm",
             "text": result.get("text"),
             "model": result.get("model"),
             "source": source,
         }
+        if result.get("finish_reason") is not None:
+            out["finish_reason"] = result["finish_reason"]
+        if result.get("finish_reason") == "length":
+            # S1 (0.9): the description was cut at max_tokens. Declared via the
+            # provider verdict; a numeric {dropped,total} would be a guess.
+            out["hint"] = skipped("vision description tail",
+                                  "the model hit max_tokens (finish_reason=length)")
+        return out
     return {
         "method": "vision_llm",
         "text": None,

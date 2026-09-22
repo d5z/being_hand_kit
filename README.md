@@ -120,7 +120,7 @@ fields the kind actually returns instead of assuming `tree`:
 | `dom` | whole-page visible text | `text`, `chars`, `total_chars` (+ `page_title`, `page_index`, `coord`) |
 | `interactive` | legacy element map with coordinates | `elems` (each `{tag, text, selector, x, y, w, h, visible, occluded}`), `count`, `total`, `truncated` |
 | `network` | a live request tap (below) | `requests`, `total_requests`, `duration` |
-| `vlm` | a vision description | `text`, `model`, `source` — no tree |
+| `vlm` | a vision description | `text`, `model`, `source`, `finish_reason` — no tree |
 
 ```python
 hand.see(kind="dom")["text"]            # this shape has no "tree" key
@@ -160,6 +160,13 @@ kept unchanged for one version.
 Steps a tool *skips on purpose* (e.g. a coordinate that cannot be resolved because
 the node is not in the render tree) are not errors — but they are visible, in the
 `hint`: `skipped: coordinates for 2 interactive node(s) (not in the render tree)`.
+
+The VLM channel is the one cut we cannot put numbers on: a model description can
+be truncated at `max_tokens`, and the size of what was *not* produced is
+unknowable. Rather than fabricate a `{dropped, total}`, the receipt carries the
+provider's own verdict — `finish_reason: "length"` means the description was cut
+(and a `hint` says so). Absence of `finish_reason` means the provider reported
+none.
 
 ### Visual state (0.9)
 
