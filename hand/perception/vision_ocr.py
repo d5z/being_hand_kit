@@ -50,11 +50,31 @@ def _vision_recognize(image_path: str) -> list[dict]:
     if result.returncode != 0:
         raise RuntimeError(f"vision_ocr failed: {result.stderr}")
 
-    # Parse JSON lines output
+    # New format: confidence\tx\ty\tw\th\ttext  (tab-separated, 6 fields)
+    # Old format fallback: "confidence: text"
     lines = []
     for line in result.stdout.strip().split("\n"):
         if not line.strip():
             continue
+        segments = line.split("\t", 5)
+        if len(segments) >= 6:
+            try:
+                confidence = float(segments[0])
+                x = int(float(segments[1]))
+                y = int(float(segments[2]))
+                w = int(float(segments[3]))
+                h = int(float(segments[4]))
+                text = segments[5]
+                lines.append({
+                    "text": text,
+                    "confidence": confidence,
+                    "x": x, "y": y, "w": w, "h": h,
+                    "center_x": x + w // 2,
+                    "center_y": y + h // 2,
+                })
+                continue
+            except (ValueError, IndexError):
+                pass
         try:
             parts = line.split(": ", 1)
             if len(parts) == 2:
@@ -106,3 +126,26 @@ def vision_ocr_see() -> dict:
         }
     except Exception as e:
         return {"method": "vision_ocr", "error": str(e)}
+
+
+def find_text(query: str, image_path=None) -> dict:
+    """Locate query on screen via Vision OCR; return matching lines with pixel coords.
+
+    Case-insensitive substring match. Screenshot path: use image_path if given,
+    otherwise _capture_screenshot() (osascript screencapture).
+    """
+    if image_path and os.path.isfile(image_path):
+        path = image_path
+    else:
+        path = _capture_screenshot()
+    lines = _vision_recognize(path)
+    needle = (query or "").lower()
+    matches = [l for l in lines if needle in (l.get("text") or "").lower()]
+    matches.sort(key=lambda m: m.get("confidence", 0), reverse=True)
+    return {
+        "method": "vision_ocr_find",
+        "query": query,
+        "matches": matches,
+        "count": len(matches),
+        "screenshot": path,
+    }

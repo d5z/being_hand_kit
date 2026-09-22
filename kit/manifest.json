@@ -192,6 +192,18 @@
       "evidence": "claimed"
     },
     {
+      "name": "hand_see_ocr",
+      "description": "Read exact on-screen text via Apple Vision OCR (zh-Hans/zh-Hant/en/ja). Complementary to hand_see_vlm (VLM describes what-is-this) — this reads what-does-it-say. Pass query to locate a specific string: returns matching lines with pixel coordinates (x/y/w/h/center_x/center_y) for subsequent clicking.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"}
+        }
+      },
+      "idempotency": "idempotent",
+      "evidence": "verified"
+    },
+    {
       "name": "health",
       "description": "Check if Hand is alive and well — uptime, usage count, Chrome status.",
       "params": {

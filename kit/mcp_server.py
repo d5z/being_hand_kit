@@ -217,6 +217,20 @@ def hand_see_vlm(prompt: str = None, image_b64: str = None) -> dict:
     _bump()
     return route_see_vlm(prompt=prompt, image_b64=image_b64)
 @mcp.tool()
+def hand_see_ocr(query: str = None) -> dict:
+    """Read exact on-screen text via Apple Vision OCR (zh-Hans/zh-Hant/en/ja).
+    Complementary to hand_see_vlm (VLM describes what-is-this) — this reads
+    what-does-it-say. Pass query to locate a specific string: returns
+    matching lines with pixel coordinates (x/y/w/h/center_x/center_y)
+    for subsequent clicking.
+    """
+    _bump()
+    if query is not None:
+        from hand.perception.vision_ocr import find_text
+        return find_text(query)
+    from hand.perception.vision_ocr import vision_ocr_see
+    return vision_ocr_see()
+@mcp.tool()
 def health() -> dict:
     _bump()
     chrome_state = "unknown"
