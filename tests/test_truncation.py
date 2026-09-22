@@ -273,5 +273,54 @@ class TestVlmOutputCut(unittest.TestCase):
         self.assertNotIn("truncation", out)
 
 
+# ── cross-cutting invariants & the Python face ───────────────────────
+
+class TestUnifiedBlockInvariants(unittest.TestCase):
+    """Any block any backend emits must obey the frozen shape/meaning."""
+
+    def test_block_is_always_well_formed_and_positive(self):
+        blocks = [
+            ax.serialize(_long_fixture(), max_lines=4)["truncation"],
+            ax.serialize([_node("1", "RootWebArea", "P"),
+                          _node("2", "StaticText", "y" * (ax.MAX_NAME + 1),
+                                parent="1")])["truncation"],
+        ]
+        import hand.perception.cdp_snapshot as s
+        # interactive: exercise the block building through the helper used there
+        from hand.receipt import truncation as T
+        blocks.append(T("elems", "max_elems", 3, 5))
+        for b in blocks:
+            self.assertEqual(set(b), {"field", "reason", "dropped", "total"})
+            self.assertIsInstance(b["dropped"], int)
+            self.assertIsInstance(b["total"], int)
+            self.assertGreater(b["dropped"], 0)
+            self.assertLessEqual(b["dropped"], b["total"])
+
+
+class TestFaceReceiptPreservesDeclarations(unittest.TestCase):
+    """The Python face (hand.see) must carry the 0.9 fields through untouched."""
+
+    def test_see_receipt_carries_truncation_and_visual_state(self):
+        import hand.hand as face
+        block = {"field": "tree", "reason": "max_lines", "dropped": 7, "total": 9}
+        snap = {"method": "cdp_a11y", "format": "a11y-v2.1", "page_index": 0,
+                "url": "https://x/", "page_title": "X", "tree": "t",
+                "nodes": [], "handles": {}, "coords": {}, "root_role": "RootWebArea",
+                "node_count": 2, "line_count": 2, "serialized_bytes": 1,
+                "truncated": True, "nodes_omitted": 7, "text_truncated_count": 0,
+                "max_lines": 2, "truncation": block, "sha256": "a",
+                "visual_state": "loading", "visual_signals": ["aria-busy"]}
+        face.reset()
+        with mock.patch("hand.perception.ax_tree.ax_snapshot", return_value=snap):
+            r = face.see(kind="a11y")
+        self.assertEqual(r["truncation"], block)
+        self.assertEqual(r["visual_state"], "loading")
+        self.assertEqual(r["visual_signals"], ["aria-busy"])
+        # both new keys sit in their declared FIELD_ORDER slot (contract order)
+        keys = list(r.keys())
+        self.assertLess(keys.index("truncation"), keys.index("visual_state"))
+        self.assertLess(keys.index("visual_state"), keys.index("evidence"))
+
+
 if __name__ == "__main__":
     unittest.main()
