@@ -143,7 +143,10 @@ Experiment basis: 90 A/B trials, a11y v2 87% vs interactive 58%
   Handle clicks re-read the element box at click time (DOM.resolveNode +
   getBoundingClientRect) — the snapshot's x,y are informational.
 - **Truncation** beyond `max_lines` (default 600) sets `truncated` +
-  `nodes_omitted`; no `[idx]` is emitted without a handle entry.
+  `nodes_omitted`; no `[idx]` is emitted without a handle entry. Since 0.9 the
+  cut is also declared in the unified `truncation` block
+  `{field, reason, dropped, total}` (absent when nothing was dropped; see
+  hand/receipt.py and README "Truncation & skipped steps").
 - **Coordinates**: `coords` / handle-map x,y are physical px (CSS × dpr), the
   same contract as interactive_map and `do(xy:)`.
 - **Receipt** (S3): `verified` = a tree was pulled with a non-empty root;

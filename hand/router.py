@@ -174,6 +174,10 @@ def _with_receipt(result: dict) -> dict:
     else:
         ev["detail"] = "backend receipt wrapped without backend-specific checks"
 
+    # S1 (0.9): the unified truncation block (when present) travels into the
+    # evidence too, beside the legacy per-backend counts.
+    if result.get("truncation"):
+        ev["truncation"] = result["truncation"]
     if reason:
         ev["reason"] = reason
     ev["verified"] = verified

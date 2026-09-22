@@ -51,6 +51,7 @@ from hand.perception.cdp_core import (
     list_pages, resolve_page, cdp_connect, cdp_call,
     _init_domains, _header, _write_last, _get_dpr, _build_coord,
 )
+from hand.receipt import truncation, skipped, merge_hints
 
 AX_FORMAT_VERSION = "a11y-v2.1"
 
@@ -229,24 +230,34 @@ def serialize(nodes, max_lines=DEFAULT_MAX_LINES):
     raw = list(nodes or [])
     kept = filter_nodes(raw)
     lines, meta = _traverse(kept)
-    truncated = max_lines is not None and len(lines) > max_lines
+    full_line_count = len(lines)
+    truncated = max_lines is not None and full_line_count > max_lines
     if truncated:
-        omitted = len(lines) - max_lines
+        omitted = full_line_count - max_lines
         lines = lines[:max_lines]
         meta = meta[:max_lines]
     else:
         omitted = 0
+    text_truncated_count = sum(1 for m in meta if m.get("text_truncated"))
+    # S1 (0.9): the unified declaration block. The tree cut takes precedence;
+    # when the tree is complete but node names were cut (v2.1 MAX_NAME), that
+    # cut is declared in the same shape. Absent when nothing was dropped.
+    block = truncation("tree", "max_lines", omitted, full_line_count)
+    if block is None and text_truncated_count:
+        block = truncation("names", "max_name", text_truncated_count, len(meta))
     ser = {
         "lines": lines,
         "nodes": meta,
         "truncated": truncated,
         "nodes_omitted": omitted,
-        "text_truncated_count": sum(1 for m in meta if m.get("text_truncated")),
+        "text_truncated_count": text_truncated_count,
         "raw_node_count": len(raw),
         "kept_count": len(kept),
         "max_lines": max_lines,
         "format": AX_FORMAT_VERSION,
     }
+    if block:
+        ser["truncation"] = block
     ser["sha256"] = hashlib.sha256(snapshot_text(ser).encode("utf-8")).hexdigest()
     return ser
 
@@ -449,6 +460,21 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             coord = _build_coord(0, 0, dpr)
         coord["coords_space"] = "physical"
 
+        # S1 skipped-step channel: coordinates are resolved only for
+        # interactive nodes that are actually in the render tree; the ones
+        # dropped are declared, not silently missing.
+        notes = []
+        if resolve_coords:
+            backed = [n for n in ser["nodes"]
+                      if n["interactive"] and n["backend_node_id"]]
+            unresolved = sum(1 for n in backed
+                             if not coords.get(str(n["idx"])))
+            if unresolved:
+                notes.append(skipped(
+                    f"coordinates for {unresolved} interactive node(s)",
+                    "not in the render tree (display:none / detached)"))
+        hint = merge_hints(overflow_hint(ser["nodes"]), notes)
+
         out = {
             "method": "cdp_a11y",
             "format": AX_FORMAT_VERSION,
@@ -461,7 +487,7 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "handles": handles,
             "coords": coords,
             "coord": coord,
-            "hint": overflow_hint(ser["nodes"]),
+            "hint": hint,
             "root_role": ser["nodes"][0]["role"] if ser["nodes"] else None,
             "node_count": len(ser["lines"]),
             "raw_node_count": ser["raw_node_count"],
@@ -477,6 +503,8 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "handle_map": handle_map_path,
             "coords_resolved": sum(1 for v in coords.values() if v),
         }
+        if ser.get("truncation"):
+            out["truncation"] = ser["truncation"]
         _write_last(idx)
         return out
     finally:

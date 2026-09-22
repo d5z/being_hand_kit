@@ -102,7 +102,9 @@ page = hand.see()          # kind defaults to "a11y"
 | `line_count`, `serialized_bytes` | size of the snapshot |
 | `truncated`, `nodes_omitted` | truncation is **always declared**, never silent. The a11y cap is 600 tree lines; `nodes_omitted` counts dropped *tree lines* |
 | `text_truncated_count` | node names cut at 200 chars (declared per node, counted here) |
-| `hint` | something you should know — e.g. a collapsed `⋯` menu whose contents are not in the tree (click it, then see again) |
+| `truncation` | **0.9** the unified cut declaration: `{field, reason, dropped, total}`. Present only when something was dropped — absent means complete (`truncated`/`nodes_omitted` stay as the legacy boolean/count for one version) |
+| `hint` | something you should know — e.g. a collapsed `⋯` menu whose contents are not in the tree (click it, then see again); internal skips appear here as `skipped: <what> (<why>)` |
+| `visual_state`, `visual_signals` | **0.9** what the page *looks* like right now: `loading` · `error` · `blank` · `interactive` · `unknown`, plus the signals that decided it (DOM heuristic, no screenshot) |
 | `verified`, `evidence` | the evidence verdict: node count, AX source version, sha256 |
 
 Receipts are **self-describing**: the table lists the semantic anchors, but a new
@@ -135,9 +137,29 @@ order".
 for counting things, but the cap means you see only the head of a big payload.
 
 **`dom` gives original text, capped at 8000 characters.** Truncation is declared
-(`truncated: true`, and `total_chars` reports the real length), but the 8000 cap is
-fixed — neither face can raise it. A big JSON API page shows only its first ~12
-entries.
+(`truncated: true`, `total_chars` reports the real length, and the 0.9 `truncation`
+block says exactly how many chars were cut), but the 8000 cap is fixed — neither
+face can raise it. A big JSON API page shows only its first ~12 entries.
+
+### Truncation & skipped steps (0.9) — 跳过必留痕
+
+Any backend that can drop output declares it in one shape:
+
+```python
+hand.see(kind="dom")["truncation"]
+# {"field": "text", "reason": "max_chars", "dropped": 12000, "total": 20000}
+```
+
+`field` names what was cut (`tree` / `elems` / `text` / `names`), `reason` why
+(`max_lines` / `max_elems` / `max_chars` / `max_name`), `dropped` how many units
+were dropped and `total` how many the full result would have had. **When nothing
+was dropped the key is absent, not `null`** — absence means complete. The legacy
+per-backend fields (`truncated` bool, `nodes_omitted`, `total`, `total_chars`) are
+kept unchanged for one version.
+
+Steps a tool *skips on purpose* (e.g. a coordinate that cannot be resolved because
+the node is not in the render tree) are not errors — but they are visible, in the
+`hint`: `skipped: coordinates for 2 interactive node(s) (not in the render tree)`.
 
 **`network` is a live tap, not a history.** It listens for 3s (`duration`) and
 reports only the requests that fire *inside that window*; called after the page has

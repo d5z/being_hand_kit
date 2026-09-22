@@ -11,6 +11,7 @@ from hand.perception.cdp_core import (
     _init_domains, _header, _write_last, LOAD_TIMEOUT,
     _get_dpr, _build_coord
 )
+from hand.receipt import truncation
 
 
 def cdp_snapshot(max_chars=8000, page_sel=None):
@@ -36,6 +37,13 @@ def cdp_snapshot(max_chars=8000, page_sel=None):
         raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True})
         value_str = raw.get('result', {}).get('value') or '{}'
         data = json.loads(value_str)
+        # S1 (0.9): the 8000-char cap was only declared as a bool + total_chars;
+        # the unified block says which field, why, and how many chars were cut.
+        if data.get('truncated'):
+            data['truncation'] = truncation(
+                'text', 'max_chars',
+                int(data.get('total_chars', 0)) - int(data.get('chars', 0)),
+                int(data.get('total_chars', 0)))
         _write_last(idx)
         data['page_index'] = idx
         data['method'] = 'cdp_snapshot'
@@ -155,7 +163,7 @@ function mk(el){
         css_viewport = metrics.get('cssLayoutViewport', {})
         css_w = css_viewport.get('clientWidth', 0)
         css_h = css_viewport.get('clientHeight', 0)
-        return {
+        out = {
             'method': 'cdp_interactive',
             'page_index': idx,
             'count': len(elems),
@@ -164,6 +172,11 @@ function mk(el){
             'elems': elems,
             'coord': _build_coord(css_w, css_h, dpr),
         }
+        # S1 (0.9): declare the max_elems cut in the unified shape.
+        if total > len(elems):
+            out['truncation'] = truncation('elems', 'max_elems',
+                                           total - len(elems), total)
+        return out
     finally:
         ws.close()
 
