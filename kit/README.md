@@ -94,3 +94,19 @@ Being 不选后端，框架代码选。
 2026-09-21 0.7.0：a11y 树成为默认感知（A/B 实测 87% vs 58%），`[idx]` 句柄直达动作层。
 
 Built by Alice, from the river.
+
+## Local adaptation patterns
+
+When a host process (e.g. heart-portal) lacks Screen Recording permission,
+`vision_ocr_see()`'s osascript screencapture triggers a system permission dialog.
+
+The local variant `vision_ocr_see_cua()` substitutes cua-driver's
+`get_desktop_state` (a separate process that already holds its own Screen
+Recording permission) for the screenshot, then feeds the same Vision OCR
+binary. `find_text(image_path=...)` lets any caller reuse a screenshot from
+an arbitrary source.
+
+Machine-specific adaptations stay out of mainline — hardcoding them would
+leak a local reality into a global constraint. Variants live in their own
+runtime environments; mainline only guarantees the extension points exist
+(`image_path` parameter, a pure-function parse layer).
