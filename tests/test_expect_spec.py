@@ -169,6 +169,53 @@ class TestVerdictShapes(unittest.TestCase):
         self.assertFalse(r["expect"]["met"])
 
 
+class TestOpenExpect(unittest.TestCase):
+    """open() carries the same expect= contract as do() (spec v1 §1).
+
+    0.8–0.9 silently ignored expect= on open() — found in 0.9 dogfood.
+    """
+
+    def _browser(self):
+        import hand.hand as hh
+        b = hh.Browser.__new__(hh.Browser)
+        b._record = lambda r: r
+        b.opened = False
+        b.url = None
+        return b
+
+    RAW = {"place": {"type": "browser", "identifier": "https://example.com/"},
+           "verified": True}
+
+    def test_open_expect_met(self):
+        with mock.patch("hand.router.route_open", return_value=dict(self.RAW)), \
+             mock.patch("hand.hand.Browser._expect",
+                        return_value={"spec": "title:Example", "kind": "title",
+                                      "needle": "Example", "met": True,
+                                      "waited_ms": 1, "checks": 1,
+                                      "evidence": {"title": "Example Domain"}}):
+            out = self._browser().open("https://example.com", expect="title:Example")
+        self.assertTrue(out["expect"]["met"])
+        self.assertEqual(out["expect"]["kind"], "title")
+
+    def test_open_expect_null_when_not_given(self):
+        with mock.patch("hand.router.route_open", return_value=dict(self.RAW)):
+            out = self._browser().open("https://example.com")
+        self.assertIsNone(out["expect"])
+
+    def test_open_expect_spec_error_sets_error(self):
+        with mock.patch("hand.router.route_open", return_value=dict(self.RAW)), \
+             mock.patch("hand.hand.Browser._expect",
+                        return_value={"spec": "href:foo", "met": False,
+                                      "skipped": True, "spec_error": True,
+                                      "reason": "expect kind 'href' is not one of "
+                                                "url/title/text/visual_state",
+                                      "hint": "expect kinds: ..."}):
+            out = self._browser().open("https://example.com", expect="href:foo")
+        self.assertFalse(out["expect"]["met"])
+        self.assertTrue(out["expect"]["spec_error"])
+        self.assertIn("href", out["error"])
+
+
 class TestParseErrorTemplatesAreExact(unittest.TestCase):
     """§5's four parse-error templates are pinned to the parser verbatim."""
 

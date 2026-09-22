@@ -481,7 +481,18 @@ class Browser:
         place = raw.get("place") or {}
         self.opened = True
         self.url = place.get("identifier") or url.strip()
+
+        # expect= on open(): same world-state check as do() (spec v1 §1 promises
+        # both entry points; 0.8-0.9 silently ignored it here — found in 0.9
+        # dogfood, fixed with alignment tests).
+        expect_out = None
+        spec_error = None
+        if expect is not None:
+            expect_out = self._expect(expect, timeout, raw)
+            spec_error = expect_out.get("reason") if expect_out.get("spec_error") else None
+
         return self._record(_receipt("open", raw, url=self.url,
+                                     expect=expect_out, error=spec_error,
                                      extra={"place": place}))
 
     def see(self, kind=None) -> dict:
