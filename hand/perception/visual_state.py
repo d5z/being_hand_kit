@@ -29,6 +29,13 @@ import json
 
 VISUAL_STATES = ("loading", "error", "blank", "interactive", "unknown")
 
+# A page whose visible text is longer than this and merely mentions an error
+# word in a heading is a *content* page (README/docs discussing errors), not an
+# error page. Real error pages (404/500/network) carry almost no body text.
+# Found on the hand repo itself: the README section "Errors are documentation"
+# made the GitHub repo page classify as error. GitHub page text_len=19143.
+ERROR_PAGE_MAX_TEXT = 500
+
 # A page whose visible text is shorter than this and has no img/canvas/video is
 # "blank". 20 chars is deliberately small: a real page almost always has more.
 BLANK_TEXT_THRESHOLD = 20
@@ -48,13 +55,18 @@ function vis(el){
   if(!el||!el.getBoundingClientRect)return false;
   var r=el.getBoundingClientRect();
   if(r.width<=0||r.height<=0)return false;
+  // in-viewport: a loading indicator the user cannot see (e.g. GitHub's
+  // language-stats bar, role="progressbar" at y=752 of a 600px viewport) is
+  // not a page-state signal. Static data viz below the fold must not say
+  // "loading".
+  if(r.bottom<=0||r.right<=0||r.top>=window.innerHeight||r.left>=window.innerWidth)return false;
   var s=window.getComputedStyle?window.getComputedStyle(el):null;
   if(s&&(s.visibility==='hidden'||s.display==='none'||s.opacity==='0'))return false;
   return true;
 }
 var body=document.body;
 var out={body:!!body,ready_state:document.readyState,aria_busy:false,
-         spinner:false,error_heading:null,error_img:false,text_len:0,has_media:false};
+         spinner:false,error_title:null,error_heading:null,error_img:false,text_len:0,has_media:false};
 if(!body)return JSON.stringify(out);
 var t=(body.innerText||body.textContent||'').replace(/\s+/g,' ').trim();
 out.text_len=t.length;
@@ -65,10 +77,12 @@ for(var j=0;j<busy.length;j++){if(vis(busy[j])){out.aria_busy=true;break;}}
 var spin=document.querySelectorAll('[class*="spinner" i],[class*="loading" i],[class*="skeleton" i],[role="progressbar"]');
 for(var k=0;k<spin.length;k++){if(vis(spin[k])){out.spinner=true;break;}}
 var words=['error','404','500','not found','page not found','something went wrong','access denied','forbidden','bad gateway','service unavailable','错误','失败','出错','页面不存在','找不到','无法访问','服务异常'];
+var title=(' '+document.title+' ').toLowerCase();
+for(var n=0;n<words.length;n++){if(title.indexOf(words[n])!==-1){out.error_title=words[n];break;}}
 var head='';
 var hs=document.querySelectorAll('h1,h2');
 for(var m=0;m<hs.length;m++){head+=' '+((hs[m].innerText||hs[m].textContent||''));}
-head=(' '+document.title+' '+head).toLowerCase();
+head=head.toLowerCase();
 for(var n=0;n<words.length;n++){if(head.indexOf(words[n])!==-1){out.error_heading=words[n];break;}}
 var imgs=document.querySelectorAll('img[alt]');
 for(var p=0;p<imgs.length;p++){var alt=(imgs[p].getAttribute('alt')||'').toLowerCase();
@@ -89,10 +103,27 @@ def classify(signals):
     if not isinstance(signals, dict) or signals.get("body") is not True:
         return "unknown", ["no-body"]
 
+    try:
+        text_len = int(signals.get("text_len") or 0)
+    except (TypeError, ValueError):
+        text_len = 0
+
     # priority: error > loading > blank > interactive
-    if signals.get("error_heading"):
-        return "error", ["error-heading:%s" % signals["error_heading"]]
-    if signals.get("error_img"):
+    # Two signal strengths, because real pages taught us so:
+    #   * title hit  — the page names itself an error ("Page not found ·
+    #     GitHub", text_len=933 with a fat site-wide footer) — strong: error
+    #     regardless of body length.
+    #   * h1/h2 hit  — content structure. The hand repo README renders
+    #     "Errors are documentation" as an h2 (text_len=19143) — weak: only an
+    #     error page when the body is nearly empty, else content-about-errors.
+    title_hit = signals.get("error_title")
+    if title_hit:
+        return "error", ["error-title:%s" % title_hit]
+
+    hit = signals.get("error_heading")
+    if hit and text_len < ERROR_PAGE_MAX_TEXT:
+        return "error", ["error-heading:%s" % hit]
+    if signals.get("error_img") and text_len < ERROR_PAGE_MAX_TEXT:
         return "error", ["error-img"]
 
     ready = signals.get("ready_state")
@@ -103,14 +134,14 @@ def classify(signals):
     if signals.get("spinner"):
         return "loading", ["spinner-class"]
 
-    try:
-        text_len = int(signals.get("text_len") or 0)
-    except (TypeError, ValueError):
-        text_len = 0
     if text_len < BLANK_TEXT_THRESHOLD and not signals.get("has_media"):
         return "blank", ["empty-text", "no-media"]
 
     found = ["content"]
+    if hit:
+        found.append("error-word-in-content:%s" % hit)
+    elif signals.get("error_img"):
+        found.append("error-img-in-content")
     if signals.get("has_media"):
         found.append("has-media")
     return "interactive", found

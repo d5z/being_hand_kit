@@ -82,12 +82,69 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(VISUAL_STATES,
                          ("loading", "error", "blank", "interactive", "unknown"))
 
+    def test_error_word_in_a_long_page_is_content_not_state(self):
+        # Regression: the hand GitHub repo page. Its README renders a section
+        # heading "Errors are documentation" — the old rule read that h2 and
+        # classified the whole repo page (text_len=19143) as error.
+        state, signals = classify(
+            {"body": True, "error_heading": "error", "text_len": 19143})
+        self.assertEqual(state, "interactive")
+        self.assertIn("error-word-in-content:error", signals)
+
+    def test_error_page_still_wins_when_text_is_short(self):
+        # A real 404 page: error word in the heading, almost no body text.
+        state, signals = classify(
+            {"body": True, "error_heading": "page not found", "text_len": 120})
+        self.assertEqual(state, "error")
+        self.assertIn("error-heading:page not found", signals)
+
+    def test_error_text_length_boundary(self):
+        # just under the cap -> error; at/over the cap -> content
+        self.assertEqual(
+            classify({"body": True, "error_heading": "404",
+                      "text_len": 499})[0], "error")
+        for over in (500, 501, 10000):
+            state, signals = classify(
+                {"body": True, "error_heading": "404", "text_len": over})
+            self.assertEqual(state, "interactive")
+            self.assertIn("error-word-in-content:404", signals)
+
+    def test_error_img_in_a_long_page_is_content_not_state(self):
+        # A docs page embedding an error screenshot (alt="error message")
+        # is content about errors, not an error page.
+        state, signals = classify(
+            {"body": True, "error_img": True, "text_len": 8000})
+        self.assertEqual(state, "interactive")
+        self.assertIn("error-img-in-content", signals)
+        # but a bare error image on an otherwise empty page still says error
+        self.assertEqual(
+            classify({"body": True, "error_img": True, "text_len": 30})[0],
+            "error")
+
+    def test_title_hit_is_error_even_with_a_fat_footer(self):
+        # Regression: the GitHub 404 page. Its title is "Page not found ·
+        # GitHub" but the site-wide footer pushes text_len to 933 — the
+        # body-length gate alone would have called it interactive.
+        state, signals = classify(
+            {"body": True, "error_title": "page not found",
+             "error_heading": None, "text_len": 933})
+        self.assertEqual(state, "error")
+        self.assertIn("error-title:page not found", signals)
+
+    def test_title_hit_beats_long_body(self):
+        state, _ = classify(
+            {"body": True, "error_title": "404", "text_len": 5000})
+        self.assertEqual(state, "error")
+
 
 # ── fixture pages (test-only mirror of the browser probe) ────────────
 # VISUAL_STATE_JS is the production signal extractor. These fixtures exercise
 # `classify()` against realistic HTML without a browser: _signals() mirrors the
 # JS rules with the same field names (visibility is modeled as "everything the
-# fixture draws is visible"). Real-browser equivalence is checked by the e2e
+# fixture draws is visible" — the JS in-viewport check has no mirror here:
+# fixtures are first-fold-sized pages, so everything they draw is on screen;
+# the viewport rule itself is exercised live, e.g. the GitHub language-bar
+# regression). Real-browser equivalence is checked by the e2e
 # test below when Chrome is available.
 
 def _signals(html):
@@ -153,17 +210,24 @@ def _signals(html):
     p.feed(html)
     if not p.body:
         return {"body": False, "ready_state": "complete", "aria_busy": False,
-                "spinner": False, "error_heading": None, "error_img": False,
-                "text_len": 0, "has_media": False}
+                "spinner": False, "error_title": None, "error_heading": None,
+                "error_img": False, "text_len": 0, "has_media": False}
     text = " ".join(" ".join(p.text).split())
-    head = (" " + " ".join(p.title) + " " + " ".join(p.head)).lower()
+    title = (" ".join(p.title)).lower()
+    head = (" ".join(p.head)).lower()
+    err_title = None
+    for w in ERROR_WORDS:
+        if w in title:
+            err_title = w
+            break
     err = None
     for w in ERROR_WORDS:
         if w in head:
             err = w
             break
     return {"body": True, "ready_state": "complete", "aria_busy": p.busy,
-            "spinner": p.spinner, "error_heading": err,
+            "spinner": p.spinner, "error_title": err_title,
+            "error_heading": err,
             "error_img": any(("error" in a or "错误" in a) for a in p.alts),
             "text_len": len(text), "has_media": p.media}
 
@@ -182,7 +246,7 @@ class TestFixturePages(unittest.TestCase):
     def test_error_fixture(self):
         state, signals = self._state("error")
         self.assertEqual(state, "error")
-        self.assertTrue(any(s.startswith(("error-heading", "error-img")) for s in signals))
+        self.assertTrue(any(s.startswith(("error-title", "error-heading", "error-img")) for s in signals))
 
     def test_blank_fixture(self):
         state, signals = self._state("blank")
