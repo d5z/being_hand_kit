@@ -227,7 +227,7 @@ r["expect"]["reason"]                 # why `met` is false
 - Four forms: `url:<substring>` (case-sensitive — paths are), `title:<substring>`
   and `text:<substring>` (human text, case-insensitive), and `visual_state:<state>`
   (0.9 — an exact enum match: `loading` / `error` / `blank` / `interactive` /
-  `unknown`).
+  `unknown`). The full frozen contract is **docs/expect-spec-v1.md**.
 - Bounded wait: 5s default, `hand.do(..., timeout=1.5)` to tighten it. On timeout
   `met` is `false` with the current url/title as evidence — **it never raises, and
   it never waits silently**: no `expect` means an immediate return.

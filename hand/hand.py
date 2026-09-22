@@ -67,11 +67,14 @@ from hand.session import get_session, reset_session, Place
 
 __all__ = ["Browser", "browser", "reset", "open", "see", "do", "shot", "close",
            "handles", "resolve", "history", "help", "ACTION_GRAMMAR",
-           "FIELD_ORDER", "DEFAULT_EXPECT_TIMEOUT"]
+           "FIELD_ORDER", "DEFAULT_EXPECT_TIMEOUT", "EXPECT_SPEC_VERSION"]
 
 DEFAULT_EXPECT_TIMEOUT = 5.0
 EXPECT_POLL_INTERVAL = 0.25
 HISTORY_LIMIT = 50
+
+# docs/expect-spec-v1.md is the frozen contract for `expect=`; this is its version.
+EXPECT_SPEC_VERSION = "1.0"
 
 # Fixed field order of every receipt (the protocol contract; append-only).
 FIELD_ORDER = (
