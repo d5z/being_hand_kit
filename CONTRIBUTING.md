@@ -97,3 +97,23 @@ $raw = [System.IO.File]::ReadAllText($p)
 引擎按防劫持设计不回落宿主 PATH：Windows 上 manifest command 写裸 `bash` 会落到 `kits\hand\bash` → not found。workaround：command 写绝对路径，如 `C:/Program Files/Git/usr/bin/bash.exe`。
 
 > 三坑根修都在 portal repo（冲突剔除报详情 / 读 manifest 剥 BOM / per-platform command），随 F17/F18 已转 sw。修复落地前，以上 workaround 是现行做法。
+
+## 委托 brief 自包含契约（0.9.3）
+
+把任务委托给 subagent（heart 原生 `portal_subagent_spawn`）时，brief 是它看到的**全部**世界——它看不到你的上下文、你的记忆、你刚跑过的命令。三条必含，缺一即踩坑：
+
+1. **仓库路径**——绝对路径，不是「hand 仓库」这种指称。subagent 没有你的文件记忆，`cd hand` 对它是一句空话。（0.7 实测：subagent 猜了 `/root/hand`，`cd` 失败后静默换目录继续，产出物落错地方才发现。）
+2. **验证命令**——怎么算「done」的命令行形态。不写，它会自己猜一个看起来合理的（0.7 实测：猜了不存在的 `python -m pytest`，卡半小时）。
+3. **回执判读法**——产出物在哪、成功长什么样、失败长什么样。subagent 的 result 只回一段文本，你得告诉它把什么放进那段文本里你才接得住。
+
+模板：
+
+```
+任务：<一句话>
+仓库：/home/alice/Hand（绝对路径）
+验证：cd /home/alice/Hand && python3 -m unittest tests.test_xxx -v
+完成回执：贴出验证命令的 tail -5 + 改动文件列表（git status --short）
+不要做：<边界——不 push、不改版本号、不动 manifest 等>
+```
+
+「不要做」一行是第四件可选件，但强烈建议：subagent 对边界的默认假设和你不一样，写出来比它猜出来便宜。
