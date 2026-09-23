@@ -147,6 +147,77 @@ class TestRouteOpenEvidence(unittest.TestCase):
         self.assertEqual(r["evidence"]["level"], "activate_issued")
 
 
+class TestAboutBlankRouting(unittest.TestCase):
+    """0.9.2/0.9.3: about:blank must route to the browser, not app activation.
+
+    Dogfood regression (taojun's Windows sample, 2026-09-23): v0.9.1's
+    startswith("http") check sent `about:blank` to `cmd start`, where
+    applicationframehost swallowed it — while cdp_launcher itself spawns
+    Chrome on about:blank. The launcher and the router disagreed.
+    """
+
+    def _open(self, target, pages_before, pages_after, nav_result=None,
+              chrome_alive=True, live_href="about:blank"):
+        calls = {"list_pages": 0}
+
+        def fake_list_pages():
+            calls["list_pages"] += 1
+            src = pages_before if calls["list_pages"] == 1 else pages_after
+            if isinstance(src, Exception):
+                raise src
+            return src
+
+        def fake_cdp_call(ws, method, params=None, msg_id=1, timeout=30):
+            if method == "Page.navigate":
+                if isinstance(nav_result, Exception):
+                    raise nav_result
+                return nav_result or {}
+            if "location.href" in (params or {}).get("expression", ""):
+                if isinstance(live_href, Exception):
+                    raise live_href
+                return {"result": {"value": live_href}}
+            return {}
+
+        with mock.patch("hand.perception.cdp_launcher.chrome_running", return_value=chrome_alive), \
+             mock.patch("hand.perception.cdp_core.list_pages", side_effect=fake_list_pages), \
+             mock.patch("hand.perception.cdp_core.resolve_page", return_value=(0, _fake_page())), \
+             mock.patch("hand.perception.cdp_core.cdp_connect", return_value=_FakeWS()), \
+             mock.patch("hand.perception.cdp_core._init_domains"), \
+             mock.patch("hand.perception.cdp_core.cdp_call", side_effect=fake_cdp_call), \
+             mock.patch("hand.place.detect.time.sleep"):
+            reset_session()
+            return router.route_open(target)
+
+    def test_scheme_whitelist(self):
+        for url in ("about:blank", "file:///tmp/x.html", "data:text/html,hi",
+                    "chrome://settings", "view-source:https://example.com",
+                    "http://a.com", "https://a.com"):
+            self.assertTrue(place_detect._is_navigable_url(url), url)
+        for name in ("Calculator", "Notes", "C:\\Program Files\\app.exe",
+                     "my app name", ""):
+            self.assertFalse(place_detect._is_navigable_url(name), name)
+
+    def test_about_blank_routes_to_browser_not_app_activation(self):
+        r = self._open("about:blank", [_fake_page("about:blank")], [_fake_page("about:blank")])
+        self.assertEqual(r["open"], "ok")
+        self.assertEqual(r["place"]["type"], "browser")
+        self.assertNotEqual(r["evidence"]["level"], "activate_issued")
+
+    def test_about_blank_confirmed_by_exact_href(self):
+        r = self._open("about:blank", [_fake_page("about:blank")], [_fake_page("about:blank")],
+                       live_href="about:blank")
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["evidence"]["level"], "navigate_confirmed")
+        self.assertIn("精确命中", r["evidence"]["detail"])
+
+    def test_about_blank_landing_elsewhere_is_not_confirmed(self):
+        r = self._open("about:blank", [_fake_page()], [_fake_page()],
+                       live_href="https://something-else.com/")
+        self.assertFalse(r["verified"])
+        self.assertEqual(r["evidence"]["level"], "endpoint_alive")
+        self.assertIn("未精确命中", r["evidence"]["detail"])
+
+
 class _FakeClock:
     """Deterministic clock: every time() call advances by `step`."""
 

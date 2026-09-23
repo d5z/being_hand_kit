@@ -12,6 +12,22 @@ from hand.session import Place, get_session
 _EVIDENCE_KEY = "open_evidence"
 
 
+# URL schemes Chrome can navigate to. Anything else (a bare app name like
+# "Calculator") falls through to app activation. `about:blank` is a real
+# Chrome URL — cdp_launcher.ensure_chrome() itself spawns Chrome on it —
+# but v0.9.1's startswith("http") check routed it to `cmd start` on
+# Windows, where applicationframehost swallowed it (F22-adjacent, found
+# by dogfood via taojun's sample 2026-09-23).
+_NAVIGABLE_SCHEMES = {"http", "https", "about", "file", "data", "chrome", "view-source"}
+
+
+def _is_navigable_url(target: str) -> bool:
+    try:
+        return urlsplit(target).scheme.lower() in _NAVIGABLE_SCHEMES
+    except Exception:
+        return False
+
+
 def _url_host(url: str) -> str:
     """Host of a URL, lowercased, or "" when unparseable."""
     try:
@@ -37,8 +53,6 @@ def _navigate_confirmed(target: str, ws=None, nav_error=None):
     if nav_error:
         return False, f"Page.navigate errorText: {nav_error}"
     host = _url_host(target)
-    if not host:
-        return False, f"目标 URL 无法解析出 host: {target!r}"
     href = None
     if ws is not None:
         try:
@@ -58,9 +72,16 @@ def _navigate_confirmed(target: str, ws=None, nav_error=None):
         if not read_error:
             read_error = "Runtime.evaluate 未返回 location.href"
         return False, (f"无法读取活文档 location.href（导航未证实）: {read_error}")
-    if host in href.lower():
-        return True, f"活文档 href={href} 命中目标 host {host}"
-    return False, f"活文档 href={href} 未命中目标 host {host}（可能是错误页/重定向到别处）"
+    if host:
+        if host in href.lower():
+            return True, f"活文档 href={href} 命中目标 host {host}"
+        return False, f"活文档 href={href} 未命中目标 host {host}（可能是错误页/重定向到别处）"
+    # Hostless targets (about:blank, data:, ...) have no host to match —
+    # use exact href equality. These URLs do not "redirect away", so a
+    # mismatch means the navigation genuinely did not land.
+    if href == target:
+        return True, f"活文档 href={href} 精确命中目标 {target!r}"
+    return False, f"活文档 href={href} 未精确命中目标 {target!r}"
 
 
 def _with_evidence(place: Place, evidence: dict) -> Place:
@@ -170,7 +191,7 @@ def open_place(target: str) -> Place:
     / "endpoint_alive" / "activate_issued"); `route_open` surfaces it in the receipt.
     """
     # ── URL → browser ───────────────────────────────────────────────
-    if target.startswith("http://") or target.startswith("https://"):
+    if _is_navigable_url(target):
         # Guarantee a CDP endpoint. On headless Linux this spawns Chrome.
         from hand.perception.cdp_launcher import ensure_chrome, chrome_running
         if not chrome_running():
