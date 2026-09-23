@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.3] — 2026-09-23
+
+> 诚实回执从感知层扩到委托层：open 路由不再说谎（about:blank 归浏览器），委托 brief 有了自包含契约。
+
+### Fixed
+- **`about:blank` 误路由到 app 激活**（taojun #34 样本）：裸 app 名走 app 激活没问题，但 `about:blank`、`data:` 这类 hostless URL 被当成 app 名去激活——scheme 白名单（http/https/about/file/data/chrome）+ hostless URL 精确匹配，URL 一律归浏览器。回归测试 4 个（about:blank/data: 归浏览器、裸名不误伤、chrome:// 归浏览器）。
+- **0.9 review 三笔确认落地**（Judy 反哺验收项，查代码全部已实装+测试覆盖）：warning 进返回值（vision_ocr stale bin 三场景）、stale 检测（mtime + 运行时双护栏）、fallback 不静默（skipped 声明）。
+
+### Added
+- **委托 brief 自包含契约**（CONTRIBUTING 新节）：把任务委托给 subagent 时 brief 三必含——仓库绝对路径、验证命令、回执判读法——外加可选「不要做」边界行。全部来自 0.7/0.8 实测（subagent 猜 /root/hand、猜不存在的 pytest、回执文本接不住）。
+
+### Verified
+- 380 单测全绿（0.9.1 的 371 → +4 about:blank 路由回归 + 净增 brief 契约为纯文档）
+
 ## [0.9.1] — 2026-09-22
 
 > 发布包 bin 修复 + 结构性护栏：0.9.0 的 grove 包带着一枚从过期 checkout 编译的 vision_ocr_bin（Judy PR #3 发现），运行时冒烟护栏让它永不再漏。
