@@ -161,7 +161,10 @@ def cdp_see(kind: str = None) -> dict:
     cdp_click/cdp_type. kind=dom (visible text), kind=interactive (legacy
     element map with coordinates), kind=network, kind=vlm are explicit
     channels. The receipt carries verified/evidence and a `hint` when a
-    collapsed menu hides part of the tree (click it, then see again)."""
+    collapsed menu hides part of the tree (click it, then see again). The
+    a11y receipt also carries `nav_id` (navigation anchor) — click/type
+    compare it against the page's current anchor and warn `STALE_WARNING`
+    in evidence when the page navigated since the snapshot."""
     from hand.router import route_see
     _bump()
     return route_see(kind=kind)
@@ -171,16 +174,26 @@ def cdp_click(selector: str) -> dict:
     [idx] handle from cdp_see(kind=a11y) ('[93]'), 'text=...' or 'xy:X,Y'
     (physical pixels). Handle clicks re-read the element box at click time, so
     a handle whose node is gone comes back unverified with a reason instead of
-    clicking a phantom."""
+    clicking a phantom. A non-interactive node that wraps exactly one
+    interactive descendant (e.g. a heading around a link) redirects the click
+    onto it — the receipt says `redirected: true` with the target. Every
+    coordinate dispatch verifies the elementFromPoint hit chain contains the
+    target and grid-scans the box when the centre misses (multi-line inline
+    elements); a fully covered element fails loudly. `evidence.click_point`
+    names how the point was chosen ('center', 'grid_scan',
+    'redirect_target_clickable_point')."""
     from hand.router import route_do
     _bump()
     return route_do(selector)
 @mcp.tool()
 def cdp_type(text: str) -> dict:
-    """Type text into the currently focused element (Input.insertText).
-    Click the field first — including by [idx] handle: cdp_click('[93]'). The
-    receipt verifies document.activeElement before typing; no focus → unverified
-    with a reason. Retrying appends (idempotency: append)."""
+    """Type text into the currently focused element. Click the field first —
+    including by [idx] handle: cdp_click('[93]'). The receipt verifies
+    document.activeElement before typing; no focus → unverified with a
+    reason. Retrying appends (idempotency: append). Text ending in a
+    newline submits like a real Enter key (keyboard event), not
+    insertText — the receipt's `enter_mode` says which path ran; sites that
+    listen for keydown submit only on the keyboard path."""
     from hand.action.cdp_act import cdp_type_focused
     _bump()
     return cdp_type_focused(text)

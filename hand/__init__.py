@@ -29,7 +29,7 @@ same primitives translated to desktop via accessibility tree + keystroke + Visio
 0.8.3: vision-ocr bounds output + receipt contract fixes (PR #1, Judy).
 """
 
-__version__ = "0.9.3"
+__version__ = "0.9.4"
 __author__ = "Alice, from the river"
 
 # Top-level Python face (lazy singleton behind these names).

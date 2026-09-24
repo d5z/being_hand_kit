@@ -1,16 +1,27 @@
 # Changelog
 
-## [0.9.4] — unreleased
+## [0.9.4] — 2026-09-24
 
-> handle 表从「要么点对、要么显式失败」升级到「失败前先给你信号」+ 标题包链接不再靠巧合命中。
+> 摩擦点清账轮：dogfooding 实证出的六个静默错/手感摩擦一次清掉。核心主题——回执说 ok 不等于世界真的变了。
+
+### Fixed
+- **`text=` 嵌套文本匹配失效**（P2，spec docs/spec-0.9.4-p2-textmatch.md）：旧 XPath 用 `contains(text(), q)` 只看直接文本子节点，GitHub issue 标题这种 `<a><span>文本</span></a>` 嵌套结构全部 miss。改为 `contains(normalize-space(.), q)` 看整个子树；精确匹配分支排除「有同等匹配子元素的祖先容器」（文档序父先于子，否则点到容器）。候选 >1 列出 candidates 不猜。
+- **Enter 不提交**（P3，spec docs/spec-0.9.4-p3-enter-submit.md）：`Input.insertText` 不触发 keydown——GitHub 搜索框输入后 URL 不动。文本以 `\n` 结尾时改派发完整键盘事件（keydown/keypress/input/keyup），回执 `evidence.enter_mode` 说明走了哪条路。实证：同一搜索框 insertText 后 URL 不变 vs dispatchKeyEvent 后 URL 变 `?q=NVDA`。
 
 ### Added
 - **handle 表过期信号 `nav_id`**（P1，spec docs/spec-0.9.4-p1-handle-staleness.md）：`see(kind="a11y")` 回执顶层带 `nav_id`（`Page.getNavigationHistory` 的 currentEntry index，浏览器侧状态、跨 MCP 进程稳定），handle map 文件同时记录 see 时刻的锚。`click [idx]` / `type [idx] …` 回执 `evidence.nav_id_at_action` 带动作时锚；两锚不同即 `evidence.warnings = ["navigation occurred since last cdp_see — handle table may be stale"]`（warning 进 evidence——设计定夺记录 #1；`tree_epoch` 按 #2 砍掉，`expect=` 语法按 #3 不加）。可靠合同明确为「要么点对，要么显式失败」，同页局部重渲染不做预检（M3）。
 - **heading 包 link 的点击重定向**（P4，spec docs/spec-0.9.4-p4-heading-redirect.md）：AX 序列化给「子树含 interactive 后代」的节点加 `contains_interactive: true`（仅 true 时带）；`cdp_click_handle` 点到非 interactive 容器且其 AX meta 标记含 interactive 后代时——唯一后代 → 重定向点击它（`evidence.redirected` / `original` / `redirect_target`）；多个后代 → 不猜，失败回执列 `candidates`（tag+text+href，前 3）；零后代 → 走原有路径。a11y 树行格式与 `type` 路径不变。
+- **clickable point 命中链预检**（P5，spec docs/spec-0.9.4-p5-clickable-point.md）：`getBoundingClientRect` 是包围盒——多行内联元素（GitHub issue 标题）的中心落在行间隙，坐标点击命中祖先容器，导航根本不发生（回执 ok、啥都没干）。现在每次坐标派发前用 `elementFromPoint` 验证命中链包含目标（元素自身或后代）；中心未命中 → 5×15 网格扫描盒内找真命中点（`evidence.click_point.how = "grid_scan"`）；完全被覆盖 → 响亮报错。P4 现场回归时发现：重定向回执 ok 但 URL 没变，顺藤摸出这层更深的静默错。
 
 ### Verified
-- 411 单测全绿（0.9.3 的 396 → +15：P1 handle 过期信号 8、P4 重定向 7），fixture 先自证危险条件（导航确已发生 / 标题中心确实不落在 link 上）再证修复。
-- P2（text= 嵌套匹配）、P3（Enter submit fork）已在同一周期前序提交落地。
+- 415 单测全绿（0.9.3 的 396 → +19：P1 handle 过期信号 8、P4 重定向 7、P5 clickable point 4），fixture 先自证危险条件（导航确已发生 / 标题中心确实不落在 link 上 / bounding-box 中心确实落在行间隙）再证修复——对照实验钉根因，行为证明修复，回执不自我背书。
+- GitHub 实况回归三场景：issues 搜索 Enter 提交（P3，URL 变 `?q=...NVDA`）、滚动 2000px 后点列表尾部 heading（P0+P4+P5：重定向 + grid_scan + 导航到 #337206）、text= 点开 issue（P2）。
+
+### Credits
+- **Judy** — PR #1（vision-ocr find_text 像素坐标）+ 8b00dbe 三处修复（显式 image_path 报错、evidence 语义、回执契约测试表）；此前 PR #3（vision_ocr_bin 重编）。0.9.4 的 J1 提前闭合是她的功劳。
+- **taojun** — CONTRIBUTING 方法论段「存在过≠发生过」（9942816）+ #34 about:blank 样本；「对照实验钉根因再写 spec」流程直接受益于这套纪律。
+- **GuangCZ** — PR #2 [design] f14-expect-semantics（open，设计稿）。
+- **泽平** — dogfooding 方向（困难场景实测手感）+ 0.9.4 范围拍板「能优化有把握的都进」。
 
 ## [0.9.3] — 2026-09-23
 
