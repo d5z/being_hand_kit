@@ -51,6 +51,10 @@ class _Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         pages = {"/basic": BASIC_HTML, "/form": FORM_HTML, "/big": BIG_HTML,
                  "/": BASIC_HTML}
+        # Per-server extras (FixtureServer(extra_pages=...)): newer suites add
+        # their own pages without editing this table — the handler reaches the
+        # serving instance through self.server.
+        pages.update(getattr(self.server, "extra_pages", None) or {})
         body = pages.get(path)
         if body is None:
             self.send_response(404)
@@ -70,10 +74,14 @@ class FixtureServer:
     """In-process HTTP server + a raw socket that accepts and never answers.
 
     Usage:  with FixtureServer() as fx: fx.url("/basic")
+
+    ``extra_pages`` maps an extra path → HTML body for suites with their own
+    fixtures (e.g. the 0.9.3-P0 viewport pages); the default routes are kept.
     """
 
-    def __init__(self):
+    def __init__(self, extra_pages=None):
         self._http = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._http.extra_pages = dict(extra_pages or {})
         self._http.daemon_threads = True
         self._t = threading.Thread(target=self._http.serve_forever, daemon=True)
         self._t.start()

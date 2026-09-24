@@ -89,8 +89,11 @@ def _element_info(ws, selector):
     value = result.get('result',{}).get('value','{}')
     return jm.loads(value)
 def _scroll_into_view(ws, selector):
+    # 0.9.3-P0: behavior:'instant' — a page with `html{scroll-behavior:smooth}`
+    # (GitHub) would animate this scroll asynchronously, so the physical click
+    # that follows the (kept) sleep(0.2) could still land outside the viewport.
     import json as jm
-    cdp_call(ws,'Runtime.evaluate',{'expression':'document.querySelector('+jm.dumps(selector)+').scrollIntoView({block:"center"})'})
+    cdp_call(ws,'Runtime.evaluate',{'expression':'document.querySelector('+jm.dumps(selector)+').scrollIntoView({block:"center",behavior:"instant"})'})
 
 def _decode_image_size(data_b64, fmt):
     """Decode PNG/JPEG base64 head to extract width and height."""

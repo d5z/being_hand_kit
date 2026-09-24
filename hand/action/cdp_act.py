@@ -140,6 +140,42 @@ def _dpr_now(ws):
         return _get_dpr(ws)
 
 
+def _viewport_size(ws, msg_id=33):
+    """Viewport size in CSS px (`window.innerWidth/innerHeight`) → (size, known).
+
+    0.9.3-P0: a rect taken after `scrollIntoView` is only a *landing point* if the
+    scroll already happened. Pages with `html {scroll-behavior: smooth}` (GitHub)
+    animate it asynchronously, so the sync rect read can still be the
+    pre-animation position and the dispatch lands outside the viewport — where
+    the mouse event has no target and the click is silently lost.
+
+    `known=False` when the browser cannot answer (no usable w/h): the caller must
+    then not claim a geometric check it never made (nothing is fabricated).
+    """
+    try:
+        raw = cdp_call(ws, "Runtime.evaluate",
+                       {"expression": "JSON.stringify({w: window.innerWidth, "
+                                      "h: window.innerHeight})",
+                        "returnByValue": True}, msg_id=msg_id, timeout=5)
+    except Exception:
+        return {"w": 0, "h": 0}, False
+    value = ((raw or {}).get("result") or {}).get("value")
+    if not isinstance(value, str):
+        return {"w": 0, "h": 0}, False
+    try:
+        data = json.loads(value)
+    except Exception:
+        return {"w": 0, "h": 0}, False
+    if not isinstance(data, dict):
+        return {"w": 0, "h": 0}, False
+    w, h = data.get("w"), data.get("h")
+    if (isinstance(w, (int, float)) and isinstance(h, (int, float))
+            and not isinstance(w, bool) and not isinstance(h, bool)
+            and w > 0 and h > 0):
+        return {"w": int(w), "h": int(h)}, True
+    return {"w": 0, "h": 0}, False
+
+
 def _handle_object_id(ws, backend_node_id):
     """backendNodeId → live objectId (None if the node is gone / unresolvable).
 
@@ -161,7 +197,7 @@ def _handle_rect(ws, object_id, scroll=True):
     getBoundingClientRect is viewport-relative by definition — exactly the space
     Input.dispatchMouseEvent wants (hand's physical px = CSS × dpr).
     """
-    scroll_js = "this.scrollIntoView({block:'center',inline:'center'});"
+    scroll_js = "this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});"
     fn = ("function(){" + (scroll_js if scroll else "") +
           "var r=this.getBoundingClientRect();"
           "return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,"
@@ -201,6 +237,20 @@ def cdp_click_handle(handle, page_sel=None):
                 f'handle [{entry["idx"]}] element has no box (display:none, '
                 f'zero-size or detached) — call cdp_see again',
                 entry=entry, handle=str(handle))
+        viewport, vp_known = _viewport_size(ws)
+        vw, vh = viewport["w"], viewport["h"]
+        in_viewport = None
+        if vp_known:
+            # rect x,y is the box center in viewport CSS px; compare it against
+            # the real viewport before dispatching. A point outside has no target
+            # element, so the mouse event would be dropped without a trace.
+            in_viewport = (0 <= rect["x"] < vw) and (0 <= rect["y"] < vh)
+            if not in_viewport:
+                return _handle_fail(
+                    f'handle [{entry["idx"]}] click point '
+                    f'({rect["x"]:.0f},{rect["y"]:.0f}) is outside viewport '
+                    f'({vw}x{vh}) — scroll did not take effect',
+                    entry=entry, handle=str(handle))
         dpr = _dpr_now(ws)
         dispatched = [round(rect["x"] * dpr), round(rect["y"] * dpr)]
         _click_at(ws, dispatched[0], dispatched[1], dpr)
@@ -217,6 +267,8 @@ def cdp_click_handle(handle, page_sel=None):
                     "box": {"x": round(rect["x"], 1), "y": round(rect["y"], 1),
                             "w": round(rect["w"], 1), "h": round(rect["h"], 1)},
                     "space": "physical", "dpr": dpr, "dispatched": dispatched,
+                    "viewport": {"w": vw, "h": vh},
+                    "in_viewport": in_viewport,
                     "read_back": "getBoundingClientRect via DOM.resolveNode",
                     "source": "cdp_see(kind=a11y) handle map",
                     "verified": True,

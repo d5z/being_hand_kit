@@ -789,23 +789,38 @@ class TestA11ySnapshotReceipt(unittest.TestCase):
 
 
 class TestHandleActionReceipts(unittest.TestCase):
-    """S3: [idx] action receipts declare verified/evidence like selector ones."""
+    """S3: [idx] action receipts declare verified/evidence like selector ones.
 
-    def _click(self, action):
+    S3.1 (0.9.3-P0): the handle *click* path additionally declares the geometry
+    it checked — `viewport {w,h}` (CSS px) and `in_viewport`. A click point
+    outside the viewport has no target element, so it must fail loudly instead
+    of dispatching into the void (see tests/test_viewport_alignment.py for the
+    real-browser regression).
+    """
+
+    VIEWPORT = {"w": 1280, "h": 720}
+
+    def _click(self, action, box=None, viewport=None):
         from hand.action.cdp_act import cdp_click_do
         entry = {"role": "link", "name": "Sign in", "backend_node_id": 105,
                  "interactive": True, "x": 10, "y": 20, "idx": 2}
+        box = box if box is not None else {"x": 60, "y": 40, "w": 100, "h": 40}
+        viewport = self.VIEWPORT if viewport is None else viewport
+        calls = []
 
         def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            calls.append((method, params))
             if method == "DOM.getDocument":
                 return {"root": {"nodeId": 1}}
             if method == "DOM.resolveNode":
                 return {"object": {"objectId": "obj-1"}}
             if method == "Runtime.callFunctionOn":
-                return {"result": {"value": json.dumps(
-                    {"x": 60, "y": 40, "w": 100, "h": 40})}}
+                return {"result": {"value": json.dumps(box)}}
             if method == "Runtime.evaluate":
-                return {"result": {"value": 1}}
+                expr = (params or {}).get("expression", "")
+                if "innerWidth" in expr:      # 0.9.3-P0 viewport probe
+                    return {"result": {"value": json.dumps(viewport)}}
+                return {"result": {"value": 1}}   # window.devicePixelRatio
             return {}
 
         with mock.patch("hand.action.cdp_act.list_pages",
@@ -818,10 +833,10 @@ class TestHandleActionReceipts(unittest.TestCase):
              mock.patch("hand.action.cdp_act._write_last", return_value=None), \
              mock.patch("hand.perception.ax_tree.load_handle_map",
                         return_value={"2": entry}):
-            return cdp_click_do(action)
+            return cdp_click_do(action), calls
 
     def test_handle_click_is_verified_with_its_target(self):
-        r = self._click("[2]")
+        r, _ = self._click("[2]")
         self.assertTrue(r["verified"])
         self.assertEqual(r["handle"], "[2]")
         ev = r["evidence"]
@@ -831,6 +846,18 @@ class TestHandleActionReceipts(unittest.TestCase):
         self.assertEqual(ev["space"], "physical")
         self.assertEqual(ev["dispatched"], [60, 40])   # dpr 1
         self.assertIn("read_back", ev)
+        # S3.1 viewport contract (0.9.3-P0)
+        self.assertEqual(ev["viewport"], self.VIEWPORT)
+        self.assertIs(ev["in_viewport"], True)
+
+    def test_handle_click_outside_viewport_dispatches_nothing(self):
+        """The silent-loss case: a point outside the viewport must not dispatch."""
+        r, calls = self._click("[2]", box={"x": 60, "y": 900, "w": 100, "h": 40})
+        self.assertFalse(r["verified"])
+        self.assertIn("outside viewport", r["evidence"]["reason"])
+        self.assertIn("1280x720", r["evidence"]["reason"])
+        self.assertEqual([c for c in calls if c[0] == "Input.dispatchMouseEvent"],
+                         [], "a click outside the viewport has no target to hit")
 
     def test_unknown_handle_names_the_recovery(self):
         from hand.action.cdp_act import cdp_click_do
@@ -838,6 +865,41 @@ class TestHandleActionReceipts(unittest.TestCase):
             r = cdp_click_do("[99]")
         self.assertFalse(r["verified"])
         self.assertIn("cdp_see", r["evidence"]["reason"])
+
+    def test_handle_type_receipt_is_untouched_by_the_viewport_check(self):
+        """Boundary (spec 0.9.3-P0 §边界): focus does not need a physical point,
+        so the cdp_type handle path gets no viewport check and no new fields."""
+        from hand.action.cdp_act import cdp_type_do
+        entry = {"role": "textbox", "name": "Query", "backend_node_id": 115,
+                 "interactive": True, "x": 1, "y": 2, "idx": 5}
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "DOM.getDocument":
+                return {"root": {"nodeId": 1}}
+            if method == "DOM.resolveNode":
+                return {"object": {"objectId": "obj-2"}}
+            if method == "Runtime.callFunctionOn":
+                return {"result": {"value": json.dumps({"focused": True})}}
+            if method == "Runtime.evaluate":
+                return {"result": {"value": json.dumps(
+                    {"tag": "INPUT", "id": "q", "type": "text"})}}
+            return {}
+
+        with mock.patch("hand.action.cdp_act.list_pages",
+                        return_value=[{"id": "1", "type": "page",
+                                       "webSocketDebuggerUrl": "ws://x/1"}]), \
+             mock.patch("hand.action.cdp_act.cdp_connect",
+                        return_value=mock.Mock()), \
+             mock.patch("hand.action.cdp_act.cdp_call", side_effect=fake_call), \
+             mock.patch("hand.action.cdp_act._init_domains", return_value=None), \
+             mock.patch("hand.action.cdp_act._write_last", return_value=None), \
+             mock.patch("hand.perception.ax_tree.load_handle_map",
+                        return_value={"5": entry}):
+            r = cdp_type_do("[5]|hello")
+        self.assertTrue(r["verified"], r)
+        self.assertEqual(r["method"], "cdp_type")
+        self.assertNotIn("viewport", r["evidence"])
+        self.assertNotIn("in_viewport", r["evidence"])
 
 
 if __name__ == "__main__":
