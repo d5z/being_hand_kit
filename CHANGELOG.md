@@ -2,7 +2,7 @@
 
 ## [0.9.4] — 2026-09-24
 
-> 摩擦点清账轮：dogfooding 实证出的六个静默错/手感摩擦一次清掉。核心主题——回执说 ok 不等于世界真的变了。
+> 摩擦点清账轮：dogfooding 实证出的六项静默错/手感摩擦，P0（视口对齐）已随 0.9.3 发布，本版清掉其余五项。核心主题——回执说 ok 不等于世界真的变了。
 
 ### Fixed
 - **`text=` 嵌套文本匹配失效**（P2，spec docs/spec-0.9.4-p2-textmatch.md）：旧 XPath 用 `contains(text(), q)` 只看直接文本子节点，GitHub issue 标题这种 `<a><span>文本</span></a>` 嵌套结构全部 miss。改为 `contains(normalize-space(.), q)` 看整个子树；精确匹配分支排除「有同等匹配子元素的祖先容器」（文档序父先于子，否则点到容器）。候选 >1 列出 candidates 不猜。
