@@ -8,11 +8,12 @@
 
 | # | 项 | 根因状态 | spec | 风险 |
 |---|---|---|---|---|
-| P0 | 点击视口对齐 | ✅ 实证（smooth 异步滚动） | spec-0.9.3-p0-viewport.md | 低（三处小改） |
-| P1 | handle 表过期信号 | ✅ 实证（编号重排观察） | spec-0.9.4-p1-handle-staleness.md（定稿） | 中（回执契约） |
-| P2 | text= 嵌套文本失效 | ✅ 实证（text() vs . 对照） | spec-0.9.4-p2-textmatch.md | 低 |
-| P3 | Enter 不提交 | ✅ 实证（insertText vs dispatchKeyEvent 对照） | spec-0.9.4-p3-enter-submit.md | 低 |
-| P4 | heading 包 link 点击重定向 | ✅ 实证（DOM probe：h3>a 双节点） | spec-0.9.4-p4-heading-redirect.md | 低 |
+| P0 | 点击视口对齐 | ✅ 已修（0.9.3） | spec-0.9.3-p0-viewport.md | 低 |
+| P1 | handle 表过期信号 | ✅ 已修（bcc672d） | spec-0.9.4-p1-handle-staleness.md | 低 |
+| P2 | text= 嵌套文本匹配 | ✅ 已修（6b9debe）+ 祖先边界（bcc672d） | spec-0.9.4-p2-textmatch.md | 低 |
+| P3 | Enter 提交 | ✅ 已修（6b9debe） | spec-0.9.4-p3-enter-submit.md | 低 |
+| P4 | heading 包 link 重定向 | ✅ 已修（bcc672d） | spec-0.9.4-p4-heading-redirect.md | 低 |
+| P5 | clickable point 命中链 | ✅ 已修（bcc672d）——P4 现场回归发现 | spec-0.9.4-p5-clickable-point.md | 低 |
 | J1 | Judy PR #1 三处 | ✅ **已闭合**（8b00dbe 进 main：evidence 语义+测试表+显式路径报错） | — | — |
 | R1 | 0.9 review 三笔 | ✅ 全覆盖：warning→P1-M2、stale→P1、fallback 不静默→J1+P2 candidates | — | — |
 
