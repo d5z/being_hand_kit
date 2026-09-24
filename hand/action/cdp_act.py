@@ -101,6 +101,66 @@ def _click_at(ws, x, y, dpr):
     cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mousePressed','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=3)
     cdp_call(ws, 'Input.dispatchMouseEvent', {'type':'mouseReleased','x':x_scaled,'y':y_scaled,'button':'left','clickCount':1}, msg_id=4)
 
+# ── Enter semantics (0.9.4-P3) ───────────────────────────────────────
+# `Input.insertText` inserts *text*: it produces no KeyboardEvent. A "\n" in a
+# single-line input therefore never becomes keydown(13), and reactive
+# search/submit handlers (React onKeyDown) never fire — the typing looks fine
+# and nothing submits. `"\n"` thus forks by element type: a real newline in a
+# multiline field, a real Enter press everywhere else.
+# Spec: docs/spec-0.9.4-p3-enter-submit.md
+
+ENTER_MODE_KEYBOARD = 'keyboard_event'
+ENTER_MODE_TEXT = 'text_insert'
+
+
+def _type_enter_mode(tag, role=None):
+    """What "\n" means for this element: submit (keyboard) or newline (text).
+
+    textarea — or any element whose role says multiline — keeps the literal
+    newline; everything else (input, contenteditable single-line, …) treats
+    "\n" as the submit intent.
+    """
+    if (tag or '').upper() == 'TEXTAREA':
+        return ENTER_MODE_TEXT
+    if role and 'multiline' in str(role).lower():
+        return ENTER_MODE_TEXT
+    return ENTER_MODE_KEYBOARD
+
+
+def _dispatch_enter(ws, msg_id=36):
+    """A real Enter press through the Input domain: keyDown + keyUp.
+
+    windowsVirtualKeyCode/nativeVirtualKeyCode 13 is what makes the browser
+    expose keyCode 13 to page handlers — the whole point of not using
+    insertText. No keypress event (deprecated; keydown + keyup is enough).
+    """
+    for kind in ('keyDown', 'keyUp'):
+        cdp_call(ws, 'Input.dispatchKeyEvent',
+                 {'type': kind, 'key': 'Enter', 'code': 'Enter',
+                  'windowsVirtualKeyCode': 13, 'nativeVirtualKeyCode': 13},
+                 msg_id=msg_id)
+
+
+def _insert_text(ws, text, enter_mode, msg_id=35):
+    """Type `text` char by char; every "\n" follows `enter_mode`.
+
+    Returns the mode actually exercised: 'keyboard_event' / 'text_insert', or
+    None when the text carries no "\n" at all (nothing was forked).
+    """
+    used = None
+    for char in text:
+        if char == '\n':
+            used = enter_mode
+            if enter_mode == ENTER_MODE_TEXT:
+                cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=msg_id)
+            else:
+                _dispatch_enter(ws, msg_id=msg_id)
+        else:
+            cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=msg_id)
+        time.sleep(0.001)
+    return used
+
+
 # ── [idx] handle path (0.7.0 S2) ─────────────────────────────────────
 # cdp_see(kind=a11y) numbers every node `[idx]`. A handle resolves through the
 # snapshot's handle map (hand/perception/ax_tree.py) to a backendNodeId, and the
@@ -311,9 +371,9 @@ def cdp_type_handle(handle, text, page_sel=None):
                 entry=entry, handle=str(handle), method="cdp_type")
             out["text"] = text
             return out
-        for char in text:
-            cdp_call(ws, "Input.insertText", {"text": char}, msg_id=35)
-            time.sleep(0.001)
+        # 0.9.4-P3: the focused element's own tag decides what "\n" means.
+        enter_mode = _type_enter_mode(tag, entry.get("role"))
+        used_enter = _insert_text(ws, text, enter_mode, msg_id=35)
         _write_last(idx)
         return {"method": "cdp_type", "handle": f'[{entry["idx"]}]',
                 "page_index": idx, "text": text, "result": "ok",
@@ -325,6 +385,7 @@ def cdp_type_handle(handle, text, page_sel=None):
                     "backend_node_id": entry["backend_node_id"],
                     "focus": _focus_label(focus),
                     "method_detail": "DOM.resolveNode → focus() → Input.insertText",
+                    "enter_mode": used_enter,
                     "verified": True,
                 }}
     finally:
@@ -428,14 +489,15 @@ def cdp_type(selector, text, page_sel=None, fast=False):
                                  selector=selector, text=text)
         x, y = info['x'], info['y']
         _click_at(ws, x, y, _get_dpr(ws))
-        for char in text:
-            cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
-            time.sleep(0.001)
+        # 0.9.4-P3: _element_info already reports the tag, so "\n" forks here.
+        enter_mode = _type_enter_mode(info.get('tag'))
+        used_enter = _insert_text(ws, text, enter_mode, msg_id=20)
         _write_last(idx)
         ev = _element_evidence(info)
         ev['verified'] = True
         ev['selector'] = selector
         ev['read_back'] = 'document.querySelector hit + Input.insertText'
+        ev['enter_mode'] = used_enter
         return {'method': 'cdp_type', 'page_index': idx, 'selector': selector,
                 'text': text, 'result': 'ok',
                 'verified': True, 'evidence': ev}
@@ -490,14 +552,28 @@ def cdp_click_do(action, app_name=None):
             _init_domains(ws, 'Runtime')
             # Use single-quote JS strings for XPath to avoid nesting conflicts with json.dumps double-quotes
             q = json.dumps(text_val)  # produces "Learn more" — double-quoted
+            # 0.9.4-P2 (spec docs/spec-0.9.4-p2-textmatch.md): `text()` matches
+            # only *direct* text children, so an `<a><span>Title</span></a>` —
+            # GitHub issues, most modern sites — never matched, while `.` is the
+            # node's full string value (all descendant text). normalize-space()
+            # folds whitespace differences; the third branch keeps the exact
+            # (`=`) semantic as the "whole text" fallback. Matching stays
+            # case-sensitive (XPath contains) — unchanged by this fix.
             expr = (
                 "(function(){"
-                "var xpath='//a[contains(text(),"+q+")]|"
-                "//button[contains(text(),"+q+")]|"
-                "//*[text()="+q+"]';"
+                "var xpath='//a[contains(normalize-space(.),"+q+")]|"
+                "//button[contains(normalize-space(.),"+q+")]|"
+                "//*[normalize-space(.)="+q+"]';"
                 "var r=document.evaluate(xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null);"
                 "var el=r.singleNodeValue;"
-                "if(!el)return JSON.stringify({error:'text element not found',search:"+q+"});"
+                "if(!el)return JSON.stringify({error:'text element not found',search:"+q+",candidates:"
+                "(function(){var qt="+q+";var out=[];"
+                "var all=document.evaluate('//a|//button',document,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);"
+                "for(var i=0;i<all.snapshotLength&&out.length<3;i++){var n=all.snapshotItem(i);"
+                "var t=(n.innerText||'').trim();"
+                "if(t&&t.toLowerCase().indexOf(qt.toLowerCase())>=0){"
+                "out.push({tag:n.tagName,text:t.substring(0,80),href:n.getAttribute('href')||null});}}"
+                "return out;})()});"
                 "var box=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;"
                 "return JSON.stringify({x:(box.left+box.width/2)*dpr,y:(box.top+box.height/2)*dpr,tag:el.tagName,text:(el.innerText||'').substring(0,80)});"
                 "})()")
@@ -505,9 +581,17 @@ def cdp_click_do(action, app_name=None):
             value_str = raw.get('result', {}).get('value', '{}')
             info = json.loads(value_str)
             if 'error' in info:
-                return _receipt_fail('cdp_click',
-                                     f"text element not found: {text_val!r}",
-                                     action=action, text_match=text_val)
+                # Failure receipt + one loose scan: the a/button labels that came
+                # closest, so "not found" is diagnosable instead of a guess.
+                # The scan ignores case on purpose (a case miss is the most
+                # common reason a label exists but the XPath did not hit).
+                cands = info.get('candidates') or []
+                out = _receipt_fail('cdp_click',
+                                    f"text element not found: {text_val!r}",
+                                    action=action, text_match=text_val,
+                                    candidates=cands)
+                out['evidence']['candidates'] = cands
+                return out
 
             x, y = info['x'], info['y']
             dpr = _get_dpr(ws)
@@ -517,7 +601,8 @@ def cdp_click_do(action, app_name=None):
                                     'text': info.get('text')})
             ev['verified'] = True
             ev['text_match'] = text_val
-            ev['read_back'] = 'XPath text() hit + getBoundingClientRect'
+            ev['read_back'] = ('XPath normalize-space(.) hit + '
+                              'getBoundingClientRect')
             return {'method': 'cdp_click', 'text_match': text_val,
                     'tag': info.get('tag'), 'page_index': idx, 'result': 'ok',
                     'verified': True, 'evidence': ev}
@@ -591,15 +676,18 @@ def cdp_type_focused(text, page_sel=None):
                 f"no focused element (activeElement is {tag or 'missing'}) — "
                 "click the field first, or use cdp_type(selector, text)",
                 text=text)
-        # Input domain needs no enable
-        for char in text:
-            cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=20)
+        # Input domain needs no enable. 0.9.4-P3: the pre-flight already read
+        # activeElement, so its tagName (already in `focus`) decides the "\n"
+        # fork without a second round trip.
+        enter_mode = _type_enter_mode(tag)
+        used_enter = _insert_text(ws, text, enter_mode, msg_id=20)
         _write_last(idx)
         return {'method': 'cdp_type', 'page_index': idx, 'text': text,
                 'result': 'ok', 'verified': True,
                 'evidence': {'focus': _focus_label(focus), 'tag': tag,
                              'focus_id': focus.get('id') or '',
                              'focus_type': focus.get('type') or '',
+                             'enter_mode': used_enter,
                              'verified': True}}
     finally:
         ws.close()
