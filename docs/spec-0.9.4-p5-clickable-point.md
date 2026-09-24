@@ -1,6 +1,6 @@
 # Spec 0.9.4-P5 · clickable point 预检（elementFromPoint 命中链）
 
-状态：待实现
+状态：已实现（bcc672d，随 0.9.4 发布）——三条路径全接入（text= 内联命中链 / handle `_clickable_point` / P4 重定向 verified point），陷阱 fixture `tests/test_clickable_point.py`（415 全绿含多行 link 行为断言）。本文件保留设计依据，状态行 2026-09-24 补记。
 来源：2026-09-24 P4 现场回归在 GitHub 真实页面失败（重定向回执 ok 但导航没发生）
 
 ## 现象
