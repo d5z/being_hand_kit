@@ -175,17 +175,191 @@ def _handle_label(entry):
     return f'{entry.get("role")} "{name}"' if name else str(entry.get("role") or "?")
 
 
-def _handle_fail(reason, entry=None, handle=None, method="cdp_click", **fields):
-    """Unverified handle receipt — same shape as _receipt_fail, plus the target."""
+def _handle_fail(reason, entry=None, handle=None, method="cdp_click", nav=None, **fields):
+    """Unverified handle receipt — same shape as _receipt_fail, plus the target.
+
+    `nav` is the navigation-anchor fragment (0.9.4-P1 M2); it rides in evidence
+    so a stale-handle failure still warns, not just a successful click.
+    """
     ev = {"verified": False, "reason": reason}
     if entry is not None:
         ev["element"] = _handle_label(entry)
         ev["handle"] = f'[{entry.get("idx")}]'
+    if nav:
+        ev.update(nav)
     out = _receipt_fail(method, reason, **fields)
     out["evidence"] = ev
     if handle is not None:
         out["handle"] = handle
     return out
+
+
+# ── Navigation anchor (0.9.4-P1 M2) ─────────────────────────────────
+# The handle map records the navigation index at `cdp_see` time (ax_tree
+# NAV_ID_KEY). Reading the index again at action time turns "the table may be
+# stale" from a gamble into a signal. The element-identity check
+# (DOM.resolveNode / fresh box) still decides success or failure; the anchor
+# only *warns*, and only when both readings are known and differ.
+STALE_WARNING = "navigation occurred since last cdp_see — handle table may be stale"
+
+
+def _read_nav_id(ws, msg_id=29):
+    """Page.getNavigationHistory currentEntry index, or None if unreadable."""
+    try:
+        r = cdp_call(ws, "Page.getNavigationHistory", {}, msg_id=msg_id, timeout=5)
+        v = (r or {}).get("currentIndex")
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+    except Exception:
+        return None
+
+
+def _nav_evidence(see_nav_id, nav_id_at_action):
+    """Evidence fragment: the action-time anchor (+ stale warning when it moved).
+
+    Only *known* anchors that disagree warn — an unreadable anchor on either
+    side must never be turned into a false warning.
+    """
+    ev = {"nav_id_at_action": nav_id_at_action}
+    if (see_nav_id is not None and nav_id_at_action is not None
+            and see_nav_id != nav_id_at_action):
+        ev["warnings"] = [STALE_WARNING]
+    return ev
+
+
+# ── Interactive-descendant redirect (0.9.4-P4 M2) ────────────────────
+# `<h3><a href…>title</a></h3>` exposes two AX nodes: heading (non-interactive)
+# and link. Clicking the heading only works because the link happens to fill it —
+# a coincidence that breaks as soon as the heading gains another child. When the
+# AX map marks a non-interactive node as wrapping interactive descendants, click
+# the descendant instead (unique) or refuse and name the candidates (several).
+_DESC_SELECTOR = "a,button,input,select,textarea,[role]"
+_TAG_ROLE = {"A": "link", "BUTTON": "button", "INPUT": "textbox",
+             "SELECT": "combobox", "TEXTAREA": "textbox"}
+
+
+# ── Clickable point (0.9.4-P5) ───────────────────────────────────────
+# getBoundingClientRect returns the *bounding box*. For a multi-line inline
+# element (GitHub's issue-title <a>) the box spans the line gaps — points that
+# belong to no element. A coordinate click dispatched at the box centre then
+# hits an ancestor container: the click's target chain has no <a>, so the
+# browser never performs the default navigation (receipt says ok, nothing
+# happens). Fix: before dispatching, verify with elementFromPoint that the
+# point's hit chain contains the target (the element itself or a descendant);
+# when the centre misses, grid-scan the box for a point that does. An ancestor
+# hit does NOT count — that is exactly the bug.
+_FIND_CLICKABLE_FN = (
+    "function(){"
+    "var el=this;var r=el.getBoundingClientRect();"
+    "if(r.width<=0||r.height<=0)return JSON.stringify({point:null,why:'zero-size box'});"
+    "var vw=window.innerWidth,vh=window.innerHeight;"
+    "if(r.right<0||r.bottom<0||r.left>vw||r.top>vh)"
+    "return JSON.stringify({point:null,why:'outside viewport'});"
+    "function hits(x,y){var e=document.elementFromPoint(x,y);"
+    "return !!(e&&(e===el||el.contains(e)));}"
+    "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
+    "if(hits(cx,cy))return JSON.stringify({point:[cx,cy],how:'center'});"
+    "for(var yi=1;yi<=15;yi++){for(var xi=1;xi<=5;xi++){"
+    "var x=r.left+r.width*xi/6;var y=r.top+r.height*yi/16;"
+    "if(hits(x,y))return JSON.stringify({point:[x,y],how:'grid_scan'});}}"
+    "return JSON.stringify({point:null,why:'no clickable point (covered)'});"
+    "}")
+
+
+def _clickable_point(ws, object_id, msg_id=36):
+    """(point_css_px, how) for a live node, or (None, why) / (None, None).
+
+    The point's elementFromPoint hit chain must contain the node itself (or a
+    descendant) — an ancestor hit means the click would land on the wrong
+    element (0.9.4-P5). (None, why) is returned only when the JS probe
+    *explicitly* reports no clickable point (covered / zero-size). A probe
+    that could not run, or whose answer has an unexpected shape, returns
+    (None, None) — the caller falls back to the legacy centre instead of
+    failing blind on a probe artefact.
+    """
+    try:
+        raw = cdp_call(ws, "Runtime.callFunctionOn",
+                       {"objectId": object_id, "functionDeclaration": _FIND_CLICKABLE_FN,
+                        "returnByValue": True}, msg_id=msg_id, timeout=10)
+    except Exception:
+        return None, None
+    value = ((raw or {}).get("result") or {}).get("value")
+    try:
+        data = json.loads(value)
+    except Exception:
+        return None, None
+    if not isinstance(data, dict) or "point" not in data:
+        return None, None
+    pt = data.get("point")
+    if isinstance(pt, list) and len(pt) == 2:
+        return [float(pt[0]), float(pt[1])], data.get("how")
+    return None, data.get("why") or "no clickable point"
+
+
+def _desc_role(tag, role_attr):
+    if role_attr:
+        return role_attr
+    return _TAG_ROLE.get((tag or "").upper(), (tag or "").lower() or "?")
+
+
+def _desc_label(c):
+    role = _desc_role(c.get("tag"), c.get("role"))
+    text = (c.get("text") or "").strip()
+    return f'{role} "{text}"' if text else str(role or "?")
+
+
+def _desc_brief(c):
+    """Compact candidate for a failure receipt (P2 diagnostic style)."""
+    brief = {"tag": c.get("tag"), "text": (c.get("text") or "")[:80]}
+    if c.get("href") is not None:
+        brief["href"] = c.get("href")
+    return brief
+
+
+def _redirect_candidates(ws, object_id, msg_id=34):
+    """(the node's rendered interactive descendants, error-or-None).
+
+    A simplified DOM reading of the spec's rule — a/button/input/select/textarea
+    plus any element carrying a non-empty `role` — kept to elements that have a
+    real box (zero-size candidates are not click targets anywhere in hand). The
+    container is scrolled into view first (behavior:'instant'), so the returned
+    boxes are viewport CSS px, the space Input.dispatchMouseEvent wants.
+    """
+    fn = ("function(){"
+          "this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});"
+          "var sel='" + _DESC_SELECTOR + "';"
+          "function findClickablePoint(el){"
+          "var r=el.getBoundingClientRect();"
+          "if(r.width<=0||r.height<=0)return null;"
+          "function hits(x,y){var h=document.elementFromPoint(x,y);"
+          "return !!(h&&(h===el||el.contains(h)));}"
+          "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
+          "if(hits(cx,cy))return [cx,cy];"
+          "for(var yi=1;yi<=15;yi++){for(var xi=1;xi<=5;xi++){"
+          "var gx=r.left+r.width*xi/6;var gy=r.top+r.height*yi/16;"
+          "if(hits(gx,gy))return [gx,gy];}}"
+          "return null;}"
+          "var all=this.querySelectorAll(sel);var out=[];"
+          "for(var i=0;i<all.length;i++){var e=all[i];"
+          "var r=e.getBoundingClientRect();"
+          "if(!(r.width>0&&r.height>0))continue;"
+          "out.push({tag:e.tagName,"
+          "text:(e.innerText||e.value||'').trim().substring(0,80),"
+          "href:e.getAttribute('href'),role:e.getAttribute('role'),"
+          "x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height,"
+          "click:findClickablePoint(e)});}"
+          "return JSON.stringify(out);}")
+    try:
+        raw = cdp_call(ws, "Runtime.callFunctionOn",
+                       {"objectId": object_id, "functionDeclaration": fn,
+                        "returnByValue": True}, msg_id=msg_id, timeout=10)
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+    value = ((raw or {}).get("result") or {}).get("value")
+    try:
+        data = json.loads(value)
+    except Exception as e:
+        return None, f"unreadable redirect probe ({type(e).__name__}: {e})"
+    return (data if isinstance(data, list) else []), None
 
 
 def _dpr_now(ws):
@@ -285,54 +459,130 @@ def cdp_click_handle(handle, page_sel=None):
     ws = cdp_connect(page["webSocketDebuggerUrl"])
     try:
         _init_domains(ws, "Runtime")
+        # 0.9.4-P1 M2: the action-time navigation anchor. The stale warning rides
+        # in evidence (design decision #1) and appears on failure receipts too.
+        nav_ev = _nav_evidence(entry.get("_see_nav_id"), _read_nav_id(ws))
         oid = _handle_object_id(ws, entry["backend_node_id"])
         if not oid:
             return _handle_fail(
                 f'handle [{entry["idx"]}] element is gone (backendNodeId '
                 f'{entry["backend_node_id"]} does not resolve) — call cdp_see again',
-                entry=entry, handle=str(handle))
-        rect = _handle_rect(ws, oid)
+                entry=entry, handle=str(handle), nav=nav_ev)
+        rect = None
+        redirect_ev = None
+        # 0.9.4-P4 M2: a non-interactive node that wraps interactive descendants
+        # (heading → link) is clicked at the descendant, not at the coincidental
+        # overlap. Several descendants → refuse and name them; zero (a stale
+        # contains_interactive flag) or an unreadable probe → normal path below.
+        if not entry.get("interactive") and entry.get("contains_interactive"):
+            cands, derr = _redirect_candidates(ws, oid)
+            if derr is None and cands is not None:
+                if len(cands) > 1:
+                    briefs = [_desc_brief(c) for c in cands[:3]]
+                    out = _handle_fail(
+                        f'handle [{entry["idx"]}] {_handle_label(entry)} is not '
+                        f'interactive and contains {len(cands)} interactive '
+                        f'descendants — ambiguous target, not redirecting; click '
+                        f'one of the candidates explicitly',
+                        entry=entry, handle=str(handle), nav=nav_ev,
+                        candidates=briefs)
+                    # same double exposure as the P2 text-match failure: the
+                    # candidates are diagnosable from the top level and from the
+                    # evidence block alike.
+                    out["evidence"]["candidates"] = briefs
+                    return out
+                if len(cands) == 1:
+                    c = cands[0]
+                    # 0.9.4-P5: the unique candidate's dispatch point is its
+                    # verified clickable point (elementFromPoint hit chain), not
+                    # the bounding-box centre — an inline multi-line link's
+                    # centre can sit in a line gap that belongs to no element.
+                    if not c.get("click"):
+                        return _handle_fail(
+                            f'handle [{entry["idx"]}] {_handle_label(entry)} '
+                            f'redirect target has no clickable point (covered) '
+                            f'— not dispatching',
+                            entry=entry, handle=str(handle), nav=nav_ev)
+                    rect = {"x": c["click"][0], "y": c["click"][1],
+                            "w": c["w"], "h": c["h"]}
+                    redirect_ev = {
+                        "redirected": True,
+                        "original": _handle_label(entry),
+                        "redirect_target": _desc_label(c),
+                        "redirect_target_href": c.get("href"),
+                    }
+        if rect is None:
+            rect = _handle_rect(ws, oid)
         if rect is None:
             return _handle_fail(
                 f'handle [{entry["idx"]}] element has no box (display:none, '
                 f'zero-size or detached) — call cdp_see again',
-                entry=entry, handle=str(handle))
+                entry=entry, handle=str(handle), nav=nav_ev)
+        # 0.9.4-P5: the box centre may sit in an inline line gap — a point that
+        # belongs to no element, where the click would land on an ancestor
+        # (receipt ok, nothing happens). Verify the hit chain; grid-scan when
+        # the centre misses. A probe *transport* failure falls back to the
+        # centre (legacy behaviour) rather than failing blind. A P4 redirect
+        # already carries its own verified clickable point — do not overwrite
+        # it with a probe of the (non-interactive) original node.
+        if redirect_ev:
+            click_pt = [rect["x"], rect["y"]]
+            click_how = "redirect_target_clickable_point"
+        else:
+            click_pt, click_how = _clickable_point(ws, oid)
+            # 'outside viewport' defers to the 0.9.3-P0 viewport check below —
+            # its failure names the real viewport size; a JS-side size would be
+            # a second, weaker source of the same fact.
+            if (click_pt is None and click_how is not None
+                    and click_how != "outside viewport"):
+                return _handle_fail(
+                    f'handle [{entry["idx"]}] element has no clickable point '
+                    f'({click_how}) — covered by another element',
+                    entry=entry, handle=str(handle), nav=nav_ev)
+            if click_pt is None:
+                click_pt = [rect["x"], rect["y"]]
+                click_how = "center (probe unavailable)"
         viewport, vp_known = _viewport_size(ws)
         vw, vh = viewport["w"], viewport["h"]
         in_viewport = None
         if vp_known:
-            # rect x,y is the box center in viewport CSS px; compare it against
+            # the dispatch point (click_pt, viewport CSS px) is compared against
             # the real viewport before dispatching. A point outside has no target
             # element, so the mouse event would be dropped without a trace.
-            in_viewport = (0 <= rect["x"] < vw) and (0 <= rect["y"] < vh)
+            in_viewport = (0 <= click_pt[0] < vw) and (0 <= click_pt[1] < vh)
             if not in_viewport:
                 return _handle_fail(
                     f'handle [{entry["idx"]}] click point '
-                    f'({rect["x"]:.0f},{rect["y"]:.0f}) is outside viewport '
+                    f'({click_pt[0]:.0f},{click_pt[1]:.0f}) is outside viewport '
                     f'({vw}x{vh}) — scroll did not take effect',
-                    entry=entry, handle=str(handle))
+                    entry=entry, handle=str(handle), nav=nav_ev)
         dpr = _dpr_now(ws)
-        dispatched = [round(rect["x"] * dpr), round(rect["y"] * dpr)]
+        dispatched = [round(click_pt[0] * dpr), round(click_pt[1] * dpr)]
         _click_at(ws, dispatched[0], dispatched[1], dpr)
         _write_last(idx)
+        evidence = {
+            "element": _handle_label(entry),
+            "role": entry.get("role"),
+            "name": entry.get("name"),
+            "handle": f'[{entry["idx"]}]',
+            "backend_node_id": entry["backend_node_id"],
+            "box": {"x": round(rect["x"], 1), "y": round(rect["y"], 1),
+                    "w": round(rect["w"], 1), "h": round(rect["h"], 1)},
+            "space": "physical", "dpr": dpr, "dispatched": dispatched,
+            "viewport": {"w": vw, "h": vh},
+            "in_viewport": in_viewport,
+            "click_point": {"how": click_how,
+                            "x": round(click_pt[0], 1), "y": round(click_pt[1], 1)},
+            "read_back": "getBoundingClientRect via DOM.resolveNode",
+            "source": "cdp_see(kind=a11y) handle map",
+            "verified": True,
+        }
+        if redirect_ev:
+            evidence.update(redirect_ev)
+        evidence.update(nav_ev)
         return {"method": "cdp_click", "handle": f'[{entry["idx"]}]',
                 "page_index": idx, "result": "ok", "tiers": "handle",
-                "verified": True,
-                "evidence": {
-                    "element": _handle_label(entry),
-                    "role": entry.get("role"),
-                    "name": entry.get("name"),
-                    "handle": f'[{entry["idx"]}]',
-                    "backend_node_id": entry["backend_node_id"],
-                    "box": {"x": round(rect["x"], 1), "y": round(rect["y"], 1),
-                            "w": round(rect["w"], 1), "h": round(rect["h"], 1)},
-                    "space": "physical", "dpr": dpr, "dispatched": dispatched,
-                    "viewport": {"w": vw, "h": vh},
-                    "in_viewport": in_viewport,
-                    "read_back": "getBoundingClientRect via DOM.resolveNode",
-                    "source": "cdp_see(kind=a11y) handle map",
-                    "verified": True,
-                }}
+                "verified": True, "evidence": evidence}
     finally:
         ws.close()
 
@@ -349,12 +599,16 @@ def cdp_type_handle(handle, text, page_sel=None):
     ws = cdp_connect(page["webSocketDebuggerUrl"])
     try:
         _init_domains(ws, "Runtime")
+        # 0.9.4-P1 M2: same navigation anchor as the click path. Type is *not*
+        # redirected onto descendants (P4 explicitly excludes it — an ambiguous
+        # focus target is worse than an explicit staleness signal).
+        nav_ev = _nav_evidence(entry.get("_see_nav_id"), _read_nav_id(ws))
         oid = _handle_object_id(ws, entry["backend_node_id"])
         if not oid:
             out = _handle_fail(
                 f'handle [{entry["idx"]}] element is gone (backendNodeId '
                 f'{entry["backend_node_id"]} does not resolve) — call cdp_see again',
-                entry=entry, handle=str(handle), method="cdp_type")
+                entry=entry, handle=str(handle), method="cdp_type", nav=nav_ev)
             out["text"] = text
             return out
         cdp_call(ws, "Runtime.callFunctionOn",
@@ -368,26 +622,27 @@ def cdp_type_handle(handle, text, page_sel=None):
             out = _handle_fail(
                 f'focus did not land on handle [{entry["idx"]}] '
                 f'(activeElement is {tag or "missing"}) — call cdp_see again',
-                entry=entry, handle=str(handle), method="cdp_type")
+                entry=entry, handle=str(handle), method="cdp_type", nav=nav_ev)
             out["text"] = text
             return out
         # 0.9.4-P3: the focused element's own tag decides what "\n" means.
         enter_mode = _type_enter_mode(tag, entry.get("role"))
         used_enter = _insert_text(ws, text, enter_mode, msg_id=35)
         _write_last(idx)
+        evidence = {
+            "element": _handle_label(entry),
+            "role": entry.get("role"), "name": entry.get("name"),
+            "handle": f'[{entry["idx"]}]',
+            "backend_node_id": entry["backend_node_id"],
+            "focus": _focus_label(focus),
+            "method_detail": "DOM.resolveNode → focus() → Input.insertText",
+            "enter_mode": used_enter,
+            "verified": True,
+        }
+        evidence.update(nav_ev)
         return {"method": "cdp_type", "handle": f'[{entry["idx"]}]',
                 "page_index": idx, "text": text, "result": "ok",
-                "verified": True,
-                "evidence": {
-                    "element": _handle_label(entry),
-                    "role": entry.get("role"), "name": entry.get("name"),
-                    "handle": f'[{entry["idx"]}]',
-                    "backend_node_id": entry["backend_node_id"],
-                    "focus": _focus_label(focus),
-                    "method_detail": "DOM.resolveNode → focus() → Input.insertText",
-                    "enter_mode": used_enter,
-                    "verified": True,
-                }}
+                "verified": True, "evidence": evidence}
     finally:
         ws.close()
 
@@ -563,7 +818,7 @@ def cdp_click_do(action, app_name=None):
                 "(function(){"
                 "var xpath='//a[contains(normalize-space(.),"+q+")]|"
                 "//button[contains(normalize-space(.),"+q+")]|"
-                "//*[normalize-space(.)="+q+"]';"
+                "//*[normalize-space(.)="+q+" and not(*[normalize-space(.)="+q+"])]';"
                 "var r=document.evaluate(xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null);"
                 "var el=r.singleNodeValue;"
                 "if(!el)return JSON.stringify({error:'text element not found',search:"+q+",candidates:"
@@ -574,8 +829,21 @@ def cdp_click_do(action, app_name=None):
                 "if(t&&t.toLowerCase().indexOf(qt.toLowerCase())>=0){"
                 "out.push({tag:n.tagName,text:t.substring(0,80),href:n.getAttribute('href')||null});}}"
                 "return out;})()});"
-                "var box=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;"
-                "return JSON.stringify({x:(box.left+box.width/2)*dpr,y:(box.top+box.height/2)*dpr,tag:el.tagName,text:(el.innerText||'').substring(0,80)});"
+                "var box=null;"
+                "function hits(x,y){var e=document.elementFromPoint(x,y);"
+                "return !!(e&&(e===el||el.contains(e)));}"
+                "var r=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;"
+                "if(r.width<=0||r.height<=0)"
+                "return JSON.stringify({error:'no clickable point (zero-size)',search:"+q+"});"
+                "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
+                "if(hits(cx,cy))return JSON.stringify({x:cx*dpr,y:cy*dpr,how:'center',"
+                "tag:el.tagName,text:(el.innerText||'').substring(0,80)});"
+                "for(var yi=1;yi<=15;yi++){for(var xi=1;xi<=5;xi++){"
+                "var gx=r.left+r.width*xi/6;var gy=r.top+r.height*yi/16;"
+                "if(hits(gx,gy))return JSON.stringify({x:gx*dpr,y:gy*dpr,how:'grid_scan',"
+                "tag:el.tagName,text:(el.innerText||'').substring(0,80)});}}"
+                "return JSON.stringify({error:'no clickable point (covered)',search:"+q+","
+                "tag:el.tagName,text:(el.innerText||'').substring(0,80)});"
                 "})()")
             raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True})
             value_str = raw.get('result', {}).get('value', '{}')
@@ -587,7 +855,7 @@ def cdp_click_do(action, app_name=None):
                 # common reason a label exists but the XPath did not hit).
                 cands = info.get('candidates') or []
                 out = _receipt_fail('cdp_click',
-                                    f"text element not found: {text_val!r}",
+                                    f"{info['error']}: {text_val!r}",
                                     action=action, text_match=text_val,
                                     candidates=cands)
                 out['evidence']['candidates'] = cands
@@ -601,8 +869,10 @@ def cdp_click_do(action, app_name=None):
                                     'text': info.get('text')})
             ev['verified'] = True
             ev['text_match'] = text_val
+            ev['click_point'] = {'how': info.get('how'),
+                                 'x': round(x / dpr, 1), 'y': round(y / dpr, 1)}
             ev['read_back'] = ('XPath normalize-space(.) hit + '
-                              'getBoundingClientRect')
+                              'elementFromPoint hit-chain verified')
             return {'method': 'cdp_click', 'text_match': text_val,
                     'tag': info.get('tag'), 'page_index': idx, 'result': 'ok',
                     'verified': True, 'evidence': ev}

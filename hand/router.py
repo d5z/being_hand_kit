@@ -152,6 +152,9 @@ def _with_receipt(result: dict) -> dict:
         ev["sha256"] = result.get("sha256")
         ev["root_role"] = result.get("root_role")
         ev["hint"] = result.get("hint")
+        # 0.9.4-P1 M1: the see-time navigation anchor (also at receipt top level)
+        # travels into evidence so a consumer reading only evidence sees it.
+        ev["nav_id"] = result.get("nav_id")
         if not result.get("node_count") or not result.get("root_role"):
             verified, reason = False, (
                 "Accessibility.getFullAXTree produced no curated root "

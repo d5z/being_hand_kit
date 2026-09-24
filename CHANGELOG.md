@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.4] — unreleased
+
+> handle 表从「要么点对、要么显式失败」升级到「失败前先给你信号」+ 标题包链接不再靠巧合命中。
+
+### Added
+- **handle 表过期信号 `nav_id`**（P1，spec docs/spec-0.9.4-p1-handle-staleness.md）：`see(kind="a11y")` 回执顶层带 `nav_id`（`Page.getNavigationHistory` 的 currentEntry index，浏览器侧状态、跨 MCP 进程稳定），handle map 文件同时记录 see 时刻的锚。`click [idx]` / `type [idx] …` 回执 `evidence.nav_id_at_action` 带动作时锚；两锚不同即 `evidence.warnings = ["navigation occurred since last cdp_see — handle table may be stale"]`（warning 进 evidence——设计定夺记录 #1；`tree_epoch` 按 #2 砍掉，`expect=` 语法按 #3 不加）。可靠合同明确为「要么点对，要么显式失败」，同页局部重渲染不做预检（M3）。
+- **heading 包 link 的点击重定向**（P4，spec docs/spec-0.9.4-p4-heading-redirect.md）：AX 序列化给「子树含 interactive 后代」的节点加 `contains_interactive: true`（仅 true 时带）；`cdp_click_handle` 点到非 interactive 容器且其 AX meta 标记含 interactive 后代时——唯一后代 → 重定向点击它（`evidence.redirected` / `original` / `redirect_target`）；多个后代 → 不猜，失败回执列 `candidates`（tag+text+href，前 3）；零后代 → 走原有路径。a11y 树行格式与 `type` 路径不变。
+
+### Verified
+- 411 单测全绿（0.9.3 的 396 → +15：P1 handle 过期信号 8、P4 重定向 7），fixture 先自证危险条件（导航确已发生 / 标题中心确实不落在 link 上）再证修复。
+- P2（text= 嵌套匹配）、P3（Enter submit fork）已在同一周期前序提交落地。
+
 ## [0.9.3] — 2026-09-23
 
 > 诚实回执从感知层扩到委托层：open 路由不再说谎（about:blank 归浏览器），委托 brief 有了自包含契约。

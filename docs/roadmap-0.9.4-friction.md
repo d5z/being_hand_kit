@@ -9,18 +9,27 @@
 | # | 项 | 根因状态 | spec | 风险 |
 |---|---|---|---|---|
 | P0 | 点击视口对齐 | ✅ 实证（smooth 异步滚动） | spec-0.9.3-p0-viewport.md | 低（三处小改） |
-| P1 | handle 表过期信号 | ✅ 实证（编号重排观察） | spec-0.9.4-p1-handle-staleness.md | 中（回执契约） |
+| P1 | handle 表过期信号 | ✅ 实证（编号重排观察） | spec-0.9.4-p1-handle-staleness.md（定稿） | 中（回执契约） |
 | P2 | text= 嵌套文本失效 | ✅ 实证（text() vs . 对照） | spec-0.9.4-p2-textmatch.md | 低 |
 | P3 | Enter 不提交 | ✅ 实证（insertText vs dispatchKeyEvent 对照） | spec-0.9.4-p3-enter-submit.md | 低 |
-| P4 | interactive 误标 / link 未暴露 | ⏳ 待实证（疑似 heading 包 link） | 本文件附录 | 低 |
-| J1 | Judy PR #1 三处 | ✅（find_text 静默 fallback 等） | PR review 线 | 低 |
-| R1 | 0.9 review 三笔 | ✅ | 并入 P1/J1/发布检查单 | — |
+| P4 | heading 包 link 点击重定向 | ✅ 实证（DOM probe：h3>a 双节点） | spec-0.9.4-p4-heading-redirect.md | 低 |
+| J1 | Judy PR #1 三处 | ✅ **已闭合**（8b00dbe 进 main：evidence 语义+测试表+显式路径报错） | — | — |
+| R1 | 0.9 review 三笔 | ✅ 全覆盖：warning→P1-M2、stale→P1、fallback 不静默→J1+P2 candidates | — | — |
+
+## Credits（0.9.4 发布时进 CHANGELOG + 公告）
+
+- **Judy** — PR #1（vision-ocr find_text 像素坐标输出）+ 8b00dbe 三处修复（显式 image_path 不存在报错、evidence 语义对齐、回执契约测试表）。0.9.4 的 J1 提前闭合是她的功劳；此前 PR #3（vision_ocr_bin 重编）也已合并。
+- **taojun** — CONTRIBUTING 方法论段「存在过≠发生过」（9942816），0.9.4 的「对照实验钉根因再写 spec」流程直接受益于这套纪律。
+- **GuangCZ** — PR #2 [design] f14-expect-semantics（open，设计稿）——合并时按贡献记名。
+- **泽平** — dogfooding 方向（困难场景实测手感）+ 0.9.4 范围拍板。
+
+P0–P4 摩擦点本身来自 2026-09-24 GitHub issues dogfooding 实证（我），但「实证→spec→实现→验收」的迭代 SOP 是社区协作长出来的形状。
 
 ## 版本语义
 
-- **0.9.3**（在跑）：P0 视口对齐——静默错家族最危险的一支（回执 ok 但点击物理丢失）
-- **0.9.4**（本拓扑）：P2 + P3 + P4 + J1 + R1——「清账轮」，目标是 dogfooding 手感上一个台阶
-- P1 视泽平 review 意见决定进 0.9.4 还是 0.9.5（回执契约变化，不抢跑）
+- **0.9.3**（已发布）：P0 视口对齐——静默错家族最危险的一支（回执 ok 但点击物理丢失）
+- **0.9.4**（本拓扑，泽平 2026-09-24 拍板「能优化有把握的都进」）：P1 + P2 + P3 + P4——「清账轮」，目标是 dogfooding 手感上一个台阶
+- J1 已闭合（Judy 8b00dbe 进 main），R1 三笔由 P1/P2/J1 全覆盖
 
 ## 实证方法记录（本轮的方法论沉淀）
 
@@ -32,12 +41,9 @@
 
 这个「对照实验钉根因，再写 spec」的流程值得进 CONTRIBUTING（0.9.4 发布时一并提）。
 
-## P4 附录 · interactive 误标（待实证）
+## P4 附录 · interactive 误标（实证已完成，正文移至 spec）
 
-现象：GitHub issues 列表 [222] 节点 `interactive: false` 但实际可点（链接嵌在 heading 里）。
-`INTERACTIVE_ROLES` 含 "link"（ax_tree.py:60），所以疑点在：**AX 树把 heading 作为节点暴露，里面的 link 节点没被暴露**——heading 的 name 来自 link 文字，点击 heading 中心命中 link 区域纯属巧合（rect 覆盖）。
-待实证：AX 树里该位置的真实节点序列（role/name/nested），确认 link 是被 collapse 规则吃掉还是 AX 本身不报。
-修法候选（实证后选）：collapse 规则放过含 interactive 后代的链；或节点加 `contains_interactive` 字段。
+**实证结论（2026-09-24）**：DOM probe 确认 `<h3><a>` 结构，AX 树双节点都正常暴露（heading 不会被 collapse——它有 name；link 是 interactive 不会被吃）。真问题不是「link 被吃」，是「heading/link 视觉同一元素、点 heading 靠 rect 巧合命中」。修法定稿为点击重定向（contains_interactive 标记 + 唯一后代重定向 + 多后代列 candidates），见 spec-0.9.4-p4-heading-redirect.md。
 
 ## 发布检查单（0.9.4 收尾时过一遍）
 

@@ -84,6 +84,13 @@ DEFAULT_MAX_LINES = 600
 # (MCP server restarts between tool calls) can still resolve a handle.
 HANDLE_MAP_FILE = "/tmp/hand_ax_handles.json"
 
+# Reserved (non-digit) key inside the handle map file carrying the *see-time*
+# navigation anchor. It is browser-side state (`Page.getNavigationHistory`
+# currentEntry index), stable across MCP process restarts, so a later
+# click/type can tell whether the page navigated since the snapshot was taken
+# (0.9.4-P1). A digit-only key namespace can never collide with it.
+NAV_ID_KEY = "nav_id"
+
 
 # ── Curation ─────────────────────────────────────────────────────────
 
@@ -172,6 +179,30 @@ def node_label(node):
 
 # ── Serialization ────────────────────────────────────────────────────
 
+def _subtree_interactive(children, roots):
+    """{nodeId: bool} — does this node's subtree contain an interactive *descendant*?
+
+    Iterative post-order (same no-recursion-limit discipline as _traverse): a
+    node counts as containing interactive when any child is interactive or any
+    child itself contains interactive. The node's *own* role is not consulted —
+    "contains_interactive" describes the subtree below it (0.9.4-P4 M1), which
+    is what lets a click on a non-interactive heading be redirected to the link
+    it wraps.
+    """
+    res = {}
+    stack = [(r["nodeId"], False) for r in reversed(roots)]
+    while stack:
+        nid, expanded = stack.pop()
+        if expanded:
+            res[nid] = any(_role(c) in INTERACTIVE_ROLES or res.get(c["nodeId"], False)
+                           for c in children.get(nid, []))
+        else:
+            stack.append((nid, True))
+            for c in reversed(children.get(nid, [])):
+                stack.append((c["nodeId"], False))
+    return res
+
+
 def _traverse(kept):
     """Curated pre-order (iterative: no recursion limit on deep trees).
 
@@ -179,6 +210,7 @@ def _traverse(kept):
     structural chains, duplicate StaticText) consume an index but emit nothing.
     """
     children, roots = index_tree(kept)
+    subtree_int = _subtree_interactive(children, roots)
     counter = 0
     lines = []
     meta = []
@@ -208,7 +240,7 @@ def _traverse(kept):
         lines.append(f"{'  ' * depth}- {role} \"{name}\"{state_s} [{idx}]")
         bid = node.get("backendDOMNodeId")
         states = node_states(node, role)
-        meta.append({
+        entry = {
             "idx": idx,
             "role": role,
             "name": name,
@@ -217,7 +249,14 @@ def _traverse(kept):
             "interactive": role in INTERACTIVE_ROLES,
             "has_popup": bool(prop_value(node, "hasPopup")),
             "text_truncated": name_cut,
-        })
+        }
+        # 0.9.4-P4 M1: does this node's subtree wrap an interactive descendant
+        # (GitHub's `<h3><a>…</a></h3>`)? Declared only when true — every line
+        # carrying a flag would be noise; false is the silent default. The line
+        # grammar is untouched, so the text/sha256 contract is unchanged.
+        if subtree_int.get(node["nodeId"]):
+            entry["contains_interactive"] = True
+        meta.append(entry)
         for c in reversed(kids):
             stack.append((c, depth + 1, name))
     return lines, meta
@@ -326,11 +365,21 @@ def backend_ids_to_coords(call, ws, backend_ids, dpr=1.0):
 
 # ── [idx] handle map ─────────────────────────────────────────────────
 
-def save_handle_map(handles, path=None):
+def save_handle_map(handles, path=None, nav_id=None):
+    """Persist {idx: entry} (+ optional see-time navigation anchor) atomically.
+
+    `nav_id` is written under the reserved NAV_ID_KEY so the handle entries keep
+    their digit-only namespace and a later click/type can compare it against the
+    page's current navigation index (0.9.4-P1 M1). Absent when the browser could
+    not answer — an unknown anchor must never be mistaken for a matching one.
+    """
     path = path or HANDLE_MAP_FILE
+    payload = dict(handles)
+    if isinstance(nav_id, int) and not isinstance(nav_id, bool):
+        payload[NAV_ID_KEY] = nav_id
     try:
         with open(path, "w") as f:
-            json.dump(handles, f, ensure_ascii=False, sort_keys=True)
+            json.dump(payload, f, ensure_ascii=False, sort_keys=True)
         return path
     except Exception:
         return None
@@ -344,6 +393,17 @@ def load_handle_map(path=None):
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def handle_map_nav_id(path=None):
+    """See-time navigation anchor stored in the handle map, or None.
+
+    A *number* is the only valid anchor (Page.getNavigationHistory currentEntry
+    index); anything else is treated as unknown so it can never produce a false
+    "matches" verdict.
+    """
+    v = load_handle_map(path).get(NAV_ID_KEY)
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
 def handle_index(handle):
@@ -384,10 +444,16 @@ def resolve_handle(handle, path=None):
                          f"(expected at {path or HANDLE_MAP_FILE})"}
     entry = handles.get(str(idx))
     if not entry:
+        n = sum(1 for k in handles if str(k).isdigit())
         return {"error": f"handle [{idx}] not in the last AX snapshot "
-                         f"({len(handles)} handles) — call cdp_see again"}
+                         f"({n} handles) — call cdp_see again"}
     out = dict(entry)
     out["idx"] = idx
+    # 0.9.4-P1 M2: carry the snapshot's navigation anchor alongside the entry so
+    # click/type can detect a navigation that happened since the `see`. Private
+    # (`_see_nav_id`) — it is map-level state, not part of the handle's identity.
+    v = handles.get(NAV_ID_KEY)
+    out["_see_nav_id"] = v if isinstance(v, int) and not isinstance(v, bool) else None
     return out
 
 
@@ -432,6 +498,19 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                 for n in wanted:
                     coords[str(n["idx"])] = by_bid.get(n["backend_node_id"])
 
+        # 0.9.4-P1 M1: the see-time navigation anchor. Page.getNavigationHistory
+        # is browser-side state (currentEntry index) — it survives MCP process
+        # restarts, unlike any in-process counter, so it is the one reliable
+        # anchor a later click/type can compare against.
+        nav_id = None
+        try:
+            hist = cdp_call(ws, "Page.getNavigationHistory", {}, msg_id=63, timeout=5)
+            v = (hist or {}).get("currentIndex")
+            if isinstance(v, int) and not isinstance(v, bool):
+                nav_id = v
+        except Exception:
+            nav_id = None   # unknown anchor: never fabricate a match
+
         handles = {}
         for n in ser["nodes"]:
             if not n["backend_node_id"]:
@@ -442,10 +521,14 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                 "name": n["name"],
                 "backend_node_id": n["backend_node_id"],
                 "interactive": n["interactive"],
+                # 0.9.4-P4: does this node's subtree wrap an interactive node?
+                # Read at click time to redirect a heading click onto its link.
+                "contains_interactive": bool(n.get("contains_interactive")),
                 "x": (c or {}).get("x"),
                 "y": (c or {}).get("y"),
             }
-        handle_map_path = save_handle_map(handles, path=handle_map_path)
+        handle_map_path = save_handle_map(handles, path=handle_map_path,
+                                          nav_id=nav_id)
 
         tree = snapshot_text(ser)
         text_bytes = len(tree.encode("utf-8"))
@@ -504,6 +587,9 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "max_lines": ser["max_lines"],
             "sha256": ser["sha256"],
             "ax_version": ax_version,
+            # 0.9.4-P1 M1: top-level navigation anchor (see-time). None when the
+            # browser could not answer — an absent/failed anchor is not a value.
+            "nav_id": nav_id,
             "handle_map": handle_map_path,
             "coords_resolved": sum(1 for v in coords.values() if v),
             "visual_state": visual["visual_state"],

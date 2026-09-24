@@ -85,6 +85,38 @@ re-seeing after merely switching channels is optional. Note that `open()` is its
 a navigation: it reuses the same tab, and that reuse is what kills the previous
 page's handles.
 
+**Stale signal (0.9.4-P1).** You no longer have to discover that by wasting a
+click. Every `see(kind="a11y")` receipt carries `nav_id` — the browser's current
+navigation-history index at snapshot time — and the handle map file records it.
+Every `click [idx]` / `type [idx] …` receipt carries
+`evidence.nav_id_at_action`, and when the index moved since the snapshot:
+
+```python
+r = hand.do("click [7]")
+r["evidence"]["warnings"]   # ["navigation occurred since last cdp_see — handle table may be stale"]
+```
+
+The element-identity check is unchanged and still decides success or failure — a
+replaced node's `backendNodeId` never resolves, so you are never silently clicked
+onto a different element. The reliability contract is therefore **"either click
+the right element, or fail loudly"**, not "never fail": local re-renders inside
+one page are *not* pre-checked, they surface as the existing `element is gone` /
+`element has no box` failures.
+
+**Heading wraps a link (0.9.4-P4).** `[idx]` on a non-interactive node that wraps
+exactly one interactive descendant — GitHub's `<h3><a>title</a></h3>`, where
+clicking the heading only worked because the link happened to fill it — is
+redirected onto that descendant:
+
+```python
+r = hand.do("click [222]")        # the heading node
+r["evidence"]["redirected"]       # True
+r["evidence"]["redirect_target"]  # 'link "the issue title"'
+```
+
+Several interactive descendants are not guessed: the receipt fails and lists
+`candidates` (tag · text · href).
+
 ## `see()` — what you get back
 
 ```python
@@ -98,7 +130,8 @@ page = hand.see()          # kind defaults to "a11y"
 | `method` | the backend that actually spoke (e.g. `cdp_a11y`) |
 | `url`, `title` | where you are |
 | `tree` | the a11y tree, one line per node: `role "name" (state) [idx]` |
-| `handles` | `{"15": {"role", "name", "backend_node_id", "x", "y"}}` — what `[idx]` resolves to |
+| `handles` | `{"15": {"role", "name", "backend_node_id", "interactive", "contains_interactive", "x", "y"}}` — what `[idx]` resolves to. `contains_interactive` is present only when the node's subtree wraps an interactive node (0.9.4-P4) and drives the heading→link redirect |
+| `nav_id` | **0.9.4** the navigation-history index at snapshot time — the anchor a later `click`/`type` compares against for the stale warning. Absent/`None` when the browser could not answer |
 | `line_count`, `serialized_bytes` | size of the snapshot |
 | `truncated`, `nodes_omitted` | truncation is **always declared**, never silent. The a11y cap is 600 tree lines; `nodes_omitted` counts dropped *tree lines* |
 | `text_truncated_count` | node names cut at 200 chars (declared per node, counted here) |
