@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.6] — 2026-09-25
+
+> macOS 代理盲区轮：216 实机根因 + 补丁。系统级代理（Clash 类）把 localhost CDP 流量送进代理回 502，探针瞎了误杀活 Chrome——回环恒直连，外网恒走系统代理。
+
+### Fixed
+- **回环 CDP 流量绕过系统代理**（F23，P1）：macOS 系统代理（scutil --proxy 全开 127.0.0.1:6789）下 urllib 默认 opener 把 `localhost:9222` 送进代理，代理对回环流量回 502——`endpoint_info` 探针瞎 → `cdp_open` 误杀健康 Chrome 循环重启，see/nav/click 全系不可用。修法：CDP_HOST 恒回环的三处调用（`endpoint_info` / `open_new_tab` / `_json_get`）换模块级无代理 opener（`ProxyHandler({})`，每进程构造一次）；外网两处（vision_llm → OpenRouter、kit 心跳 → Grove）保留系统代理。边界完备性：CDP_HOST 恒为 localhost，不存在「CDP 流量走外网」场景——不是碰巧没漏。
+- **cdp_type 指针诚实化**（纯文档三处）：`[idx]|text` 管道形式的入口是 `cdp_click` 不是 `cdp_type`——描述与实际路由对齐。
+
+### Verified
+- Linux 415 单测全绿。一处测试调和：probe 测试 mock 目标从 `urllib.request.urlopen` 跟随调用点改为 `_NO_PROXY_OPENER.open`——旧 mock 在补丁后失效，测试静默直连真实 Chrome（Linux 侧发现，macOS 实机验证测不到 mock 层）。
+- macOS 实机根因三连（216）：curl 9222 → 200；urllib 默认 opener → 502；空 opener → 200。本地补丁实测通过后按同款 diff 上游化。
+- 9/6「9222 十秒不可达」旧案（当时怀疑 IPv6 未验证）根因落定：系统代理。
+
+### Credits
+- **216** — 本版主修的作者。根因定位（证据三连）、边界完备性论证（全 kit urlopen 盘点）、补丁与 macOS 实机验证（#34 seq 1721）。Linux 侧测试调和与 415 由 alice 完成。
+
 ## [0.9.5] — 2026-09-25
 
 > Windows 落地清障轮：taojun 实机验收驱动的两修——`/tmp` 硬编码与编码族。Windows 无 `/tmp`、PowerShell `>` 重定向带 BOM，两族都是「macOS/Linux 上跑得好好的」盲区。
