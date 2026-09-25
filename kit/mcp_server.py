@@ -58,7 +58,7 @@ def _report_grove(delta):
 
 def _load_hb():
     try:
-        with open(HEARTBEAT_FILE) as f:
+        with open(HEARTBEAT_FILE, encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception:
         return {}
@@ -68,7 +68,7 @@ def _mark_reported(delta):
     hb["reported"] = hb.get("reported", 0) + delta
     hb["last_reported_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
-        with open(HEARTBEAT_FILE, "w") as f:
+        with open(HEARTBEAT_FILE, "w", encoding="utf-8") as f:
             json.dump(hb, f)
     except Exception:
         pass
@@ -83,7 +83,7 @@ def _bump():
         os.makedirs(os.path.dirname(HEARTBEAT_FILE), exist_ok=True)
         hb = _load_hb()  # merge, don't clobber reported watermark
         hb.update({"calls": _call_count, "last_used_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "uptime_seconds": int(time.time() - _started_at)})
-        with open(HEARTBEAT_FILE, "w") as f:
+        with open(HEARTBEAT_FILE, "w", encoding="utf-8") as f:
             json.dump(hb, f)
     except: pass
     # Grove report: at most once per _REPORT_MIN_INTERVAL, delta since last ack

@@ -15,6 +15,7 @@ import subprocess
 import json
 import os
 import time
+import tempfile
 from typing import Optional
 
 # Path to compiled Vision OCR binary — relative to this file so the
@@ -22,8 +23,10 @@ from typing import Optional
 VISION_OCR_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vision_ocr_bin")
 
 
-def _capture_screenshot(path: str = "/tmp/hand_screenshot.png") -> str:
+def _capture_screenshot(path: Optional[str] = None) -> str:
     """Take a screenshot, return path."""
+    if path is None:
+        path = os.path.join(tempfile.gettempdir(), "hand_screenshot.png")
     result = subprocess.run(
         ["screencapture", "-x", path],
         capture_output=True, text=True, timeout=5

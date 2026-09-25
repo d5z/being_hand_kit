@@ -2,13 +2,13 @@
 CDP Core - shared CDP connection, helpers, page resolution.
 Extracted from Hand V5 browser_cdp.py. Production-tested.
 """
-import json, os, time, urllib.request, websocket
+import json, os, time, urllib.request, tempfile, websocket
 from typing import Optional
 
 CDP_HOST = f"http://localhost:{os.environ.get('HAND_CDP_PORT', '9222')}"
 CONNECT_TIMEOUT = 10
 LOAD_TIMEOUT = 30
-LAST_STATE_FILE = '/tmp/hand_cdp_last_idx'
+LAST_STATE_FILE = os.path.join(tempfile.gettempdir(), 'hand_cdp_last_idx')
 
 def _json_get(path):
     url = f'{CDP_HOST}{path}'
@@ -18,11 +18,12 @@ def list_pages():
     return [p for p in _json_get('/json') if p.get('type') == 'page']
 def _read_last():
     try:
-        with open(LAST_STATE_FILE) as f: return int(f.read().strip())
+        with open(LAST_STATE_FILE, encoding="utf-8") as f: return int(f.read().strip())
     except: return None
 def _write_last(idx):
     try:
-        with open(LAST_STATE_FILE,'w') as f: f.write(str(idx))
+        os.makedirs(tempfile.gettempdir(), exist_ok=True)
+        with open(LAST_STATE_FILE,'w',encoding="utf-8") as f: f.write(str(idx))
     except: pass
 def _ref(page):
     return page.get('id','unknown')[:8]

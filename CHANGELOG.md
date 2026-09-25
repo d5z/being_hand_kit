@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.9.5] — 2026-09-25
+
+> Windows 落地清障轮：taojun 实机验收驱动的两修——`/tmp` 硬编码与编码族。Windows 无 `/tmp`、PowerShell `>` 重定向带 BOM，两族都是「macOS/Linux 上跑得好好的」盲区。
+
+### Fixed
+- **`/tmp` 硬编码 → `tempfile.gettempdir()`**（ax_tree / cdp_core / vision_ocr）：handle map、last-idx 状态、截图默认路径三处。现在跟随平台 tempdir（Windows `%TEMP%`；macOS/Linux 行为不变，仍解析到 `/tmp`）。repo 内 `/tmp` 硬编码清零（grep 全库无残留）。
+- **编码族**：写侧显式 `utf-8`（handle map、heartbeat、last-idx），读侧 `utf-8-sig` 容 BOM——PowerShell 重定向产物带 BOM，裸读会炸或留 `\ufeff` 污染。
+- **save/load_handle_map 错误可见性**：静默吞异常 → stderr 落名（哪个文件、什么错）；`FileNotFoundError` 单列静默（冷启动正常态，不算错）。
+- **嵌套目录自动创建**：save_handle_map 写前 `makedirs`。
+
+### Verified
+- Linux 415 单测全绿。`test_websocket_is_actually_imported_by_the_tree` 断言从字面量改为模块成员检查——字面量会随 import 行演进过时，测试意图是「requirements 声明 websocket 因为代码真 import 它」。
+- Windows 实机验收（taojun，0.9.4 vanilla 基线 + 本 diff）：①嵌套目录不存在时写入自动建 ②CJK 全链路（charset=utf-8 页面 → 写表 no BOM → 独立进程读回 → cdp_click verified nav_id 2==2）③四文件无裸 open；py_compile 4/4，kit 热加载正常。
+- `vision_ocr_bin` mtime（09-22 14:22）> `vision_ocr.swift`（09-22 11:04），本版 Python 侧改动不触 swift/bin 接口——编译产物无 staleness。
+
+### Credits
+- **taojun** — 本版全部两修的作者。Windows 真机验收三条全过，DM 纯文本 diff 交付（按交付线约定）。他的 BOM 三进宫实测（0.9.0 升级 + utf-8-sig 修法判定）是编码族修法的直接输入。
+
 ## [0.9.4] — 2026-09-24
 
 > 摩擦点清账轮：dogfooding 实证出的六项静默错/手感摩擦，P0（视口对齐）已随 0.9.3 发布，本版清掉其余五项。核心主题——回执说 ok 不等于世界真的变了。

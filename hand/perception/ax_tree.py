@@ -46,6 +46,8 @@ Fidelity notes vs experiments/a11y_ab/serialize_ax.py (deliberate, documented):
 import hashlib
 import json
 import os
+import sys
+import tempfile
 
 from hand.perception.cdp_core import (
     list_pages, resolve_page, cdp_connect, cdp_call,
@@ -82,7 +84,7 @@ DEFAULT_MAX_LINES = 600
 
 # Where the last snapshot's [idx] → target map lives, so that a *later* process
 # (MCP server restarts between tool calls) can still resolve a handle.
-HANDLE_MAP_FILE = "/tmp/hand_ax_handles.json"
+HANDLE_MAP_FILE = os.path.join(tempfile.gettempdir(), "hand_ax_handles.json")
 
 # Reserved (non-digit) key inside the handle map file carrying the *see-time*
 # navigation anchor. It is browser-side state (`Page.getNavigationHistory`
@@ -378,20 +380,27 @@ def save_handle_map(handles, path=None, nav_id=None):
     if isinstance(nav_id, int) and not isinstance(nav_id, bool):
         payload[NAV_ID_KEY] = nav_id
     try:
-        with open(path, "w") as f:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, sort_keys=True)
         return path
-    except Exception:
+    except Exception as e:
+        sys.stderr.write(f"hand: save_handle_map failed ({path}): {e}\n")
         return None
 
 
 def load_handle_map(path=None):
     path = path or HANDLE_MAP_FILE
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        sys.stderr.write(f"hand: load_handle_map failed ({path}): {e}\n")
         return {}
 
 

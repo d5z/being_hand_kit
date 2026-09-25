@@ -50,7 +50,10 @@ class TestRequirements(unittest.TestCase):
     def test_websocket_is_actually_imported_by_the_tree(self):
         """Declaring it is only right because the code imports it."""
         src = open(os.path.join(ROOT, "hand", "perception", "cdp_core.py")).read()
-        self.assertIn("import json, os, time, urllib.request, websocket", src)
+        self.assertTrue(any(
+            "websocket" in [m.strip() for m in l[len("import "):].split(",")]
+            for l in src.splitlines() if l.startswith("import ")
+        ), "websocket must be imported by cdp_core.py")
 
 
 class TestStartShEnvLoading(unittest.TestCase):
