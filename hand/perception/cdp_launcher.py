@@ -34,6 +34,12 @@ import json
 CDP_PORT = int(os.environ.get("HAND_CDP_PORT", "9222"))
 CDP_HOST = f"http://localhost:{CDP_PORT}"
 
+# LOCAL PATCH 2026-09-25 (haitian-mac, reported to #34): on macOS with a
+# system-level proxy (scutil --proxy), urllib's default opener routes loopback
+# CDP traffic through the proxy -> HTTP 502, even though the proxy's own
+# ExceptionsList covers localhost. CDP_HOST is always loopback: never proxy it.
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 # Library dir for bundled Linux .so deps (libasound, libatk, ...).
 # Playwright's headless shell links against these but doesn't ship them.
 # The kit bundles them under lib/; start.sh sets LD_LIBRARY_PATH.
@@ -133,7 +139,7 @@ def endpoint_info(timeout: float = 2):
     treat that as evidence level "endpoint_alive"-or-worse, not as success.
     """
     try:
-        with urllib.request.urlopen(f"{CDP_HOST}/json/version", timeout=timeout) as resp:
+        with _NO_PROXY_OPENER.open(f"{CDP_HOST}/json/version", timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
         return data if isinstance(data, dict) else None
     except Exception:
@@ -306,5 +312,5 @@ def open_new_tab(url: str) -> dict:
         method="PUT",
         data=b"",
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with _NO_PROXY_OPENER.open(req, timeout=10) as resp:
         return json.loads(resp.read().decode())

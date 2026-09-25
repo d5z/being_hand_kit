@@ -299,13 +299,13 @@ class TestEnsureChromeEndpointProbe(unittest.TestCase):
             def read(self):
                 return body
 
-        with mock.patch("hand.perception.cdp_launcher.urllib.request.urlopen", return_value=_Resp()):
+        with mock.patch("hand.perception.cdp_launcher._NO_PROXY_OPENER.open", return_value=_Resp()):
             info = cdp_launcher.endpoint_info()
             self.assertEqual(info["Browser"], "HeadlessChrome/140.0")
             self.assertTrue(cdp_launcher.chrome_running())
 
     def test_endpoint_info_returns_none_when_dead(self):
-        with mock.patch("hand.perception.cdp_launcher.urllib.request.urlopen",
+        with mock.patch("hand.perception.cdp_launcher._NO_PROXY_OPENER.open",
                         side_effect=OSError("connection refused")):
             self.assertIsNone(cdp_launcher.endpoint_info())
             self.assertFalse(cdp_launcher.chrome_running())

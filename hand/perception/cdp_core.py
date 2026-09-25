@@ -6,13 +6,17 @@ import json, os, time, urllib.request, tempfile, websocket
 from typing import Optional
 
 CDP_HOST = f"http://localhost:{os.environ.get('HAND_CDP_PORT', '9222')}"
+
+# LOCAL PATCH 2026-09-25 (haitian-mac): loopback CDP must bypass proxies
+# (macOS system proxy 502s localhost) - see cdp_launcher.py note.
+_NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 CONNECT_TIMEOUT = 10
 LOAD_TIMEOUT = 30
 LAST_STATE_FILE = os.path.join(tempfile.gettempdir(), 'hand_cdp_last_idx')
 
 def _json_get(path):
     url = f'{CDP_HOST}{path}'
-    with urllib.request.urlopen(url, timeout=CONNECT_TIMEOUT) as resp:
+    with _NO_PROXY.open(url, timeout=CONNECT_TIMEOUT) as resp:
         return json.loads(resp.read().decode())
 def list_pages():
     return [p for p in _json_get('/json') if p.get('type') == 'page']
