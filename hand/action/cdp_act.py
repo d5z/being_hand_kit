@@ -944,7 +944,8 @@ def cdp_type_focused(text, page_sel=None):
             return _receipt_fail(
                 'cdp_type',
                 f"no focused element (activeElement is {tag or 'missing'}) — "
-                "click the field first, or use cdp_type(selector, text)",
+                "click the field first (cdp_click '[idx]'), then cdp_type(text); "
+                "or pass '[idx]|text' to cdp_click, which routes it to the type path",
                 text=text)
         # Input domain needs no enable. 0.9.4-P3: the pre-flight already read
         # activeElement, so its tagName (already in `focus`) decides the "\n"

@@ -193,7 +193,10 @@ def cdp_type(text: str) -> dict:
     reason. Retrying appends (idempotency: append). Text ending in a
     newline submits like a real Enter key (keyboard event), not
     insertText — the receipt's `enter_mode` says which path ran; sites that
-    listen for keydown submit only on the keyboard path."""
+    listen for keydown submit only on the keyboard path. This tool types
+    its argument literally — to type into an [idx] handle without a
+    separate click, pass '[93]|text' to cdp_click (the do router parses
+    the pipe form and focuses the handle's element first)."""
     from hand.action.cdp_act import cdp_type_focused
     _bump()
     return cdp_type_focused(text)

@@ -108,7 +108,7 @@
     },
     {
       "name": "cdp_type",
-      "description": "Type text into the currently focused element. Click a field first — including by [idx] handle from cdp_see(kind=a11y) (cdp_click '[93]'), or use the '[93]|text' form of the internal type path, which focuses the handle's element and verifies the focus target before typing.",
+      "description": "Type text into the currently focused element. Click a field first — including by [idx] handle from cdp_see(kind=a11y) (cdp_click '[93]'), then call this tool. To type into a handle without a separate click, pass '[93]|text' to cdp_click instead — the do router parses the pipe form and focuses the handle's element first; this tool types its argument literally and does not parse the pipe form.",
       "params": {
         "type": "object",
         "properties": {
