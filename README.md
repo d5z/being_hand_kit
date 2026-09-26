@@ -307,6 +307,16 @@ Other teaching errors: a stale `[idx]` → call `see()` again; typing with no fo
 
 ## Upgrade impact
 
+**0.9.6 → 0.9.7** — F22 lands: `cdp_type` gained a post-flight read-back; the
+receipt goes red if the typed text did not land. **Contract change for anyone
+mocking `Runtime.evaluate`** (Judy's wording, F22 verdict): since F22 the
+read-back requires the `found` and `value` fields — a real browser's JS always
+returns `found: true/false`. Any downstream test that mocks
+`Runtime.evaluate` will trip on this: the symptom is "focus moved during
+type" + an empty read_back, which looks like real focus drift but is the mock
+not keeping up with the contract. Fix: add `found: true` + `value` to the
+mock response. Do not loosen the assertion.
+
 **0.7.0 → 0.8.0** — no behaviour change on the MCP face; the Python face is new,
 and `do()` grew the optional `expect=`. Receipt field names did not move.
 
