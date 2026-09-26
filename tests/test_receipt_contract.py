@@ -435,7 +435,7 @@ class TestActionReceipts(unittest.TestCase):
     def test_type_focused_verified_reports_target(self):
         def dispatcher(method, params):
             if "activeElement" in params.get("expression", ""):
-                return {"result": {"value": '{"tag":"INPUT","id":"q","type":"search"}'}}
+                return {"result": {"value": '{"found":true,"tag":"INPUT","id":"q","type":"search","value":"hi"}'}}
             return {}
 
         from hand.action.cdp_act import cdp_type_focused
@@ -882,7 +882,7 @@ class TestHandleActionReceipts(unittest.TestCase):
                 return {"result": {"value": json.dumps({"focused": True})}}
             if method == "Runtime.evaluate":
                 return {"result": {"value": json.dumps(
-                    {"tag": "INPUT", "id": "q", "type": "text"})}}
+                    {"found": True, "tag": "INPUT", "id": "q", "type": "text", "value": "hello"})}}
             return {}
 
         with mock.patch("hand.action.cdp_act.list_pages",

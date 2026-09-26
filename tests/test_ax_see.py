@@ -278,7 +278,7 @@ class TestHandleType(unittest.TestCase):
                 return {"result": {"value": json.dumps({"focused": True})}}
             if method == "Runtime.evaluate":
                 return {"result": {"value": json.dumps(
-                    {"tag": active, "id": "q", "type": "search"})}}
+                    {"found": True, "tag": active, "id": "q", "type": "search", "value": "hello"})}}
             return {}
 
         with mock.patch.object(cdp_act, "list_pages", return_value=[PAGE]), \

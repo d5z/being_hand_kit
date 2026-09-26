@@ -127,6 +127,67 @@ def _type_enter_mode(tag, role=None):
     return ENTER_MODE_KEYBOARD
 
 
+# ── Type target editability + read-back (F22) ────────────────────────
+# Input.insertText goes to the browser text-input context, not
+# document.activeElement. A SELECT or a BODY focus used to produce an
+# ok+verified receipt with zero landing. Pre-flight refuses non-editable
+# / readonly / disabled targets; post-flight substring-reads the field
+# (before keyboard-mode Enter, which may submit-and-clear).
+
+_NON_TEXT_INPUT_TYPES = frozenset({
+    'checkbox', 'radio', 'button', 'submit', 'reset',
+    'file', 'image', 'color', 'range', 'hidden',
+})
+
+
+def _is_text_editable(tag, input_type=None, is_content_editable=False):
+    """Can Input.insertText land in this element?"""
+    tag_u = (tag or '').upper()
+    if tag_u == 'TEXTAREA':
+        return True
+    if tag_u == 'INPUT':
+        return (input_type or '').lower() not in _NON_TEXT_INPUT_TYPES
+    if is_content_editable:
+        return True
+    return False
+
+
+def _not_editable_reason(tag):
+    tag_u = (tag or '').upper() or '?'
+    return (
+        f"target is not text-editable (<{tag_u}>) — Input.insertText would go "
+        "to the browser text-input context, not this element; use cdp_click "
+        "on an option, or a custom dropdown control"
+    )
+
+
+def _land_fail_reason(typed, after):
+    return (
+        f"text did not land (zero-landing): typed {typed!r}, field now {after!r} "
+        "— the browser text-input context dropped or redirected it"
+    )
+
+
+def _preflight_type_block(tag, input_type=None, is_content_editable=False,
+                          readonly=False, disabled=False):
+    """Pre-flight reason, or None if typing may proceed."""
+    if not _is_text_editable(tag, input_type, is_content_editable):
+        return _not_editable_reason(tag)
+    if (tag or '').upper() in ('INPUT', 'TEXTAREA') and (readonly or disabled):
+        return 'field is readonly/disabled'
+    return None
+
+
+def _rb_evidence(rb):
+    if not rb:
+        return {'before': '', 'after': '', 'landed': False}
+    return {
+        'before': rb.get('before', ''),
+        'after': rb.get('after', ''),
+        'landed': bool(rb.get('landed')),
+    }
+
+
 def _dispatch_enter(ws, msg_id=36):
     """A real Enter press through the Input domain: keyDown + keyUp.
 
@@ -141,24 +202,144 @@ def _dispatch_enter(ws, msg_id=36):
                  msg_id=msg_id)
 
 
-def _insert_text(ws, text, enter_mode, msg_id=35):
-    """Type `text` char by char; every "\n" follows `enter_mode`.
+def _insert_text(ws, text, enter_mode, msg_id=35, before_enter=None):
+    """Type `text` in segments; every "\n" follows `enter_mode`.
 
-    Returns the mode actually exercised: 'keyboard_event' / 'text_insert', or
-    None when the text carries no "\n" at all (nothing was forked).
+    Keyboard-mode "\n" is a submit intent: the text segment is inserted
+    first, then `before_enter(segment)` runs (post-flight read-back must
+    see the field before a submit handler clears it), then Enter is
+    dispatched. If `before_enter` returns a truthy value, insertion stops
+    and that value is the second return item.
+
+    ENTER_MODE_TEXT inserts the literal newline and never calls
+    `before_enter` — caller does one read-back after everything.
+
+    Returns (used_mode, early_stop). used_mode is 'keyboard_event' /
+    'text_insert', or None when the text carries no "\n".
     """
-    used = None
-    for char in text:
-        if char == '\n':
-            used = enter_mode
-            if enter_mode == ENTER_MODE_TEXT:
-                cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=msg_id)
-            else:
-                _dispatch_enter(ws, msg_id=msg_id)
-        else:
+    if enter_mode == ENTER_MODE_TEXT or '\n' not in text:
+        for char in text:
             cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=msg_id)
-        time.sleep(0.001)
-    return used
+            time.sleep(0.001)
+        used = enter_mode if (enter_mode == ENTER_MODE_TEXT and '\n' in text) else None
+        return used, None
+
+    parts = text.split('\n')
+    used = ENTER_MODE_KEYBOARD
+    for i, part in enumerate(parts):
+        for char in part:
+            cdp_call(ws, 'Input.insertText', {'text': char}, msg_id=msg_id)
+            time.sleep(0.001)
+        if i < len(parts) - 1:
+            if before_enter is not None:
+                early = before_enter(part)
+                if early:
+                    return used, early
+            _dispatch_enter(ws, msg_id=msg_id)
+            time.sleep(0.001)
+    return used, None
+
+
+def _type_target_attrs(ws, selector=None, msg_id=21):
+    """Editability + current value of the type target.
+
+    selector=None → document.activeElement. One Runtime.evaluate returns
+    tag/type/name/id/isContentEditable/readonly/disabled/value.
+    """
+    if selector is not None:
+        el_expr = 'document.querySelector(' + json.dumps(selector) + ')'
+    else:
+        el_expr = 'document.activeElement'
+    expr = (
+        '(function(){var el=' + el_expr + ';'
+        'if(!el)return JSON.stringify({found:false});'
+        'var tag=el.tagName||"";'
+        'var val=(tag==="INPUT"||tag==="TEXTAREA")?(el.value||""):(el.textContent||"");'
+        'return JSON.stringify({found:true,tag:tag,id:el.id||"",'
+        'name:(el.getAttribute&&el.getAttribute("name"))||"",'
+        'type:(el.getAttribute&&el.getAttribute("type"))||"",'
+        'isContentEditable:!!el.isContentEditable,'
+        'readonly:!!el.readOnly,disabled:!!el.disabled,value:val});'
+        '})()'
+    )
+    raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True},
+                   msg_id=msg_id)
+    value = raw.get('result', {}).get('value') or '{}'
+    try:
+        data = json.loads(value)
+    except Exception as e:
+        return {'found': False, 'parse_error': f'{type(e).__name__}: {e}'}
+    return data if isinstance(data, dict) else {'found': False}
+
+
+def _read_back_target(ws, typed, before, selector=None, expect_focus=None, msg_id=22):
+    """Post-flight: did `typed` appear as a substring of the field value?
+
+    selector path reads the same selector. handle/focused reads
+    document.activeElement and, when `expect_focus` is given, reports
+    focus_moved if tag/id/name disagree with the pre-flight capture.
+    """
+    attrs = _type_target_attrs(ws, selector=selector, msg_id=msg_id)
+    after = attrs.get('value', '') if attrs.get('found') else ''
+    out = {'before': before, 'after': after, 'landed': typed in after}
+    if expect_focus is not None:
+        same = (
+            attrs.get('found')
+            and (attrs.get('tag') or '').upper() == (expect_focus.get('tag') or '').upper()
+            and (attrs.get('id') or '') == (expect_focus.get('id') or '')
+            and (attrs.get('name') or '') == (expect_focus.get('name') or '')
+        )
+        if not same:
+            out['focus_moved'] = True
+            out['landed'] = False
+    return out
+
+
+def _type_with_readback(ws, text, enter_mode, *, selector=None,
+                        expect_focus=None, msg_id=20):
+    """Insert `text` and post-flight read-back.
+
+    Keyboard-mode "\n": read-back runs on each text segment *before* Enter.
+    ENTER_MODE_TEXT / no newline: one read-back after everything.
+
+    Returns (used_enter, read_back, fail_reason). fail_reason is None on
+    success. read_back is {before, after, landed}.
+    """
+    before_attrs = _type_target_attrs(ws, selector=selector, msg_id=msg_id + 1)
+    before = before_attrs.get('value', '') if before_attrs.get('found') else ''
+    last_rb = None
+
+    def before_enter(segment):
+        nonlocal last_rb
+        last_rb = _read_back_target(
+            ws, segment, before, selector=selector,
+            expect_focus=expect_focus, msg_id=msg_id + 2)
+        if last_rb.get('focus_moved'):
+            return 'focus moved during type'
+        if not last_rb.get('landed'):
+            return _land_fail_reason(segment, last_rb.get('after', ''))
+        return None
+
+    used, early = _insert_text(
+        ws, text, enter_mode, msg_id=msg_id,
+        before_enter=before_enter if enter_mode == ENTER_MODE_KEYBOARD else None)
+    if early:
+        return used, last_rb, early
+
+    if enter_mode == ENTER_MODE_KEYBOARD and '\n' in text and text.endswith('\n'):
+        return used, last_rb, None
+
+    check = text
+    if enter_mode == ENTER_MODE_KEYBOARD and '\n' in text:
+        check = text.rsplit('\n', 1)[-1]
+    last_rb = _read_back_target(
+        ws, check, before, selector=selector,
+        expect_focus=expect_focus, msg_id=msg_id + 2)
+    if last_rb.get('focus_moved'):
+        return used, last_rb, 'focus moved during type'
+    if not last_rb.get('landed'):
+        return used, last_rb, _land_fail_reason(check, last_rb.get('after', ''))
+    return used, last_rb, None
 
 
 # ── [idx] handle path (0.7.0 S2) ─────────────────────────────────────
@@ -616,7 +797,7 @@ def cdp_type_handle(handle, text, page_sel=None):
                   "functionDeclaration": "function(){this.focus();"
                                          "return JSON.stringify({focused:true});}",
                   "returnByValue": True}, msg_id=33, timeout=10)
-        focus = _active_element(ws, msg_id=34)
+        focus = _type_target_attrs(ws, selector=None, msg_id=34)
         tag = (focus.get("tag") or "").upper()
         if tag in ("", "BODY", "HTML"):
             out = _handle_fail(
@@ -625,10 +806,36 @@ def cdp_type_handle(handle, text, page_sel=None):
                 entry=entry, handle=str(handle), method="cdp_type", nav=nav_ev)
             out["text"] = text
             return out
+        block = _preflight_type_block(
+            tag,
+            input_type=focus.get("type"),
+            is_content_editable=bool(focus.get("isContentEditable")),
+            readonly=bool(focus.get("readonly")),
+            disabled=bool(focus.get("disabled")),
+        )
+        if block:
+            out = _handle_fail(
+                block, entry=entry, handle=str(handle),
+                method="cdp_type", nav=nav_ev)
+            out["text"] = text
+            out["evidence"]["tag"] = tag
+            if entry.get("role"):
+                out["evidence"]["role"] = entry.get("role")
+            if entry.get("name"):
+                out["evidence"]["name"] = entry.get("name")
+            return out
         # 0.9.4-P3: the focused element's own tag decides what "\n" means.
         enter_mode = _type_enter_mode(tag, entry.get("role"))
-        used_enter = _insert_text(ws, text, enter_mode, msg_id=35)
+        used_enter, rb, fail = _type_with_readback(
+            ws, text, enter_mode, expect_focus=focus, msg_id=35)
         _write_last(idx)
+        if fail:
+            out = _handle_fail(
+                fail, entry=entry, handle=str(handle),
+                method="cdp_type", nav=nav_ev)
+            out["text"] = text
+            out["evidence"]["read_back"] = _rb_evidence(rb)
+            return out
         evidence = {
             "element": _handle_label(entry),
             "role": entry.get("role"), "name": entry.get("name"),
@@ -637,6 +844,7 @@ def cdp_type_handle(handle, text, page_sel=None):
             "focus": _focus_label(focus),
             "method_detail": "DOM.resolveNode → focus() → Input.insertText",
             "enter_mode": used_enter,
+            "read_back": _rb_evidence(rb),
             "verified": True,
         }
         evidence.update(nav_ev)
@@ -742,16 +950,36 @@ def cdp_type(selector, text, page_sel=None, fast=False):
             return _receipt_fail('cdp_type',
                                  f"element info failed: {info['error']}",
                                  selector=selector, text=text)
+        attrs = _type_target_attrs(ws, selector, msg_id=18)
+        tag = (attrs.get('tag') or info.get('tag') or '').upper()
+        block = _preflight_type_block(
+            tag,
+            input_type=attrs.get('type'),
+            is_content_editable=bool(attrs.get('isContentEditable')),
+            readonly=bool(attrs.get('readonly')),
+            disabled=bool(attrs.get('disabled')),
+        )
+        if block:
+            out = _receipt_fail('cdp_type', block, selector=selector, text=text)
+            out['evidence']['tag'] = tag
+            if attrs.get('name'):
+                out['evidence']['name'] = attrs['name']
+            return out
         x, y = info['x'], info['y']
         _click_at(ws, x, y, _get_dpr(ws))
-        # 0.9.4-P3: _element_info already reports the tag, so "\n" forks here.
-        enter_mode = _type_enter_mode(info.get('tag'))
-        used_enter = _insert_text(ws, text, enter_mode, msg_id=20)
+        # 0.9.4-P3: the target's tag decides what "\n" means.
+        enter_mode = _type_enter_mode(tag)
+        used_enter, rb, fail = _type_with_readback(
+            ws, text, enter_mode, selector=selector, msg_id=20)
         _write_last(idx)
+        if fail:
+            out = _receipt_fail('cdp_type', fail, selector=selector, text=text)
+            out['evidence']['read_back'] = _rb_evidence(rb)
+            return out
         ev = _element_evidence(info)
         ev['verified'] = True
         ev['selector'] = selector
-        ev['read_back'] = 'document.querySelector hit + Input.insertText'
+        ev['read_back'] = _rb_evidence(rb)
         ev['enter_mode'] = used_enter
         return {'method': 'cdp_type', 'page_index': idx, 'selector': selector,
                 'text': text, 'result': 'ok',
@@ -933,8 +1161,8 @@ def cdp_type_focused(text, page_sel=None):
     ws = cdp_connect(page['webSocketDebuggerUrl'])
     try:
         # Pre-flight: Input.insertText goes to whatever has focus — if nothing
-        # does, the text vanishes. Verify the focus target first (PRD S3).
-        focus = _active_element(ws)
+        # does, the text vanishes. Verify the focus target first (PRD S3 / F22).
+        focus = _type_target_attrs(ws)
         if focus.get('parse_error'):
             return _receipt_fail('cdp_type',
                                  f"focus verification failed: {focus['parse_error']}",
@@ -947,18 +1175,37 @@ def cdp_type_focused(text, page_sel=None):
                 "click the field first (cdp_click '[idx]'), then cdp_type(text); "
                 "or pass '[idx]|text' to cdp_click, which routes it to the type path",
                 text=text)
+        block = _preflight_type_block(
+            tag,
+            input_type=focus.get('type'),
+            is_content_editable=bool(focus.get('isContentEditable')),
+            readonly=bool(focus.get('readonly')),
+            disabled=bool(focus.get('disabled')),
+        )
+        if block:
+            out = _receipt_fail('cdp_type', block, text=text)
+            out['evidence']['tag'] = tag
+            if focus.get('name'):
+                out['evidence']['name'] = focus['name']
+            return out
         # Input domain needs no enable. 0.9.4-P3: the pre-flight already read
         # activeElement, so its tagName (already in `focus`) decides the "\n"
         # fork without a second round trip.
         enter_mode = _type_enter_mode(tag)
-        used_enter = _insert_text(ws, text, enter_mode, msg_id=20)
+        used_enter, rb, fail = _type_with_readback(
+            ws, text, enter_mode, expect_focus=focus, msg_id=20)
         _write_last(idx)
+        if fail:
+            out = _receipt_fail('cdp_type', fail, text=text)
+            out['evidence']['read_back'] = _rb_evidence(rb)
+            return out
         return {'method': 'cdp_type', 'page_index': idx, 'text': text,
                 'result': 'ok', 'verified': True,
                 'evidence': {'focus': _focus_label(focus), 'tag': tag,
                              'focus_id': focus.get('id') or '',
                              'focus_type': focus.get('type') or '',
                              'enter_mode': used_enter,
+                             'read_back': _rb_evidence(rb),
                              'verified': True}}
     finally:
         ws.close()
