@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.9.7] — 2026-09-26
+
+> 回执诚实主线第三刀：cdp_type 落点回读。打字后回执如实报告文本是否真的落在目标字段——零落地、落点漂移、SELECT 照收后丢弃，全部从「碰巧绿」变成「如实红」。Judy 从修法到判读走完第一条社区完整闭环（设计→分段投递→矩阵→判读→合并）。
+
+### Fixed
+- **cdp_type 三路径落点回读**（F22，P2，Judy f22-type-readback）：`cdp_type` / `cdp_type_handle` / `cdp_type_focused` 全部接上三层——①pre-flight 可编辑性拒绝：SELECT/非文本 INPUT/readonly/disabled 红在门外，回执带 target 证据（tag/type）；②post-flight read-back：typed text 必须是 after-value 子串，`evidence.read_back = {before, after, landed}`，零落地红回执（"text did not land (zero-landing)"）；③Enter 顺序：keyboard 模式 `\n` 先插文本段→回读→再 dispatch Enter，read-back 不被提交清空干扰；textarea（ENTER_MODE_TEXT）全部插完后一次回读。0.9.6 及之前 `ok+verified` 只验 focus/selector 命中不验落点——文本静默丢失时回执仍是绿的（已知病灶：干净页 zero-landing、焦点漂移进搜索框、SELECT 照收文本后丢弃）。
+
+### Docs
+- **升级路径三坑进 README Upgrade impact**（F25/F26，216 & Judy 0.9.6 实机样本）：①`rsync --delete` 同步 bundle 会删掉 bundle 里没有的本机安装痕迹（.venv 软链、.env、PATCHES.md）→ start.sh 回落系统 python3 报 mcp-start-failed——同步前显式 exclude；②kits/ 下带 manifest.json 的杂散目录（.bak 残留）→ reload 报 no loadable manifest（单因子实验锁定：权限脏不致病，杂散 manifest 才是）——版本备份放 kits/ 之外；③tar 根就是 kit 目录本身，解压到 `~/.heart-portal/kits/hand/`；裸 `tar xzf` 后见 600/700 是 umask 叠加（无害）。
+
+### Verified
+- 矩阵 9/9（真 headless Chrome，隔离 profile）：R1/R2 红在 pre-flight not text-editable（exp2 原形状 + exp1 无漂移证明——旁路 input 保持 "BOM" 不动）；R3 红在 post-flight did-not-land（oninput 自清空字段，pre-flight 唯一拦不住的残余形状，after==""）；R4 红在 readonly；G1-G5 全 landed+verified（handle 路径/追加/textarea 换行/keyboard Enter 前回读/contenteditable）。
+- Linux 415 回归全绿。初跑 3 败 → 根因判读：mock `Runtime.evaluate` 返回旧形状（无 `found` 字段），新 read-back 判缺失为 focus-moved——真实浏览器 JS 总返回 found:true/false，是 mock 未跟新契约。修 mock 不松判据（补 `found: true` + `value`），复跑全绿。
+- Judy 判读通过放行（2026-09-26 12:37）：三处手工修复均在上下文/拼接层（边界空行、manifest 路径、丢换行），不动核心语义，与对账声明字节账一致。
+
+### Credits
+- **Judy** — 本版主修的作者。f22-type-readback 分支（d99a037，cdp_act.py +295 行三路径全接）、9/9 矩阵脚本与红样本纪律交付、DM 七段 diff 分段投递、判读放行——从修法到合并的第一条社区完整闭环。setup_guide 契约变更条目（mock 需补 found/value）按她原文转译进 README。
+- **216** — F25 升级路径坑样本（rsync --delete 删本机安装痕迹）；0.9.6 实机回执（撤补丁升官方版、diff 零差异、系统代理全开下原故障场景复测通过）。
+- **Judy** — F26 杂散 manifest 目录坑（单因子实验锁定真凶）+ 0.9.6 升级反馈（0.9.0→0.9.6 无需重启 Portal 全链验证）。
+- F22 病灶发现：Alice dogfood 双实验（2026-09-22，exp1 污染样本 + exp2 干净复现）。
+
 ## [0.9.6] — 2026-09-25
 
 > macOS 代理盲区轮：216 实机根因 + 补丁。系统级代理（Clash 类）把 localhost CDP 流量送进代理回 502，探针瞎了误杀活 Chrome——回环恒直连，外网恒走系统代理。

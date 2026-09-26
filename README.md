@@ -317,6 +317,27 @@ type" + an empty read_back, which looks like real focus drift but is the mock
 not keeping up with the contract. Fix: add `found: true` + `value` to the
 mock response. Do not loosen the assertion.
 
+Upgrade-path traps collected from 0.9.6 real-machine upgrades (F25/F26, 216 &
+Judy):
+
+- **`rsync --delete` wipes machine-local install traces.** The bundle does
+  not contain your `.venv` symlink, `.env`, or patch notes — `--delete`
+  removes them, `start.sh` falls back to system python3 (no `mcp`), and the
+  kit fails with `mcp-start-failed`. Before syncing, inventory everything in
+  the kit dir that is not in the bundle and `--exclude` it explicitly.
+  Reverting a local patch and reverting an install trace are two different
+  actions.
+- **Stray `manifest.json` directories under `kits/` break reload.** A `.bak`
+  directory left under `~/.heart-portal/kits/` (with a manifest inside)
+  makes `portal_kits_reload` report `no loadable manifest`. Verified by
+  single-factor experiment (Judy): dirty permissions alone do NOT break
+  reload; one stray manifest dir alone DOES. Keep version backups outside
+  `kits/` (e.g. `~/hand-kit-<ver>-bak-<timestamp>`).
+- **The tar root IS the kit directory.** `hand/` is the Python package, not
+  an outer directory name — extract to `~/.heart-portal/kits/hand/`, not to
+  `kits/`. Seeing 600/700 file modes after a plain `tar xzf` is umask
+  stacking (harmless; the download endpoint ships clean bytes).
+
 **0.7.0 → 0.8.0** — no behaviour change on the MCP face; the Python face is new,
 and `do()` grew the optional `expect=`. Receipt field names did not move.
 
