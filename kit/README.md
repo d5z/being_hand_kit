@@ -59,6 +59,14 @@ hasPopup 控件时会在回执 `hint` 里点名该句柄——先 `cdp_click "[i
   （0.5s 间隔轮询 `/json/version`），超出即报错而不是假 ok。
 - `cdp_see`（a11y 树）典型 0.2-0.4s（本机实测 487 行页面 0.21s）。
 
+## 升级影响（0.9.6 → 0.9.7）
+
+**升级前备份**（Judy 拟）：若需保留旧版，固定写到 `~/hand-kit-{旧版本}-bak-{时间戳}/`（务必在 `kits/` 目录之外）。`kits/` 内的备份或杂散目录若含 `manifest.json`，会被 kit 加载器当作候选 manifest，导致 `no loadable manifest` 整体加载失败——0.9.0→0.9.6 升级的实测归因，双实验定位：A 权限洗清（600/700 是本地 umask+tar 应用，非 bundle 问题），真凶是 `kits/` 内含旧 manifest 的 `.bak` 目录。
+
+- **`cdp_type` 落点回读（F22）**：打字后回执如实报告文本是否真的落在目标字段——零落地、落点漂移、SELECT 照收后丢弃，从「碰巧绿」变「如实红」。mock `Runtime.evaluate` 的下游测试需补 `found` + `value` 字段（真实浏览器 JS 总返回 `found: true/false`；详见仓库根 README Upgrade impact）。
+- **tar 根即 kit 目录**：`hand/` 是 Python 包不是外层目录名——解压到 `~/.heart-portal/kits/hand/`；裸 `tar xzf` 后见 600/700 文件权限是 umask 叠加，无害。
+- **`rsync --delete` 会删掉 bundle 里没有的本机安装痕迹**（`.venv` 软链、`.env`）：同步前显式 `--exclude`。
+
 ## 升级影响（0.6.x → 0.7.0）
 
 - **首次 spawn 会创建 `.chrome-profile/`**（`<kit>/.chrome-profile`，默认 isolated profile）。
