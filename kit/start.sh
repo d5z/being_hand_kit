@@ -59,10 +59,18 @@ fi
 # mcp SDK but launches via bare system python3 is a dead end on any machine
 # without a global mcp install — requirements go into .venv, but start.sh
 # never looked there, so the venv was installed for nothing.
+# Windows (0.9.7, Judy 2026-09-29 D5-NJ-DT-0067 联调实机): venv layout is
+# Scripts/python.exe (not bin/python3), and Git Bash may have python but no
+# python3 on PATH — both fallbacks needed or the kit dies at interpreter
+# selection on a stock Windows box.
 if [ -x "$KIT_HOME/.venv/bin/python3" ]; then
   PY="$KIT_HOME/.venv/bin/python3"
-else
+elif [ -x "$KIT_HOME/.venv/Scripts/python.exe" ]; then
+  PY="$KIT_HOME/.venv/Scripts/python.exe"
+elif command -v python3 >/dev/null 2>&1; then
   PY="python3"
+else
+  PY="python"
 fi
 
 cd "$KIT_HOME" || exit 1
