@@ -16,7 +16,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-sys.path.insert(0, "/home/alice/Hand")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # layer -> module list. L1 is kept identical to tests/run_tests.py MODULES.
 LAYERS = {
@@ -57,7 +57,7 @@ def run_layer(layer, modules):
     """
     cmd = [sys.executable, "-m", "tests.harness.layer_runner"] + list(modules)
     try:
-        proc = subprocess.run(cmd, cwd="/home/alice/Hand", capture_output=True,
+        proc = subprocess.run(cmd, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), capture_output=True,
                               text=True, timeout=900)
     except subprocess.TimeoutExpired:
         return {"tests": 0, "passed": 0, "skipped": 0, "failed": 0, "errors": 1,

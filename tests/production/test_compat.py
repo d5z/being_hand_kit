@@ -14,7 +14,7 @@ import subprocess
 import sys
 import unittest
 
-sys.path.insert(0, "/home/alice/Hand")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from hand import router
 from hand.session import reset_session
@@ -23,7 +23,7 @@ from tests.harness import judge as J
 from tests.harness import runner
 from tests.harness.scenarios import FixtureServer
 
-_ROOT = "/home/alice/Hand"
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _FX = None
 _CHROME = runner.chrome_available()
 IDEMPOTENCY = {"idempotent", "append", "side_effect"}

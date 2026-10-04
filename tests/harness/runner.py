@@ -8,6 +8,7 @@ Also the shared environment helpers used by every L2-L6 test module:
 """
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import time
 import urllib.request
 from urllib.parse import urlsplit
 
-sys.path.insert(0, "/home/alice/Hand")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from tests.harness import judge as J
 

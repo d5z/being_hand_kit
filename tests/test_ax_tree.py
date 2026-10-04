@@ -211,7 +211,7 @@ class TestDeterminismAcrossProcesses(unittest.TestCase):
                 env = dict(os.environ, PYTHONHASHSEED=seed)
                 env.pop("PYTHONPATH", None)
                 r = subprocess.run([sys.executable, "-c", script, path],
-                                   capture_output=True, text=True, env=env, cwd="/home/alice/Hand")
+                                   capture_output=True, text=True, env=env, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 self.assertEqual(r.returncode, 0, r.stderr)
                 outs.append(r.stdout)
             self.assertEqual(len(set(outs)), 1)
