@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.8] — 2026-10-12
+
+> Windows 生产化轮：cdp_shot 超时家族判读收束（五格矩阵）+ win32 报错文案修复 + 僵尸测试改造。主题是把「装得上、起得来、报得诚实」在 Windows 面上闭合。
+
+### Fixed
+- **win32 报错文案指向真实修法方向**（F27 补刀，cdp_launcher.py）：0.9.7 及之前 `no chrome binary found` 一律建议 "install playwright chromium"——但 win32 查找链（Chrome/Edge 安装路径 + PATH）从不读 Playwright cache，Windows 用户照做也无效（死方向）。win32 分支现在给出真实方向：设 `$CHROME` 指向 chrome.exe/msedge.exe 或安装 Chrome/Edge，并声明跳过 Playwright cache 是有意设计（headless-shell 在 Windows 是 old-headless 渲染管线——五格矩阵判读的超时元凶，#34 2271-2299）。回归锁 `test_open_place_error_direction_win32`（432 全绿新增一枚）。
+
+### Docs
+- **Windows 安装已知坑节**进 kit/README.md（Judy ① WSL stub + ②③ venv Scripts/python fallback）：WSL stub P1 的临时修法（manifest command 写 Git Bash 全路径）、修法裁决（主路径 a：Grove 安装器 Windows 探测改写——Town 侧 !176；b：Portal 启动器避 System32——F20 转 sw）、升级影响与备份边界（F25/F26）。
+- **feedback ledger 收口三笔**（docs/feedback-ledger.md）：F27 cdp_shot 超时家族五格矩阵判读收束；F28 taojun 句柄表写盘目录主犯按实证覆盖销账；F29 PYTHONUTF8 显式编码现状。
+
+### Tests
+- **僵尸测试改造**：test_release_080（0.8.0 断言、从未注册进 run_tests MODULES——僵尸）改造为历史锁（0.8.0 版本事实钉死）+ test_release_097 回填（0.9.7 事实）+ test_release_chain 连环扣新增（每 release 测试文件必须注册 MODULES、当前版本必须有 release test——结构性防再僵尸）。
+- 基线 431 → 432 全绿（新增 win32 文案回归锁一枚）。
+
+### Verified
+- 五格矩阵（#34 2271-2299）：W1（Win+完整 Chrome 153）绿 n=2（Noah 2277）；macOS 三格（完整 154 / headless-shell 153 / 134）全绿（alice 2274/2278）——超时条件收束为 Windows × headless-shell（old-headless 渲染管线，完整版 ~132 起移除）。0.9.7+ win32 分支结构性不可能选中 headless-shell（系统浏览器全找不到时 return None，Playwright cache 永不触达）。
+- taojun 2272 两笔 9/24 老悬账当场收口：主犯判定（路径主犯成立，C:\tmp 目录被撤时句柄表写盘静默失败）+ BOM 复现参数已直发 weiguo（tQOW2YeR）。
+- 432 tests 11s OK；Grove 发布验证（tools 列表非空）。
+
+### Credits
+- **Noah** — cdp_shot 超时三样本（跨会话稳定复现 + 极简 data:URL 排除页面复杂度 + 通道分离 WinError 10061）+ W1 对偶格真机出数（2277），五格矩阵的 Windows 侧全靠他的真机。
+- **taojun** — 主犯判定当场实验（2272，引 seq 2755：路径主犯、句柄表静默失败形态）+ BOM 参数第一手直发 weiguo + 真机验收认领（0.9.8 ①② 两项）。
+- **Judy** — 坑①需求落 Town 侧 !176（Grove 安装器 Windows 探测，InstallBody platform+git_bash_path 零破坏契约）+ ②③（PR #4 fe89694 随版带出）。
+- **Being** — cdp_shot 复现包三封 DM 送达（XT0Rga1X/kyiyDMFc/kx7CdOil），通道分离样本+极简页样本是五格矩阵判读的两根柱子。
+
 ## [0.9.7] — 2026-09-28
 
 > 回执诚实主线第三刀：cdp_type 落点回读。打字后回执如实报告文本是否真的落在目标字段——零落地、落点漂移、SELECT 照收后丢弃，全部从「碰巧绿」变成「如实红」。Judy 从修法到判读走完第一条社区完整闭环（设计→分段投递→矩阵→判读→合并）。

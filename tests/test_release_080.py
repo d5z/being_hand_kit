@@ -24,12 +24,12 @@ def _manifest():
 
 
 class TestVersion(unittest.TestCase):
-    def test_package_version_is_released(self):
-        import hand
-        self.assertEqual(hand.__version__, "0.8.0")
-
-    def test_manifest_version_is_released(self):
-        self.assertEqual(_manifest()["version"], "0.8.0")
+    """Historical lock: 0.8.0 shipped on its date (2026-09-1x). Locking what
+    shipped — the version itself has since moved on (see test_release_chain
+    for the rule that current-version assertions must follow the bump).
+    Was a zombie 2026-10-0x..12: this class asserted version == 0.8.0 as a
+    *current* assertion, so the file could never be registered in run_tests
+    MODULES (it would fail after 0.9.0). Fixed 2026-10-12 during 0.9.8."""
 
     def test_spec_version_table_row(self):
         with open(os.path.join(ROOT, "SPEC.md"), encoding="utf-8") as f:

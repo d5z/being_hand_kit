@@ -178,6 +178,21 @@ class TestWindowsSupport(unittest.TestCase):
                 self.assertEqual(place.type, "unknown")
                 self.assertIsNone(place.identifier)
 
+    def test_open_place_error_direction_win32(self):
+        # Regression lock for the 0.9.8 message fix (bonfire #2299): on win32 the
+        # finder never reads the Playwright cache, so the error must NOT direct
+        # users to "install playwright chromium" — that points at the exact
+        # headless-shell pipeline the Windows chain deliberately skips.
+        with mock.patch("sys.platform", "win32"), \
+             mock.patch.object(cdp_launcher, "chrome_running", return_value=False), \
+             mock.patch.object(cdp_launcher, "_find_chrome", return_value=None):
+            with self.assertRaises(RuntimeError) as ctx:
+                cdp_launcher.ensure_chrome("about:blank")
+        msg = str(ctx.exception)
+        self.assertIn("$CHROME", msg)
+        self.assertIn("Chrome/Edge", msg)
+        self.assertNotIn("install playwright chromium", msg)
+
     def test_manifest_platforms(self):
         manifest_path = os.path.join(os.path.dirname(__file__), "..", "kit", "manifest.json")
         with open(manifest_path) as f:

@@ -59,6 +59,12 @@ hasPopup 控件时会在回执 `hint` 里点名该句柄——先 `cdp_click "[i
   （0.5s 间隔轮询 `/json/version`），超出即报错而不是假 ok。
 - `cdp_see`（a11y 树）典型 0.2-0.4s（本机实测 487 行页面 0.21s）。
 
+## Windows 安装已知坑（0.9.7 现状，0.9.8 修复中）
+
+**Kit failed to start（WSL stub，P1）**：manifest `command` 裸 `bash` 在 Windows 解析到 `C:/Windows/System32/bash.exe`——那是 WSL stub，未启用虚拟化的机器 kit 直接起不来（Judy 1830 实测，Win10 x64 + Git for Windows）。**临时修法（Judy 拟）**：编辑 kit 目录下 `manifest.json`，把 `"command": ["bash", "start.sh"]` 改成 Git Bash 全路径——`["C:/Program Files/Git/bin/bash.exe", "start.sh"]`（按机器实际安装位调整）。macOS/Linux 不受影响。修法裁决（围炉 1841）：0.9.8 主路径走 a——Grove 安装器在 Windows 安装时探测 Git Bash 并改写 `command[0]`（Town 平台侧）；b——Portal 启动器 win32 解析裸 bash 时避开 System32、Git Bash 优先——作为 Portal 侧 issue 立项（F20）。写死路径不进上游 bundle。
+
+venv `Scripts/` 平台分支与 `python` fallback（Judy 1830②③）已在主干修掉（PR #4），随 0.9.8 发布。
+
 ## 升级影响（0.9.6 → 0.9.7）
 
 **升级前备份**（Judy 拟）：若需保留旧版，固定写到 `~/hand-kit-{旧版本}-bak-{时间戳}/`（务必在 `kits/` 目录之外）。`kits/` 内的备份或杂散目录若含 `manifest.json`，会被 kit 加载器当作候选 manifest，导致 `no loadable manifest` 整体加载失败——0.9.0→0.9.6 升级的实测归因，双实验定位：A 权限洗清（600/700 是本地 umask+tar 应用，非 bundle 问题），真凶是 `kits/` 内含旧 manifest 的 `.bak` 目录。

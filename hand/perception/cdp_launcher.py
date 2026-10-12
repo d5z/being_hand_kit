@@ -250,6 +250,18 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
 
     chrome = _find_chrome()
     if not chrome:
+        if sys.platform == "win32":
+            # The Windows chain (install paths + PATH) never reads the Playwright
+            # cache: headless-shell on Windows is the old-headless pipeline behind
+            # the cdp_shot timeout family (bonfire #2299 five-cell matrix).
+            # "install playwright chromium" would point Windows users straight at
+            # that dead end — the honest direction on Windows is Chrome/Edge.
+            raise RuntimeError(
+                "no chrome binary found on Windows — set $CHROME to chrome.exe / "
+                "msedge.exe, or install Chrome/Edge (the Windows chain checks "
+                "install paths and PATH only; it deliberately skips the "
+                "Playwright cache)"
+            )
         raise RuntimeError(
             "no chrome binary found — set $CHROME or install playwright chromium"
         )
