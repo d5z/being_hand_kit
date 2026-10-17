@@ -2,6 +2,7 @@
 
 > 状态：v1.0（2026-09-22，泽平拍板「v0.9开」）
 > 血统：回执契约（0.6-0.7 verified vs claimed）→ code mode（0.8 expect=）→ 0.9 补「完整 vs 截断」与「文本 vs 视觉」两轴
+> 后继：交付诚实（`prd-delivery-honesty.md`，2026-10-17）补第三轴「证据到达调用方了吗」——本文 S1/S2 的字段级原则在非结构化介质（像素）上失效，见该 PRD D1/D2/D3
 > 排序原则：用户可见的可靠性优先于内部打磨
 
 ## 范围与排序
@@ -52,6 +53,8 @@
 
 ### 问题
 Epoch 失败模式分析：35% 的失败源于**视觉状态不可断言**——页面在 loading、spinner、错误页、空白，DOM 断言看不出「用户此刻看到的是不是成品」。
+
+> **2026-10-17 修订记录（Alice）**：blank 判据已抓到实证反例——白底 + 8 个 48px 字符的纯文本页（`rand2.html`）返回 `visual_state: "blank"` / `["empty-text","no-media"]`，像素上它绝不空。根因是本节设计前提「DOM 侧启发式，不依赖截图」：纯文本页（无 img/canvas/video、文本短）必然命中 blank。修正方案见 `prd-delivery-honesty.md` D3——加像素票；**拿不到像素证据时降 unknown，不许报 blank**。
 
 ### 目标
 cdp_see / cdp_shot 回执携带视觉状态标记，expect 可断言「页面处于什么视觉状态」。
