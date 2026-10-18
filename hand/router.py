@@ -778,3 +778,24 @@ def route_plan_stream(goal, context=None, max_steps=20):
     engine.stop_server()
     return dict(plan=chr(115)+chr(116)+chr(114)+chr(101)+chr(97)+chr(109)+chr(95)+chr(111)+chr(107), goal=goal, trace=trace)
 from hand.router_mcp import route_plan_mcp  # Tier 4 (MCP protocol)
+
+
+def route_eye_check(op: str = "challenge", challenge_id: Optional[str] = None,
+                    answer: Optional[str] = None, chars: Optional[int] = None,
+                    font_px: Optional[int] = None, ttl_s: Optional[int] = None) -> dict:
+    """D4 (0.10): being-side self-proof that the pixels reached the caller.
+
+    op=challenge renders a random string as pixels and returns an id, never the
+    string; op=verify judges a submitted answer (single use); op=list shows
+    active ids without strings.
+    """
+    from hand.perception import eye_check
+    op = (op or "challenge").strip().lower()
+    if op == "challenge":
+        return eye_check.challenge(chars=chars, font_px=font_px, ttl_s=ttl_s)
+    if op == "verify":
+        return eye_check.verify(challenge_id=challenge_id, answer=answer)
+    if op == "list":
+        return eye_check.active_challenges()
+    return {"error": "op must be challenge | verify | list",
+            "hint": "challenge -> read the page -> verify the answer"}

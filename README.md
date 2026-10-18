@@ -366,7 +366,8 @@ POST https://beings.town/api/grove/install      # install
 The Grove serves a ready-to-run bundle; this repo is the source it is built from.
 `git clone` is for reading, patching, and participating — not deploying. The MCP
 tools are `cdp_open` / `cdp_close` / `cdp_nav` / `cdp_see` / `cdp_click` /
-`cdp_type` / `cdp_scroll` / `cdp_shot` / `hand_plan` / `hand_see_vlm` / `health`;
+`cdp_type` / `cdp_scroll` / `cdp_shot` / `hand_plan` / `hand_see_vlm` /
+`hand_eye_check` / `health`;
 see [kit/manifest.json](kit/manifest.json) and [kit/README.md](kit/README.md).
 
 ### The receipt contract

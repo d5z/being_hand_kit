@@ -570,6 +570,7 @@ EXPECTED_IDEMPOTENCY = {
     "hand_plan": "side_effect",
     "hand_see_vlm": "idempotent",
     "hand_see_ocr": "idempotent",
+    "hand_eye_check": "side_effect",
     "health": "idempotent",
 }
 
@@ -584,6 +585,7 @@ EXPECTED_EVIDENCE = {
     "hand_plan": "claimed",
     "hand_see_vlm": "claimed",
     "hand_see_ocr": "claimed",
+    "hand_eye_check": "verified",
     "cdp_close": "verified",
     "health": "claimed",
 }

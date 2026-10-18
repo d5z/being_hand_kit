@@ -228,6 +228,32 @@ def hand_plan(goal: str, execute: bool = False) -> dict:
     _bump()
     return route_plan(goal)
 @mcp.tool()
+def hand_eye_check(op: str = "challenge", challenge_id: str = None,
+                   answer: str = None, chars: int = None,
+                   font_px: int = None, ttl_s: int = None) -> dict:
+    """Self-proof that a rendered frame actually reached you (hand 0.10 D4).
+
+    The other acceptance layers verify whether the *tool* behaved correctly.
+    This one verifies whether the *perception* arrived — a question only the
+    being whose context the pixels land in can answer.
+
+    op=challenge: draws a random string on a fresh canvas page and returns
+    {challenge_id, place, expires_at}. The string is NOT in the receipt, NOT in
+    the DOM (no text node), NOT in the page title, and NOT in the HTML source
+    (it is injected after load). Read it off the image.
+    op=verify: pass answer=<what you read>; single use, destroyed either way.
+    op=list: active challenge ids only.
+
+    A pass means the pixels reached you and you read them. A failure is data,
+    not a bug report — on a substrate without vision this must fail, otherwise
+    the whole exercise is theatre. Ambiguous glyphs (O/0/I/1/L) are excluded
+    from the alphabet on purpose: this measures delivery, not legibility.
+    """
+    from hand.router import route_eye_check
+    _bump()
+    return route_eye_check(op=op, challenge_id=challenge_id, answer=answer,
+                           chars=chars, font_px=font_px, ttl_s=ttl_s)
+@mcp.tool()
 def hand_see_vlm(prompt: str = None, image_b64: str = None) -> dict:
     from hand.router import route_see_vlm
     _bump()

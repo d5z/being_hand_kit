@@ -2,9 +2,10 @@
 
 ## [Unreleased] — 0.10 开发中
 
-> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。D3 已落地，D1/D2/D4 未开工。
+> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。D3/D4 已落地，D1/D2 待 heart 侧署名口径（与 sw 对齐），D5/D6 data-gated。
 
 ### Added
+- **`hand_eye_check`**（`hand/perception/eye_check.py`，D4）：being 侧自证——"像素有没有到达我的 context"。这一层外部判不了，只能用工具把问题变成不可猜的：随机串画进 canvas 像素，回执只给 `challenge_id`（串不进回执、不进 DOM、不进 title、不进页面源——load 后由 `Runtime.evaluate` 注入），`verify` 判字面。8 字符 × 31 符号 ≈ 1/8.5e11 盲猜通过率。空渲染/无墨帧直接拒发题（`challenge not rendered`）；`reason` 区分 `mismatch / expired / unknown-challenge`，过期不吞进"不存在"。
 - **像素票模块**（`hand/perception/pixels.py`，D3）：纯标准库 PNG 解码（zlib + 五种行滤波，8-bit 非交错，色彩类型 0/2/4/6）+ `ink_stats`（背景色众数 + 与背景色的曼哈顿距离统计）+ `pixel_vote`（永不抛：`available:false` 是合法答案）。零第三方依赖。
 
 ### Changed
@@ -12,8 +13,9 @@
 - `probe()` 改为两段式：内容页（长文本 / 有媒体）不取票、不截图；`cdp_shot` 把已在手的 PNG 传入复用（帧过大时才自截 0.25 缩放小图，`PIXEL_FULL_DECODE_MAX=200000`）。
 
 ### Verified
+- D4 真机端到端（HeadlessChrome 151，640×160 canvas，48px）：DOM `innerText=''` / `title='eye check'` / `RECEIPT_HAS_STRING=False` / `PAGE_SOURCE_HAS_STRING=False` / `ink_ratio=0.03849`；读图得 `XRADEJDH` → `verify pass:true, elapsed_ms:10011`。
 - 真机（HeadlessChrome 151，1280×900）：8 字符 48px 纯文本页 → `interactive` / `pixel-ink:0.0088`（阈值 0.2%，余量 4.4×）；真空白页 → `blank` / `pixel-empty:0.0000`；DOM 无文本的全 canvas 页 → `interactive`（`has_media` 短路，不付票）。
-- 457 tests 10.9s OK（`test_visual_state` +11：解码器、投票语义、两段式成本、五种降级路径）。
+- 474 tests 10.8s OK（`test_visual_state` +11；`test_eye_check` +17：回执/页面源不含串、canvas 渲染、未渲染拒发题、形近替换 fail、单次有效、过期区分、list 不打印串）。
 
 ## [0.9.8] — 2026-10-12
 

@@ -192,6 +192,35 @@
       "evidence": "claimed"
     },
     {
+      "name": "hand_eye_check",
+      "description": "Self-proof that a rendered frame actually reached you (hand 0.10 D4). op=challenge draws a random string on a fresh canvas page and returns {challenge_id, place, expires_at} — the string is NOT in the receipt, the DOM text, the title, or the page source (it is injected after load), so read it off the image. op=verify with answer=<what you read> judges it (single use). op=list shows active ids only. A pass means the pixels reached you; a failure is data, not a bug report — on a substrate without vision this must fail.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "challenge_id": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          },
+          "chars": {
+            "type": "integer"
+          },
+          "font_px": {
+            "type": "integer"
+          },
+          "ttl_s": {
+            "type": "integer"
+          }
+        }
+      },
+      "idempotency": "side_effect",
+      "evidence": "verified"
+    },
+    {
       "name": "hand_see_ocr",
       "description": "Read exact on-screen text via Apple Vision OCR (zh-Hans/zh-Hant/en/ja). Complementary to hand_see_vlm (VLM describes what-is-this) — this reads what-does-it-say. Pass query to locate a specific string: returns matching lines with pixel coordinates (x/y/w/h/center_x/center_y) for subsequent clicking.",
       "params": {
