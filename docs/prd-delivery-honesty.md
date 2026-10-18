@@ -5,7 +5,7 @@
 > 版本归属：**v0.10**（2026-10-17 泽平拍板）
 > 排序原则：能堵住「主体盲读」的优先于扩展感知能力
 > 评审状态（2026-10-17 泽平）：版本归属 0.10 已定；**D1 的 hand/heart 分段署名边界已认可**（hand 声明 emitted、heart 声明 delivered，hand 不写自己不知道的事）
-> 实现进度（2026-10-18）：**D3 已落地**（`c1cc7dd`，blank 加像素票）、**D4 已落地**（`b701dd8`，`hand_eye_check` 实机端到端 pass）；474 tests 绿。D1/D2 待与 sw 定 heart 侧 `delivered` 署名口径；D5/D6 data-gated。
+> 实现进度（2026-10-18）：**D3 已落地**（`c1cc7dd`，blank 加像素票）、**D4 已落地**（`b701dd8`，`hand_eye_check` 实机端到端 pass）、**D1 的 hand 侧已落地**（emitted 块，shot/a11y/dom 三通道实机验证）；486 tests 绿。D1 的 heart 侧 `delivery` 待与 sw 定口径；D2 随 D1 半边完成（通道级正面声明已成立，heart 侧补齐后闭合）；D5/D6 data-gated。
 
 ## 一句话
 
@@ -40,8 +40,8 @@ loom 对话中我做多模态自测，同一晚连续三次归因错误：
 
 | 序 | 项 | 一句话 | 归属 | 状态 |
 |---|---|---|---|---|
-| D1 | 交付声明 delivery | 回执正面声明各感知通道是否真的交付，hand 与 heart 分段署名 | hand + heart 跨仓 | 待实现 |
-| D2 | 沉默≠完整 | 通道级声明取代字段级缺席推断 | 并入 D1 | 待实现 |
+| D1 | 交付声明 delivery | 回执正面声明各感知通道是否真的交付，hand 与 heart 分段署名 | hand + heart 跨仓 | **hand 侧已实现 2026-10-18**（`emitted` 块）；heart 侧 `delivery` 待定口径 |
+| D2 | 沉默≠完整 | 通道级声明取代字段级缺席推断 | 并入 D1 | **hand 侧已实现**（`emitted: false` 必带 reason）；heart 侧待补齐 |
 | D3 | blank 判据加像素票 | S2 修正：无像素证据时不许报 blank，降 unknown | hand | **已实现 2026-10-18**（未发版） |
 | D4 | being_selfproof 验收层 + `hand_eye_check` | 不可猜外部串自证法进验收 SOP，并做成公共原语 | hand | **已实现 2026-10-18**（未发版，474 tests 绿，实机端到端 pass） |
 | D5 | 预算维度 | token 经济性进设计，坐标化优于全图（跨仓） | hand + heart | data-gated（等 sw 数字） |
@@ -93,11 +93,14 @@ loom 对话中我做多模态自测，同一晚连续三次归因错误：
 - 不做 retry / 自动重发（决策权在调用方）
 - 不猜"为什么掉"（reason 只允许枚举值，拿不到就 `unknown`）
 
-### 验收
-- [ ] `emitted` 块在 shot / see 上出现，字段齐
-- [ ] heart 侧 delivery 追加路径有契约测试（模拟 substrate 无视觉，断言 `delivered: false` + reason）
-- [ ] 断言：`emitted=true & delivered=false` 时回执**必须**含 reason（不允许裸黑洞）
-- [ ] 旧调用方（不读新字段）跑通全量测试不回归
+### 验收（2026-10-18：hand 侧全部实机通过）
+
+- [x] `emitted` 块在 shot / see 上出现，字段齐 —— `tests/test_emitted.py`（12 tests）+ 实机三通道：`cdp_shot` → `{"image": {"emitted": true, "bytes": 6528, "format": "png", "encoding": "base64", "data_chars": 8704}}`；`a11y` → `{"count": 240, "unit": "nodes"}`；`dom` → `{"count": 4955, "unit": "chars"}`
+- [x] **hand 侧半边**：`emitted: false` 必带 reason（`not_requested` / `file_path` / `no_elements` / `no_snapshot`），且未知 backend 的块**缺席而非 false**（缺席≠false，两种陈述不同）
+- [x] 断言：emitted 块里绝不出现 `delivered` / `attached` / `received` —— 测试字面扫描，防止 hand 越界替 heart 署名
+- [ ] heart 侧 delivery 追加路径有契约测试（模拟 substrate 无视觉，断言 `delivered: false` + reason）——**待 sw**
+- [ ] 断言：`emitted=true & delivered=false` 时回执**必须**含 reason（不允许裸黑洞）——**heart 侧**
+- [x] 旧调用方（不读新字段）跑通全量测试不回归 —— 486 tests 绿，`test_receipt_contract` 56 项全过
 
 ---
 

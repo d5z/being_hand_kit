@@ -137,7 +137,8 @@ page = hand.see()          # kind defaults to "a11y"
 | `text_truncated_count` | node names cut at 200 chars (declared per node, counted here) |
 | `truncation` | **0.9** the unified cut declaration: `{field, reason, dropped, total}`. Present only when something was dropped — absent means complete (`truncated`/`nodes_omitted` stay as the legacy boolean/count for one version) |
 | `hint` | something you should know — e.g. a collapsed `⋯` menu whose contents are not in the tree (click it, then see again); internal skips appear here as `skipped: <what> (<why>)` |
-| `visual_state`, `visual_signals` | **0.9** what the page *looks* like right now: `loading` · `error` · `blank` · `interactive` · `unknown`, plus the signals that decided it (DOM heuristic, no screenshot) |
+| `visual_state`, `visual_signals` | **0.9** what the page *looks* like right now: `loading` · `error` · `blank` · `interactive` · `unknown`, plus the signals that decided it. Since 0.10 a `blank` verdict requires a pixel vote (see *Visual state*) |
+| `emitted` | **0.10** the first-half signature: `{by: "hand", channels: {…}}` — what hand put into *this* receipt. `delivery` is the caller's half and never appears here (see *Delivery*) |
 | `verified`, `evidence` | the evidence verdict: node count, AX source version, sha256 |
 
 Receipts are **self-describing**: the table lists the semantic anchors, but a new
@@ -201,23 +202,60 @@ provider's own verdict — `finish_reason: "length"` means the description was c
 (and a `hint` says so). Absence of `finish_reason` means the provider reported
 none.
 
-### Visual state (0.9)
+### Visual state (0.9, pixel-voted since 0.10)
 
 `see()` and `shot()` receipts carry `visual_state` — what the page *looks* like
-right now — decided by a DOM-side heuristic (no screenshot):
+right now. DOM narrows it down; **pixels have the final say on `blank`**:
 
 | state | signal |
 |-------|--------|
 | `error` | an h1/h2/title hits the error word list (error / 404 / 错误 / …), or a visible `<img alt>` names an error |
 | `loading` | a visible spinner/skeleton/`progressbar`, `[aria-busy=true]`, or `document.readyState != complete` |
-| `blank` | visible text < 20 chars **and** no visible img/canvas/video |
-| `interactive` | normal content |
-| `unknown` | the probe could not observe the page — we do **not** guess |
+| `blank` | a DOM *candidate* (visible text < 20 chars, no visible img/canvas/video) **and** a pixel vote agrees the frame is empty (`pixel-empty:*`) |
+| `interactive` | normal content — or a sparse-text page whose pixels carry ink (`sparse-text` + `pixel-ink:*`) |
+| `unknown` | the probe could not observe the page, **or** a blank candidate got no pixel vote (`pixel-unavailable`) |
 
 Priority is `error > loading > blank > interactive`; `unknown` only when there is
 no signal at all. `visual_signals` records the signals that decided it (auditable
-— e.g. `["aria-busy"]`, `["error-heading:404"]`). Assert it with
-`hand.do("click [15]", expect="visual_state:loading")`.
+— e.g. `["aria-busy"]`, `["error-heading:404"]`, `["sparse-text","pixel-ink:0.0088"]`).
+Assert it with `hand.do("click [15]", expect="visual_state:loading")`.
+
+Why pixels decide `blank`: a DOM proxy lies on pure-text pages, all-canvas pages
+and slow-loading pages. The recorded counter-example — white page, eight 48px
+monospace glyphs — used to be reported `blank` while the pixels plainly were not.
+No pixel vote is not evidence of emptiness: it is `unknown`, never `blank`.
+
+### Delivery: `emitted` (0.10)
+
+`verified` answers *did the action happen*. It never answered *did the evidence
+reach the caller*. On 2026-10-17 those two separated for real: `shot` was 100%
+verified and zero images reached the caller's context.
+
+Every perception receipt now carries a first-half signature:
+
+```jsonc
+"emitted": {
+  "by": "hand",
+  "channels": {
+    "image": {"emitted": true, "bytes": 6528, "format": "png",
+              "encoding": "base64", "data_chars": 8704}
+  }
+}
+```
+
+- **hand declares only what hand put into the receipt.** Whether it then reaches
+  the model's context is portal/heart's `delivery` to write. hand never emits
+  `delivered` / `attached` — that would be a new `claimed` wearing a `verified`
+  badge.
+- **`emitted: false` always carries a `reason`** (`not_requested`, `file_path`,
+  `no_elements`, `no_snapshot`). Captured-but-not-returned is a declared gap,
+  never silence.
+- **Absent is not false.** A backend with no media channel omits the block
+  entirely — that says "not implemented", which is a different statement.
+- `bytes` is the decoded wire size; `data_chars` is the base64 string length.
+  `shot(with_data=False)` reports `not_requested`; the `screencapture` path
+  reports `file_path` with the path (the pixels are readable, they just did not
+  ride in the receipt).
 
 **`network` is a live tap, not a history.** It listens for 3s (`duration`) and
 reports only the requests that fire *inside that window*; called after the page has

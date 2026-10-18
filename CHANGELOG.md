@@ -2,20 +2,28 @@
 
 ## [Unreleased] — 0.10 开发中
 
-> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。D3/D4 已落地，D1/D2 待 heart 侧署名口径（与 sw 对齐），D5/D6 data-gated。
+> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。D1（hand 侧）+ D3 + D4 已落地，D1 的 heart 侧 `delivery` 待与 sw 定口径，D5/D6 data-gated。
 
 ### Added
+- **`emitted` 块（回执第一段署名）**（`hand/receipt.py` + `hand/router.py`，D1）：回执正面声明 hand **把什么放进了这份回执**。这是 `verified` 回答不了的另一半——2026-10-17 夜两者真实分离：动作 100% 发生（`verified: true`、`data_length: 123216`），而调用方上下文里的图像为 0。覆盖 `cdp_shot`（image）、`cdp_a11y`（tree/nodes）、`cdp_dom`（text/chars）、`cdp_interactive`、`cdp_network`、`vision_ocr`、`see_vlm`。
+  - **边界（不可越）**：hand 只声明 emitted，`delivery` 由 portal/heart 追加。hand 侧写 `delivered`/`attached` 就是新的 claimed 冒充 verified——测试用字面扫描锁死（`test_never_speaks_for_the_caller`）。
+  - **缺席 ≠ false**：未知 backend 的 `emitted` 块**缺席**（未实现），`emitted: false` 则必带 `reason`（`not_requested` / `file_path` / `no_elements` / `no_snapshot`）。两种陈述不同，不许互相冒充（D2）。
+  - `bytes` 报的是 base64 **解码后**的线上字节数，不是 base64 字符数（`cdp_shot` 实例：`data_chars: 8704` / `bytes: 6528`）。
 - **`hand_eye_check`**（`hand/perception/eye_check.py`，D4）：being 侧自证——"像素有没有到达我的 context"。这一层外部判不了，只能用工具把问题变成不可猜的：随机串画进 canvas 像素，回执只给 `challenge_id`（串不进回执、不进 DOM、不进 title、不进页面源——load 后由 `Runtime.evaluate` 注入），`verify` 判字面。8 字符 × 31 符号 ≈ 1/8.5e11 盲猜通过率。空渲染/无墨帧直接拒发题（`challenge not rendered`）；`reason` 区分 `mismatch / expired / unknown-challenge`，过期不吞进"不存在"。
 - **像素票模块**（`hand/perception/pixels.py`，D3）：纯标准库 PNG 解码（zlib + 五种行滤波，8-bit 非交错，色彩类型 0/2/4/6）+ `ink_stats`（背景色众数 + 与背景色的曼哈顿距离统计）+ `pixel_vote`（永不抛：`available:false` 是合法答案）。零第三方依赖。
 
 ### Changed
+- `route_screenshot` 在 `with_data=False` 时不再沉默：图像确实被拍下但这张回执里没有它 → `emitted: false, reason: "not_requested"`（此前调用方只能从"没有 data 字段"去推断）。
+- `vision_ocr` 分支（screencapture 落盘）声明 `reason: "file_path"` + `path`——像素在磁盘上可读，不是失败，是没进回执。
 - **`visual_state` 的 blank 判据要求视觉证据**（D3，S2 bug 修正）：`blank` 是视觉范畴，DOM 代理在纯文本页/全 canvas 页/慢加载页都会撒谎（0.10 PRD 记录的反例：白底 + 8 个 48px 字符 → 旧判据报 `blank`）。现在 DOM 只给出 blank **候选**，须由一份像素票落定：`ink_ratio ≥ 0.002` → `interactive`（信号 `sparse-text` + `pixel-ink:*`）；票为 0 → `blank`（`pixel-empty:*`）；**拿不到票 → `unknown` + `pixel-unavailable`，绝不报 blank**。
 - `probe()` 改为两段式：内容页（长文本 / 有媒体）不取票、不截图；`cdp_shot` 把已在手的 PNG 传入复用（帧过大时才自截 0.25 缩放小图，`PIXEL_FULL_DECODE_MAX=200000`）。
 
 ### Verified
 - D4 真机端到端（HeadlessChrome 151，640×160 canvas，48px）：DOM `innerText=''` / `title='eye check'` / `RECEIPT_HAS_STRING=False` / `PAGE_SOURCE_HAS_STRING=False` / `ink_ratio=0.03849`；读图得 `XRADEJDH` → `verify pass:true, elapsed_ms:10011`。
 - 真机（HeadlessChrome 151，1280×900）：8 字符 48px 纯文本页 → `interactive` / `pixel-ink:0.0088`（阈值 0.2%，余量 4.4×）；真空白页 → `blank` / `pixel-empty:0.0000`；DOM 无文本的全 canvas 页 → `interactive`（`has_media` 短路，不付票）。
-- 474 tests 10.8s OK（`test_visual_state` +11；`test_eye_check` +17：回执/页面源不含串、canvas 渲染、未渲染拒发题、形近替换 fail、单次有效、过期区分、list 不打印串）。
+- 474 tests 10.8s OK（D3/D4 阶段；`test_visual_state` +11、`test_eye_check` +17：回执/页面源不含串、canvas 渲染、未渲染拒发题、形近替换 fail、单次有效、过期区分、list 不打印串）。
+- **D1 实机三通道**（HeadlessChrome 151）：`cdp_shot` → `emitted.channels.image = {emitted: true, bytes: 6528, format: png, encoding: base64, data_chars: 8704}`；`cdp_a11y` → `{emitted: true, count: 240, unit: nodes}`；`cdp_dom` → `{emitted: true, count: 4955, unit: chars}`。同一次实机顺带复核 D3：8 字符 48px 纯文本页的 `visual_state` 由旧判据的 `blank` 变为 `interactive` / `pixel-ink:0.0088`——D3 从单测走到真机行为层。
+- 486 tests 10.9s OK（+12 `test_emitted`：base64 线上字节对账、`emitted: false` 必带 reason、未知 backend 缺席≠false、hand 不替 heart 署名、`with_data` 两态、三通道实到）。
 
 ## [0.9.8] — 2026-10-12
 

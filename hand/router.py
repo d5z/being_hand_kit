@@ -13,7 +13,8 @@ Priority order matters:
 
 from typing import Optional
 from hand.platform import is_macos
-from hand.receipt import skipped, merge_hints
+from hand.receipt import (skipped, merge_hints, emitted_block, emitted_channel,
+                          image_channel, text_channel)
 from hand.session import get_session, Place, reset_session
 
 # ── Permission of backends per platform ────────────────────────────
@@ -119,6 +120,41 @@ def _error_receipt(error: str, **fields) -> dict:
     return out
 
 
+def _emitted_for(method, result):
+    """D1 (0.10): per-backend emitted channels — what went INTO this receipt.
+
+    Only backends whose payload is a *media channel* declare here. An unknown
+    backend returns None (the block stays absent) rather than claiming
+    `emitted: false` for channels it never had.
+    """
+    if method == "cdp_snapshot":
+        return {"dom": text_channel(result.get("text"),
+                                    count=result.get("chars"),
+                                    unit="chars", key="text")}
+    if method == "cdp_a11y":
+        return {"a11y": text_channel(result.get("tree"),
+                                     count=result.get("node_count"),
+                                     unit="nodes", key="tree")}
+    if method == "cdp_interactive":
+        n = result.get("count")
+        return {"elements": emitted_channel(bool(n), "no_elements",
+                                            count=n or 0, unit="elements",
+                                            key="elements")}
+    if method == "cdp_network":
+        total = result.get("total_requests")
+        return {"network": emitted_channel(total is not None, "no_snapshot",
+                                           count=total or 0, unit="requests",
+                                           key="requests")}
+    if method == "vision_ocr":
+        ch = {"text": text_channel(result.get("text"),
+                                   count=result.get("total_lines"),
+                                   unit="lines", key="text")}
+        if result.get("screenshot"):
+            ch["image"] = image_channel(path=result.get("screenshot"))
+        return ch
+    return None
+
+
 def _with_receipt(result: dict) -> dict:
     """Attach verified/evidence to a perception receipt (additive)."""
     if not isinstance(result, dict) or "method" not in result:
@@ -188,6 +224,11 @@ def _with_receipt(result: dict) -> dict:
     result = dict(result)
     result["verified"] = verified
     result["evidence"] = ev
+    # D1 (0.10): the emitted half. `delivery` is NOT hand's to write — portal/
+    # heart appends it after it knows whether the payload reached the context.
+    channels = _emitted_for(method, result)
+    if channels:
+        result["emitted"] = emitted_block(channels)
     return result
 
 
@@ -237,6 +278,11 @@ def route_see_vlm(prompt: Optional[str] = None, image_b64: Optional[str] = None)
             # provider verdict; a numeric {dropped,total} would be a guess.
             out["hint"] = skipped("vision description tail",
                                   "the model hit max_tokens (finish_reason=length)")
+        # D1 (0.10): the text is what hand returns; the image handed to the VLM
+        # never entered this receipt, so it is not claimed here.
+        out["emitted"] = emitted_block({
+            "text": text_channel(out.get("text"), unit="chars", key="text"),
+        })
         return out
     return {
         "method": "vision_llm",
@@ -590,6 +636,16 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
                 out["evidence"]["visual_state"] = result["visual_state"]
             if with_data:
                 out["data"] = result["data"]
+            # D1 (0.10): the image channel is `emitted` only when the base64
+            # actually rides in THIS receipt. Captured-but-not-sent is a
+            # declared gap (`not_requested`), never silence. Whether it then
+            # reaches the caller's context is portal/heart's `delivery` to write.
+            out["emitted"] = emitted_block({
+                "image": image_channel(
+                    b64=result["data"] if with_data else None,
+                    fmt=result["format"],
+                ),
+            })
             return out
 
     from hand.perception.vision_ocr import _capture_screenshot
@@ -604,6 +660,10 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
         "evidence": {"source": "vision_ocr", "path": path,
                      "read_back": "screencapture wrote a file",
                      "verified": True},
+        # D1 (0.10): the pixels went to disk, not into the receipt. Declared as
+        # a gap with its reason — the caller can still open the path, so this is
+        # "file_path", not "failed".
+        "emitted": emitted_block({"image": image_channel(path=path)}),
     }
 
 # ── Plan ─────────────────────────────────────────────────────────────
