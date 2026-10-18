@@ -37,8 +37,18 @@ VISUAL_STATES = ("loading", "error", "blank", "interactive", "unknown")
 ERROR_PAGE_MAX_TEXT = 500
 
 # A page whose visible text is shorter than this and has no img/canvas/video is
-# "blank". 20 chars is deliberately small: a real page almost always has more.
+# a blank *candidate*. 20 chars is deliberately small: a real page almost always
+# has more.
 BLANK_TEXT_THRESHOLD = 20
+
+# D3 (0.10, docs/prd-delivery-honesty.md): `blank` is a visual claim, so the
+# DOM candidate alone is not enough. A blank candidate needs one pixel vote
+# (`signals["pixel"]`, see hand/perception/pixels.py): ink_ratio at or above
+# this threshold means the frame is not empty. No vote at all -> `unknown`,
+# never `blank`. The 0.2% floor comes from the S2 counterexample (eight 48px
+# chars at 0.25 scale ~1% of the frame; a truly blank page sits at 0.0).
+BLANK_PIXEL_INK_MIN = 0.002
+
 
 # Words that, in the document title or an h1/h2, mean "this is an error page".
 ERROR_WORDS = (
@@ -135,7 +145,20 @@ def classify(signals):
         return "loading", ["spinner-class"]
 
     if text_len < BLANK_TEXT_THRESHOLD and not signals.get("has_media"):
-        return "blank", ["empty-text", "no-media"]
+        # D3 (0.10): a blank candidate needs a visual witness. The DOM proxy
+        # lied on the S2 counterexample — a white page with eight 48px
+        # characters has text_len=8 and no media, yet is not empty. No pixel
+        # vote means no evidence, and no evidence means `unknown`, not `blank`.
+        vote = signals.get("pixel")
+        if not isinstance(vote, dict) or vote.get("available") is not True:
+            return "unknown", ["pixel-unavailable", "sparse-text"]
+        try:
+            ink = float(vote.get("ink_ratio") or 0.0)
+        except (TypeError, ValueError):
+            ink = 0.0
+        if ink >= BLANK_PIXEL_INK_MIN:
+            return "interactive", ["sparse-text", "pixel-ink:%.4f" % ink]
+        return "blank", ["empty-text", "no-media", "pixel-empty:%.4f" % ink]
 
     found = ["content"]
     if hit:
@@ -158,12 +181,19 @@ def parse_probe(value):
     return data if isinstance(data, dict) else None
 
 
-def probe(ws, call=None):
-    """Run the DOM probe over a live CDP socket. Never raises.
+def probe(ws, call=None, png_b64=None):
+    """Run the DOM probe over a live CDP socket; add a pixel vote when needed.
 
     Returns {"visual_state": <enum>, "visual_signals": [<str>...]}.
-    `call` defaults to hand.perception.cdp_core.cdp_call (lazy import: keeps this
-    module importable from cdp_core without a cycle).
+
+    Two stages (D3): the DOM signals decide first. Only when they produce a
+    blank *candidate* — short visible text, no media — do we pay for one pixel
+    vote; the result is folded into the same signal dict and classified again.
+    Non-candidate pages never take a screenshot.
+
+    `png_b64` is an already-captured frame the caller may pass to reuse (only
+    when small enough to decode cheaply — see pixels.PIXEL_FULL_DECODE_MAX);
+    otherwise the vote takes its own downscaled shot.
     """
     if call is None:
         from hand.perception.cdp_core import cdp_call as call
@@ -178,4 +208,16 @@ def probe(ws, call=None):
     if signals is None:
         return {"visual_state": "unknown", "visual_signals": ["probe-failed"]}
     state, found = classify(signals)
+    if state == "unknown" and "pixel-unavailable" in found:
+        # D3: the pixel vote needs the Page domain; enable it if we can, but a
+        # failure here is not fatal — pixel_vote() reports available=False and
+        # the state stays `unknown`.
+        try:
+            from hand.perception import cdp_core as _core
+            _core._init_domains(ws, "Page")
+        except Exception:
+            pass
+        from hand.perception.pixels import pixel_vote
+        signals["pixel"] = pixel_vote(ws, call, png_b64=png_b64)
+        state, found = classify(signals)
     return {"visual_state": state, "visual_signals": found}

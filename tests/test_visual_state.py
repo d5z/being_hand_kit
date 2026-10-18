@@ -12,6 +12,7 @@ The marker rides on cdp_see (a11y + dom) and cdp_shot; `expect="visual_state:…
 is wired through hand.do().
 """
 
+import base64
 import json
 import os
 import sys
@@ -21,8 +22,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from hand.perception import pixels, visual_state
 from hand.perception.visual_state import (
     classify, parse_probe, VISUAL_STATES, BLANK_TEXT_THRESHOLD)
+
 import hand.perception.ax_tree as ax
 import hand.hand as face
 
@@ -34,11 +37,18 @@ FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "visual_state")
 class TestClassify(unittest.TestCase):
     def test_five_states_and_priority(self):
         self.assertEqual(classify({"body": True, "text_len": 100})[0], "interactive")
-        self.assertEqual(classify({"body": True, "text_len": 3})[0], "blank")
+        # 0.10 D3: a blank candidate without a pixel vote has no witness ->
+        # unknown, never blank.
+        self.assertEqual(classify({"body": True, "text_len": 3})[0], "unknown")
+        self.assertEqual(
+            classify({"body": True, "text_len": 3,
+                      "pixel": {"available": True, "ink_ratio": 0.0}})[0],
+            "blank")
         self.assertEqual(classify({"body": True, "aria_busy": True})[0], "loading")
         self.assertEqual(classify({"body": True, "error_heading": "404"})[0], "error")
         self.assertEqual(classify({"body": False})[0], "unknown")
         self.assertEqual(classify(None)[0], "unknown")
+
 
     def test_error_beats_loading_beats_blank(self):
         self.assertEqual(
@@ -50,7 +60,10 @@ class TestClassify(unittest.TestCase):
             classify({"body": True, "ready_state": "loading", "text_len": 0})[0],
             "loading")
         self.assertEqual(
-            classify({"body": True, "text_len": 0, "has_media": False})[0], "blank")
+            classify({"body": True, "text_len": 0, "has_media": False,
+                      "pixel": {"available": True, "ink_ratio": 0.0}})[0],
+            "blank")
+
 
     def test_blank_requires_no_media(self):
         # short text but a rendered image -> not blank
@@ -65,7 +78,11 @@ class TestClassify(unittest.TestCase):
         _, signals = classify({"body": True, "error_heading": "错误"})
         self.assertIn("error-heading:错误", signals)
         _, signals = classify({"body": True, "text_len": 0})
-        self.assertEqual(signals, ["empty-text", "no-media"])
+        self.assertEqual(signals, ["pixel-unavailable", "sparse-text"])
+        _, signals = classify({"body": True, "text_len": 0,
+                               "pixel": {"available": True, "ink_ratio": 0.0}})
+        self.assertIn("pixel-empty:0.0000", signals)
+
         self.assertEqual(classify({"body": False})[1], ["no-body"])
 
     def test_probe_parse_never_raises(self):
@@ -234,9 +251,18 @@ def _signals(html):
 
 
 class TestFixturePages(unittest.TestCase):
-    def _state(self, name):
+    def _raw(self, name):
         with open(os.path.join(FIXTURES, name + ".html"), encoding="utf-8") as f:
-            return classify(_signals(f.read()))
+            return _signals(f.read())
+
+    def _voted(self, name, ink_ratio):
+        """Fixture signals plus a pixel vote (D3: blank needs a witness)."""
+        return dict(self._raw(name),
+                    pixel={"available": True, "ink_ratio": ink_ratio})
+
+    def _state(self, name):
+        return classify(self._raw(name))
+
 
     def test_loading_fixture(self):
         state, signals = self._state("loading")
@@ -249,9 +275,39 @@ class TestFixturePages(unittest.TestCase):
         self.assertTrue(any(s.startswith(("error-title", "error-heading", "error-img")) for s in signals))
 
     def test_blank_fixture(self):
-        state, signals = self._state("blank")
+        # The fixture is only a blank *candidate* on DOM signals alone (D3):
+        # the state settles when the pixel vote agrees the frame is empty.
+        self.assertEqual(self._state("blank")[0], "unknown")
+        state, signals = classify(self._voted("blank", 0.0))
         self.assertEqual(state, "blank")
         self.assertIn("no-media", signals)
+        self.assertIn("pixel-empty:0.0000", signals)
+
+    def test_sparse_text_page_is_not_blank(self):
+        # Regression for the 0.10 S2 counterexample (still visible in the 0.10
+        # PRD): white page, eight 48px characters, no img/canvas/video. DOM-only
+        # said "blank"; a pixel vote says the frame has ink.
+        sig = self._raw("sparse_text")
+        self.assertLess(sig["text_len"], 20)
+        self.assertFalse(sig["has_media"])
+        self.assertEqual(classify(sig)[0], "unknown")
+        state, signals = classify(dict(sig, pixel={"available": True,
+                                                   "ink_ratio": 0.012}))
+        self.assertEqual(state, "interactive")
+        self.assertIn("pixel-ink:0.0120", signals)
+
+    def test_canvas_only_page_is_not_blank_candidate(self):
+        # DOM has no text at all but a canvas is rendered: `has_media` keeps it
+        # out of the blank branch, so no pixel vote is needed.
+        sig = {"body": True, "text_len": 0, "has_media": True}
+        self.assertEqual(classify(sig)[0], "interactive")
+
+    def test_no_pixel_vote_means_unknown_not_blank(self):
+        # PRD D3 acceptance: pixel unavailable -> unknown + pixel-unavailable.
+        state, signals = classify({"body": True, "text_len": 2})
+        self.assertEqual(state, "unknown")
+        self.assertIn("pixel-unavailable", signals)
+
 
     def test_interactive_fixture(self):
         state, signals = self._state("interactive")
@@ -259,12 +315,155 @@ class TestFixturePages(unittest.TestCase):
         self.assertIn("content", signals)
 
     def test_fixtures_are_the_four_states(self):
-        self.assertEqual({self._state(n)[0] for n in
+        # blank carries a vote because `blank` is a visual claim (D3).
+        self.assertEqual({classify(self._voted(n, 0.0))[0] for n in
                           ("loading", "error", "blank", "interactive")},
                          {"loading", "error", "blank", "interactive"})
 
 
-# ── receipt wiring ───────────────────────────────────────────────────
+
+# ── pixel vote (0.10 D3) ─────────────────────────────────────────────
+#
+# `blank` is a visual claim: the DOM candidate (`text_len < threshold`, no
+# media) must be settled by a pixel vote, and a vote that cannot run means
+# `unknown`, never `blank`. These tests cover the decoder, the vote, and the
+# two-stage cost rule in probe().
+
+def _png(width, height, flat, channels=4):
+    """Encode a tiny 8-bit PNG (row filter 0) for the pixel vote tests.
+
+    `flat` is row-major pixel data for the whole image.
+    """
+    import struct as _struct
+    import zlib as _zlib
+    color_type = 6 if channels == 4 else 2
+
+    def chunk(tag, data):
+        return (_struct.pack("!I", len(data)) + tag + data
+                + _struct.pack("!I", _zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    stride = width * channels
+    raw = b"".join(b"\x00" + bytes(flat[y * stride:(y + 1) * stride])
+                   for y in range(height))
+    ihdr = _struct.pack("!IIBBBBB", width, height, 8, color_type, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", _zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def _white(w, h):
+    return [255, 255, 255, 255] * (w * h)
+
+
+class TestPixelVote(unittest.TestCase):
+    def test_blank_frame_has_no_ink(self):
+        stats = pixels.ink_stats(_png(20, 20, _white(20, 20)))
+        self.assertEqual(stats["ink_ratio"], 0.0)
+        self.assertEqual(stats["background"], "#f8f8f8")
+        self.assertEqual(stats["distinct_colors"], 1)
+
+    def test_ink_is_detected(self):
+        flat = []
+        for _y in range(20):
+            for x in range(20):
+                flat.extend((0, 0, 0, 255) if 8 <= x < 12
+                            else (255, 255, 255, 255))
+        stats = pixels.ink_stats(_png(20, 20, flat))
+        self.assertGreater(stats["ink_ratio"], 0.15)
+        self.assertEqual(stats["distinct_colors"], 2)
+
+    def test_rgb_is_decoded(self):
+        flat = [255, 255, 255] * 16
+        stats = pixels.ink_stats(_png(4, 4, flat, channels=3))
+        self.assertEqual((stats["width"], stats["height"]), (4, 4))
+        self.assertEqual(stats["ink_ratio"], 0.0)
+
+
+    def test_unsupported_png_raises_instead_of_guessing(self):
+        with self.assertRaises(pixels.PngUnsupported):
+            pixels.decode_png(b"not a png at all")
+        bad = bytearray(_png(2, 2, _white(2, 2)))
+        bad[24] = 16                          # bit depth 16: out of scope
+        with self.assertRaises(pixels.PngUnsupported):
+            pixels.decode_png(bytes(bad))
+
+    def test_pixel_vote_from_an_inline_frame(self):
+        b64 = base64.b64encode(_png(20, 20, _white(20, 20))).decode()
+        vote = pixels.pixel_vote(png_b64=b64)
+        self.assertTrue(vote["available"])
+        self.assertEqual(vote["ink_ratio"], 0.0)
+
+    def test_pixel_vote_without_a_source_is_unavailable(self):
+        vote = pixels.pixel_vote()
+        self.assertFalse(vote["available"])
+        self.assertEqual(vote["reason"], "pixel-unavailable")
+
+    def test_large_frame_is_not_decoded_inline(self):
+        # A full-size frame is re-shot downscaled instead; with no socket the
+        # honest answer is "no evidence", not a slow decode of 600x600.
+        b64 = base64.b64encode(_png(500, 500, _white(500, 500))).decode()
+        vote = pixels.pixel_vote(ws=None, call=None, png_b64=b64)
+        self.assertFalse(vote["available"])
+
+
+class TestProbeTwoStage(unittest.TestCase):
+    """D3 cost rule: only a blank candidate pays for a pixel vote."""
+
+    BASE = {"body": True, "ready_state": "complete", "aria_busy": False,
+            "spinner": False, "error_title": None, "error_heading": None,
+            "error_img": False, "text_len": 0, "has_media": False}
+
+    def _probe_json(self, **overrides):
+        sig = dict(self.BASE)
+        sig.update(overrides)
+        return json.dumps(sig)
+
+    def _call(self, probe_json, frame=None, seen=None, fail_shot=False):
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if seen is not None:
+                seen.append(method)
+            if method == "Runtime.evaluate":
+                return {"result": {"value": probe_json}}
+            if method == "Page.getLayoutMetrics":
+                return {"cssLayoutViewport": {"clientWidth": 100,
+                                              "clientHeight": 80}}
+            if method == "Page.captureScreenshot":
+                if fail_shot:
+                    raise RuntimeError("CDP gone")
+                return {"data": base64.b64encode(frame or b"").decode()}
+            return {}
+        return fake_call
+
+    def _run(self, probe_json, frame=None, seen=None, fail_shot=False):
+        with mock.patch("hand.perception.cdp_core._init_domains",
+                        return_value=None):
+            return visual_state.probe(
+                _FakeWS(), call=self._call(probe_json, frame, seen, fail_shot))
+
+    def test_content_page_takes_no_screenshot(self):
+        seen = []
+        out = self._run(self._probe_json(text_len=120), seen=seen)
+        self.assertEqual(out["visual_state"], "interactive")
+        self.assertNotIn("Page.captureScreenshot", seen)
+
+    def test_sparse_text_with_ink_is_not_blank(self):
+        flat = [0, 0, 0, 255] * 50 + [255, 255, 255, 255] * 50
+        out = self._run(self._probe_json(text_len=8), frame=_png(10, 10, flat))
+        self.assertEqual(out["visual_state"], "interactive")
+        self.assertTrue(any(s.startswith("pixel-ink:") for s in out["visual_signals"]))
+
+
+    def test_sparse_text_on_an_empty_frame_is_blank(self):
+        out = self._run(self._probe_json(text_len=8),
+                        frame=_png(10, 10, _white(10, 10)))
+        self.assertEqual(out["visual_state"], "blank")
+        self.assertIn("pixel-empty:0.0000", out["visual_signals"])
+
+    def test_vote_failure_downgrades_to_unknown(self):
+        out = self._run(self._probe_json(text_len=8), fail_shot=True)
+        self.assertEqual(out["visual_state"], "unknown")
+        self.assertIn("pixel-unavailable", out["visual_signals"])
+
+
 
 PAGE = {"id": "1", "type": "page", "url": "https://example.com/",
         "title": "Example", "webSocketDebuggerUrl": "ws://x/1"}

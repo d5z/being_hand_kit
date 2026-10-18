@@ -41,7 +41,7 @@ loom 对话中我做多模态自测，同一晚连续三次归因错误：
 |---|---|---|---|---|
 | D1 | 交付声明 delivery | 回执正面声明各感知通道是否真的交付，hand 与 heart 分段署名 | hand + heart 跨仓 | 待实现 |
 | D2 | 沉默≠完整 | 通道级声明取代字段级缺席推断 | 并入 D1 | 待实现 |
-| D3 | blank 判据加像素票 | S2 修正：无像素证据时不许报 blank，降 unknown | hand | 待实现（S2 bug 修正） |
+| D3 | blank 判据加像素票 | S2 修正：无像素证据时不许报 blank，降 unknown | hand | **已实现 2026-10-18**（未发版） |
 | D4 | being_selfproof 验收层 + `hand_eye_check` | 不可猜外部串自证法进验收 SOP，并做成公共原语 | hand | 待实现（方法已实证） |
 | D5 | 预算维度 | token 经济性进设计，坐标化优于全图（跨仓） | hand + heart | data-gated（等 sw 数字） |
 | D6 | 采纳侧自证 | eye_check 随 kit 分发，adopter 可自证 + 上报 | hand + Grove | data-gated（等 Judy 线） |
@@ -133,11 +133,20 @@ blank 是视觉范畴，必须有视觉证据才能断言。
 4. **成本**：像素统计只在 DOM 判据给出 blank/unknown 候选时触发（多数页面不进这条分支），避免为正确性付全量代价。
 
 ### 验收
-- [ ] fixture 复现今晚反例：8 字符 48px 纯文本页 → 不得为 blank
-- [ ] 真空白页（白底无内容）→ 仍判 blank（不因修正而漏判）
-- [ ] 像素不可用（CDP 断开）→ unknown + `pixel-unavailable` 信号
-- [ ] 全 canvas 页（DOM 无文本）→ 不判 blank
-- [ ] 性能：非 blank 候选路径不引入像素开销（断言无额外截图调用）
+- [x] fixture 复现今晚反例：8 字符 48px 纯文本页 → 不得为 blank（`sparse_text.html`；真机 HeadlessChrome 151 → `interactive`，`pixel-ink:0.0088`）
+- [x] 真空白页（白底无内容）→ 仍判 blank（不因修正而漏判）（真机 `blank.html` → `blank` + `pixel-empty:0.0000`）
+- [x] 像素不可用（CDP 断开）→ unknown + `pixel-unavailable` 信号（`pixel_vote` 永不抛，`available:false` 是合法答案）
+- [x] 全 canvas 页（DOM 无文本）→ 不判 blank（`has_media` 短路，不付像素票代价；真机 data:URL canvas 页 → `interactive`）
+- [x] 性能：非 blank 候选路径不引入像素开销（单测断言内容页调用序列里没有 `Page.captureScreenshot`）
+
+### 实现记录（2026-10-18）
+
+- `hand/perception/pixels.py`（新）：纯标准库 PNG 解码（zlib + 五种行滤波，8-bit 非交错，色彩类型 0/2/4/6）+ `ink_stats` + `pixel_vote`。零第三方依赖。
+- `visual_state.classify`：blank 分支改为「候选 + 票」——无票 → `unknown["pixel-unavailable","sparse-text"]`；有票按 `ink_ratio` 与 `BLANK_PIXEL_INK_MIN=0.002` 分流。
+- `visual_state.probe`：两段式。DOM 先判，只有 blank 候选才取票；`cdp_shot` 把已在手的 PNG 传进来复用（帧过大时 `pixel_vote` 才自截 0.25 缩放小图，`PIXEL_FULL_DECODE_MAX=200000`）。
+- 真机数字：1280×900 视口、8 个 48px 字符 → `ink_ratio=0.0088`（阈值 0.2%，余量 4.4×）；真空白页 0.0000。
+- 测试 457 全绿（`tests/test_visual_state.py` +11：解码器 / 投票语义 / 两段式成本 / 五种降级路径）。
+
 
 ---
 

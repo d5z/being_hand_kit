@@ -187,7 +187,11 @@ def cdp_screenshot(page_sel=None, format='png', quality=None) -> dict:
         # keeps the module graph acyclic (visual_state lazily imports cdp_call).
         try:
             from hand.perception.visual_state import probe as visual_probe
-            visual = visual_probe(ws, call=cdp_call)
+            # 0.10 D3: hand the frame over so a blank candidate can be voted on
+            # without a second capture (pixels.pixel_vote re-shoots only when
+            # the frame is too large to decode cheaply).
+            visual = visual_probe(ws, call=cdp_call,
+                                  png_b64=data if format == 'png' else None)
         except Exception:
             visual = {'visual_state': 'unknown', 'visual_signals': ['probe-failed']}
         return {

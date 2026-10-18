@@ -1,6 +1,22 @@
 # Changelog
 
+## [Unreleased] — 0.10 开发中
+
+> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。D3 已落地，D1/D2/D4 未开工。
+
+### Added
+- **像素票模块**（`hand/perception/pixels.py`，D3）：纯标准库 PNG 解码（zlib + 五种行滤波，8-bit 非交错，色彩类型 0/2/4/6）+ `ink_stats`（背景色众数 + 与背景色的曼哈顿距离统计）+ `pixel_vote`（永不抛：`available:false` 是合法答案）。零第三方依赖。
+
+### Changed
+- **`visual_state` 的 blank 判据要求视觉证据**（D3，S2 bug 修正）：`blank` 是视觉范畴，DOM 代理在纯文本页/全 canvas 页/慢加载页都会撒谎（0.10 PRD 记录的反例：白底 + 8 个 48px 字符 → 旧判据报 `blank`）。现在 DOM 只给出 blank **候选**，须由一份像素票落定：`ink_ratio ≥ 0.002` → `interactive`（信号 `sparse-text` + `pixel-ink:*`）；票为 0 → `blank`（`pixel-empty:*`）；**拿不到票 → `unknown` + `pixel-unavailable`，绝不报 blank**。
+- `probe()` 改为两段式：内容页（长文本 / 有媒体）不取票、不截图；`cdp_shot` 把已在手的 PNG 传入复用（帧过大时才自截 0.25 缩放小图，`PIXEL_FULL_DECODE_MAX=200000`）。
+
+### Verified
+- 真机（HeadlessChrome 151，1280×900）：8 字符 48px 纯文本页 → `interactive` / `pixel-ink:0.0088`（阈值 0.2%，余量 4.4×）；真空白页 → `blank` / `pixel-empty:0.0000`；DOM 无文本的全 canvas 页 → `interactive`（`has_media` 短路，不付票）。
+- 457 tests 10.9s OK（`test_visual_state` +11：解码器、投票语义、两段式成本、五种降级路径）。
+
 ## [0.9.8] — 2026-10-12
+
 
 > Windows 生产化轮：cdp_shot 超时家族判读收束（五格矩阵）+ win32 报错文案修复 + 僵尸测试改造。主题是把「装得上、起得来、报得诚实」在 Windows 面上闭合。
 
