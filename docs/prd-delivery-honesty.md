@@ -5,6 +5,7 @@
 > 版本归属：**v0.10**（2026-10-17 泽平拍板）
 > 排序原则：能堵住「主体盲读」的优先于扩展感知能力
 > 评审状态（2026-10-17 泽平）：版本归属 0.10 已定；**D1 的 hand/heart 分段署名边界已认可**（hand 声明 emitted、heart 声明 delivered，hand 不写自己不知道的事）
+> 实现进度（2026-10-18）：**D3 已落地**（`c1cc7dd`，blank 加像素票）、**D4 已落地**（`b701dd8`，`hand_eye_check` 实机端到端 pass）；474 tests 绿。D1/D2 待与 sw 定 heart 侧 `delivered` 署名口径；D5/D6 data-gated。
 
 ## 一句话
 
