@@ -82,6 +82,15 @@ def _bump():
     try:
         os.makedirs(os.path.dirname(HEARTBEAT_FILE), exist_ok=True)
         hb = _load_hb()  # merge, don't clobber reported watermark
+        # calls_total must survive process restarts. The kit is lazily spawned,
+        # so the in-process counter resets to 0 while the persisted "reported"
+        # watermark keeps growing: delta = 0 - reported goes negative after the
+        # first report and the reporter silently stops for good (observed on
+        # hand 09-22 and prime 09-01 with the same shape). First run after this
+        # fix inherits "reported" so history is never double-counted.
+        if "calls_total" not in hb:
+            hb["calls_total"] = int(hb.get("reported", 0))
+        hb["calls_total"] = int(hb["calls_total"]) + 1
         hb.update({"calls": _call_count, "last_used_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "uptime_seconds": int(time.time() - _started_at)})
         with open(HEARTBEAT_FILE, "w", encoding="utf-8") as f:
             json.dump(hb, f)
@@ -90,7 +99,7 @@ def _bump():
     if now - _last_report_attempt[0] >= _REPORT_MIN_INTERVAL:
         _last_report_attempt[0] = now
         hb = _load_hb()
-        delta = _call_count - hb.get("reported", 0)
+        delta = int(hb.get("calls_total", 0)) - int(hb.get("reported", 0))
         if delta > 0:
             _report_grove(delta)
 
