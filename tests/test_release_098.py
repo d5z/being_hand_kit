@@ -9,8 +9,8 @@ Chrome/Edge), the cdp_shot timeout family closed by the five-cell matrix
 feedback-ledger closeouts F27/F28/F29, and the zombie-test rework
 (test_release_080 → historical lock + 097 backfill + this chain).
 
-This file holds the current-version assertions.
-test_release_chain enforces this file exists while hand.__version__ == 0.9.8.
+Historical lock — 0.9.8 shipped 2026-10-12. Current-version assertions
+moved to test_release_0100 at the 0.10.0 bump (see test_release_chain).
 """
 
 import os
@@ -28,15 +28,17 @@ def _read(path):
 
 
 class TestVersion098(unittest.TestCase):
-    def test_version_is_098(self):
-        import hand
-        self.assertEqual(hand.__version__, "0.9.8")
+    """Historical lock: 0.9.8 shipped 2026-10-12. The version itself has
+    since moved on — current-version assertions live in
+    test_release_0100 (see test_release_chain for the rule)."""
 
-    def test_manifest_version_is_098(self):
-        import json
-        with open(os.path.join(ROOT, "kit", "manifest.json"), encoding="utf-8") as f:
-            manifest = json.load(f)
-        self.assertEqual(manifest["version"], "0.9.8")
+    def test_changelog_entry_is_dated(self):
+        body = _read("CHANGELOG.md")
+        self.assertIn("## [0.9.8] — 2026-10-12", body)
+
+    def test_spec_or_docs_still_reference_098_fix(self):
+        body = _read(os.path.join("hand", "perception", "cdp_launcher.py"))
+        self.assertIn("no chrome binary found on Windows", body)
 
 
 class TestChangelog098(unittest.TestCase):

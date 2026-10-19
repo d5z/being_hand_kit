@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased] — 0.10 开发中
+## [0.10.0] — 2026-10-19
 
-> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。D1（hand 侧）+ D3 + D4 已落地，D1 的 heart 侧 `delivery` 待与 sw 定口径，D5/D6 data-gated。
+> 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。本版发的是 hand 侧能独自负责的那一半：D1 的 `emitted`（hand 只声明自己放进了什么）+ D3（blank 判据要视觉证据）+ D4（`hand_eye_check`）。`delivery` 归 heart/portal 署名，不在本版——hand 不写自己不知道的事。D5/D6 data-gated，未随本版。
 
 ### Added
 - **`emitted` 块（回执第一段署名）**（`hand/receipt.py` + `hand/router.py`，D1）：回执正面声明 hand **把什么放进了这份回执**。这是 `verified` 回答不了的另一半——2026-10-17 夜两者真实分离：动作 100% 发生（`verified: true`、`data_length: 123216`），而调用方上下文里的图像为 0。覆盖 `cdp_shot`（image）、`cdp_a11y`（tree/nodes）、`cdp_dom`（text/chars）、`cdp_interactive`、`cdp_network`、`vision_ocr`、`see_vlm`。
