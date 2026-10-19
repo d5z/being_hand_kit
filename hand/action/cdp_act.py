@@ -741,14 +741,30 @@ def cdp_click_handle(handle, page_sel=None):
         dispatched = [round(click_pt[0] * dpr), round(click_pt[1] * dpr)]
         _click_at(ws, dispatched[0], dispatched[1], dpr)
         _write_last(idx)
+        # 0.11.0: a probe that landed on the element is `landed=True`; the
+        # legacy centre fallback is `landed=None` — "could not tell", never
+        # claimed as true.
+        landed = True if click_how in ('center', 'grid_scan',
+                                       'redirect_target_clickable_point') else None
         evidence = {
             "element": _handle_label(entry),
             "role": entry.get("role"),
             "name": entry.get("name"),
             "handle": f'[{entry["idx"]}]',
             "backend_node_id": entry["backend_node_id"],
+            # 0.11.0 (PRD F3): `box.x/y` are the CENTRE, not the top-left —
+            # the field name lied through 0.10.x. `bounds` carries the real
+            # rect and `center` the point; `box` stays for one more version.
             "box": {"x": round(rect["x"], 1), "y": round(rect["y"], 1),
                     "w": round(rect["w"], 1), "h": round(rect["h"], 1)},
+            "box_deprecated": "x/y are the centre; use bounds or center",
+            "center": {"x": round(rect["x"], 1), "y": round(rect["y"], 1)},
+            "bounds": {"left": round(rect["x"] - rect["w"] / 2.0, 1),
+                       "top": round(rect["y"] - rect["h"] / 2.0, 1),
+                       "right": round(rect["x"] + rect["w"] / 2.0, 1),
+                       "bottom": round(rect["y"] + rect["h"] / 2.0, 1),
+                       "width": round(rect["w"], 1),
+                       "height": round(rect["h"], 1)},
             "space": "physical", "dpr": dpr, "dispatched": dispatched,
             "viewport": {"w": vw, "h": vh},
             "in_viewport": in_viewport,
@@ -758,12 +774,15 @@ def cdp_click_handle(handle, page_sel=None):
             "source": "cdp_see(kind=a11y) handle map",
             "verified": True,
         }
+        evidence['three_state'] = _three_state(True, landed, 'no_readback')
         if redirect_ev:
             evidence.update(redirect_ev)
         evidence.update(nav_ev)
         return {"method": "cdp_click", "handle": f'[{entry["idx"]}]',
                 "page_index": idx, "result": "ok", "tiers": "handle",
-                "verified": True, "evidence": evidence}
+                "verified": True,
+                "resolved": True, "landed": landed, "effected": "unknown",
+                "evidence": evidence}
     finally:
         ws.close()
 
@@ -1107,28 +1126,58 @@ def cdp_click_do(action, app_name=None):
         finally:
             ws.close()
     if action.startswith('xy:'):
+        spec = action[3:].strip()
+        frame_ref = None
+        if '@' in spec:
+            # 0.11.0 (S4): 'xy@img:<sha8>:X,Y' — name the frame the point came
+            # from, so "which picture did I measure on" stops being unaskable.
+            frame_ref, spec = spec.split('@', 1)
+            frame_ref = frame_ref.strip() or None
         try:
-            parts = action[3:].strip().split(',')
+            parts = spec.strip().split(',')
             x, y = int(round(float(parts[0].strip()))), int(round(float(parts[1].strip())))
         except (ValueError, IndexError):
             return _receipt_fail('cdp_click',
-                                 'invalid xy format, expected "xy:X,Y"', action=action)
+                                 'invalid xy format, expected "xy:X,Y" or '
+                                 '"xy@img:<sha8>:X,Y"', action=action)
         pages = list_pages()
         idx, page = resolve_page(None, pages)
         ws = cdp_connect(page['webSocketDebuggerUrl'])
         try:
             _init_domains(ws, 'Runtime')
             dpr = _get_dpr(ws)
+            frame = _frame_at(ws, msg_id=41)
+            vp, vp_known = _viewport_size(ws, msg_id=42)
+            in_viewport = None
+            if vp_known:
+                in_viewport = (0 <= x / dpr < vp['w']) and (0 <= y / dpr < vp['h'])
+            # 0.11.0: the point can now name who is under it. That converts a
+            # blind dispatch into a landed=True/None fact — still no claim that
+            # the world changed.
+            at_point = _element_at(ws, x / dpr, y / dpr, msg_id=43)
             _click_at(ws, x, y, dpr)
             _write_last(idx)
-            # Dispatch-only: a coordinate click cannot be verified against an
-            # element, so it never claims verified=True.
+            landed = True if at_point is not None else None
+            state = _three_state(in_viewport is not False, landed, 'no_readback')
+            ev = {'verified': False, 'space': 'physical',
+                  'dispatched': [x, y], 'dpr': dpr,
+                  'frame': frame, 'in_viewport': in_viewport,
+                  'frame_ref': frame_ref,
+                  'element_at_point': at_point,
+                  'read_back': 'document.elementFromPoint at the point',
+                  'three_state': state,
+                  'reason': 'coordinate click: dispatch-only, no element to verify '
+                            '(use a selector for a verified receipt)'}
+            if frame_ref:
+                # Honest limit: this build records the frame on the receipt but
+                # keeps no ledger of past frames, so it cannot re-check one.
+                ev['frame_verified'] = False
+                ev['frame_reason'] = ('no_frame_ledger: past frames are not '
+                                     're-checkable in 0.11.0')
             return {'method': 'cdp_click', 'xy': [x, y], 'page_index': idx,
                     'result': 'ok', 'verified': False,
-                    'evidence': {'verified': False, 'space': 'physical',
-                                 'dispatched': [x, y], 'dpr': dpr,
-                                 'reason': 'coordinate click: dispatch-only, no element to verify '
-                                           '(use a selector for a verified receipt)'}}
+                    'resolved': state['resolved'], 'landed': state['landed'],
+                    'effected': state['effected'], 'evidence': ev}
         finally:
             ws.close()
     return cdp_click(sel)
@@ -1292,3 +1341,414 @@ def cdp_scroll_do(action, app_name=None):
     elif len(toks) >= 3 and toks[1] == 'to' and toks[2] in ('down', 'up', 'top', 'bottom'):
         d = toks[2]
     return cdp_scroll(d)
+
+
+# ── 0.11.0 action primitives: drag / key / three-state receipt ───────
+# Spec: docs/prd-0.11-action-primitives.md
+#
+# Why these exist: in a pure-visual surface (Blender, Excalidraw, any canvas
+# app) there is no a11y metadata to lean on — only pixels and coordinates.
+# 0.10 could point; it could not drag or press a modifier. Two primitives are
+# missing before "computer use" means anything outside a DOM.
+#
+# Every receipt here carries three CO-LATERAL facts instead of one `verified`:
+#   resolved — we found a target (selector hit / handle live / coord in viewport)
+#   landed   — the event reached that target (elementFromPoint at the point)
+#   effected — the world changed; 0.11 always reports `unknown` + a reason,
+#              because no read-back exists for it yet. Never faked.
+
+_ELEMENT_AT_FN = (
+    "(function(x,y){var e=document.elementFromPoint(x,y);"
+    "if(!e)return 'null';"
+    "return JSON.stringify({tag:e.tagName,id:e.id||'',"
+    "name:(e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('name')))||'',"
+    "text:(e.innerText||e.value||'').slice(0,40)});})"
+)
+
+_FRAME_FN = (
+    "(function(){return JSON.stringify({"
+    "scrollX:Math.round(window.scrollX||0),"
+    "scrollY:Math.round(window.scrollY||0),"
+    "innerW:window.innerWidth,innerH:window.innerHeight,"
+    "dpr:window.devicePixelRatio||1});})()"
+)
+
+_MODIFIER_BITS = {'alt': 1, 'ctrl': 2, 'control': 2, 'meta': 4, 'cmd': 4,
+                  'command': 4, 'shift': 8}
+_MODIFIER_KEYS = {
+    1: ('Alt', 'AltLeft', 18),
+    2: ('Control', 'ControlLeft', 17),
+    4: ('Meta', 'MetaLeft', 91),
+    8: ('Shift', 'ShiftLeft', 16),
+}
+_NAMED_KEYS = {
+    'enter': ('Enter', 'Enter', 13),
+    'tab': ('Tab', 'Tab', 9),
+    'escape': ('Escape', 'Escape', 27),
+    'esc': ('Escape', 'Escape', 27),
+    'backspace': ('Backspace', 'Backspace', 8),
+    'delete': ('Delete', 'Delete', 46),
+    'space': (' ', 'Space', 32),
+    'arrowleft': ('ArrowLeft', 'ArrowLeft', 37),
+    'arrowup': ('ArrowUp', 'ArrowUp', 38),
+    'arrowright': ('ArrowRight', 'ArrowRight', 39),
+    'arrowdown': ('ArrowDown', 'ArrowDown', 40),
+    'home': ('Home', 'Home', 36),
+    'end': ('End', 'End', 35),
+    'pageup': ('PageUp', 'PageUp', 33),
+    'pagedown': ('PageDown', 'PageDown', 34),
+}
+
+
+def _three_state(resolved, landed, effected_reason='no_readback'):
+    """The receipt's three faces. `landed=None` means "could not tell"."""
+    state = {'resolved': bool(resolved),
+             'landed': landed,
+             'effected': 'unknown'}
+    if effected_reason:
+        state['effected_reason'] = effected_reason
+    return state
+
+
+def _frame_at(ws, msg_id=70):
+    """The frame anchor: what the page looked like when we acted.
+
+    0.10 receipts carried `img:<sha8>` but not the scroll position, so a
+    coordinate measured on one frame could be dispatched onto another with no
+    trace (observed: 2026-10-20, Excalidraw — scrollIntoView moved the page
+    between shot and click; the click reported ok and hit nothing).
+    """
+    try:
+        raw = cdp_call(ws, 'Runtime.evaluate',
+                       {'expression': _FRAME_FN, 'returnByValue': True},
+                       msg_id=msg_id, timeout=5)
+        value = ((raw or {}).get('result') or {}).get('value')
+        data = json.loads(value) if isinstance(value, str) else None
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {'known': False}
+    return {'known': True,
+            'scrollX': data.get('scrollX'), 'scrollY': data.get('scrollY'),
+            'viewport': {'w': data.get('innerW'), 'h': data.get('innerH')},
+            'dpr': data.get('dpr')}
+
+
+def frame_anchor(page_sel=None):
+    """Public frame anchor for the current page (screenshot receipts use it)."""
+    try:
+        pages = list_pages()
+        idx, page = resolve_page(page_sel, pages)
+        ws = cdp_connect(page["webSocketDebuggerUrl"])
+    except Exception:
+        return {'known': False}
+    try:
+        _init_domains(ws, "Runtime")
+        return _frame_at(ws, msg_id=45)
+    except Exception:
+        return {'known': False}
+    finally:
+        ws.close()
+
+
+def _element_at(ws, x_css, y_css, msg_id=71):
+    """Who is under this CSS point right now, or None when unanswerable."""
+    expr = '%s(%r,%r)' % (_ELEMENT_AT_FN, float(x_css), float(y_css))
+    try:
+        raw = cdp_call(ws, 'Runtime.evaluate',
+                       {'expression': expr, 'returnByValue': True},
+                       msg_id=msg_id, timeout=5)
+        value = ((raw or {}).get('result') or {}).get('value')
+    except Exception:
+        return None
+    if not isinstance(value, str) or value == 'null':
+        return None
+    try:
+        data = json.loads(value)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _element_matches(claim, at):
+    """Does `claim` (e.g. 'button "TARGET"') describe the element `at`?
+
+    None when one side is missing — "could not tell", never "matched".
+    """
+    if not claim or not isinstance(at, dict):
+        return None
+    text_claim = str(claim).lower()
+    tag = str(at.get('tag') or '').lower()
+    if tag and tag not in text_claim:
+        return False
+    for field in ('text', 'name'):
+        val = str(at.get(field) or '').strip().lower()
+        if val and val in text_claim:
+            return True
+    return None if not (at.get('text') or at.get('name')) else False
+
+
+def _point_from_spec(ws, spec, msg_id=72):
+    """(point, error). point = {x, y (CSS px), how, input, dpr[, element]}.
+
+    `spec` accepts 'xy:X,Y' (PHYSICAL px — the module's coordinate contract),
+    an `[idx]` handle from cdp_see(kind=a11y), or a CSS selector.
+    """
+    s = str(spec or '').strip()
+    if not s:
+        return None, 'empty spec'
+    dpr = _dpr_now(ws)
+    if s.lower().startswith('xy:'):
+        try:
+            parts = s[3:].split(',')
+            px, py = float(parts[0]), float(parts[1])
+        except (ValueError, IndexError):
+            return None, 'invalid xy spec %r, expected "xy:X,Y"' % s
+        return {'x': px / dpr, 'y': py / dpr, 'how': 'xy',
+                'input': s, 'dpr': dpr}, None
+    if looks_like_handle(s):
+        entry = resolve_handle(s)
+        if 'error' in entry:
+            return None, entry['error']
+        oid = _handle_object_id(ws, entry.get('backend_node_id'))
+        if not oid:
+            return None, 'handle %s element is gone — call cdp_see again' % s
+        pt, how = _clickable_point(ws, oid, msg_id=msg_id)
+        if pt is None:
+            return None, 'handle %s has no clickable point (%s)' % (s, how)
+        return {'x': pt[0], 'y': pt[1], 'how': how, 'input': s, 'dpr': dpr,
+                'element': _handle_label(entry)}, None
+    info = _element_info(ws, s)
+    if not info or info.get('error'):
+        return None, 'selector %r not found: %s' % (
+            s, (info or {}).get('error', 'no element'))
+    try:
+        return {'x': float(info['x']) / dpr, 'y': float(info['y']) / dpr,
+                'how': info.get('how') or 'selector', 'input': s,
+                'dpr': dpr}, None
+    except (KeyError, TypeError, ValueError):
+        return None, 'selector %r returned no usable point' % s
+
+
+def cdp_drag(from_spec, to_spec, steps=10, interval_ms=16, page_sel=None):
+    """Drag from one point to another: mousePressed → N×mouseMoved → released.
+
+    This is the primitive that makes canvas apps reachable at all. Excalidraw
+    (2026-10-20): selecting the rectangle tool then clicking the canvas
+    creates nothing — a drag creates the shape. Same for Blender's orbit /
+    vertex pulls / slider drags.
+
+    from_spec/to_spec take 'xy:X,Y' (physical px), an `[idx]` handle, or a CSS
+    selector. The receipt reports resolved/landed/effected separately;
+    `effected` is always 'unknown' because a drag has no read-back — verify
+    the outcome by comparing two frames, not by trusting this receipt.
+    """
+    pages = list_pages()
+    idx, page = resolve_page(page_sel, pages)
+    ws = cdp_connect(page["webSocketDebuggerUrl"])
+    try:
+        _init_domains(ws, "Runtime")
+        src, err = _point_from_spec(ws, from_spec, msg_id=60)
+        if err:
+            out = _receipt_fail('cdp_drag', 'drag source: ' + err,
+                                from_spec=from_spec, to_spec=to_spec)
+            out['evidence'].update(_three_state(False, None, 'source_unresolved'))
+            out['resolved'], out['landed'] = False, None
+            out['effected'] = 'unknown'
+            return out
+        dst, err = _point_from_spec(ws, to_spec, msg_id=62)
+        if err:
+            out = _receipt_fail('cdp_drag', 'drag target: ' + err,
+                                from_spec=from_spec, to_spec=to_spec)
+            out['evidence'].update(_three_state(False, None, 'target_unresolved'))
+            out['resolved'], out['landed'] = False, None
+            out['effected'] = 'unknown'
+            return out
+
+        frame_before = _frame_at(ws)
+        at_start = _element_at(ws, src['x'], src['y'], msg_id=64)
+        # `landed` answers "did the press reach the element I claimed?" — a
+        # bare `xy:` source claims no element, so the honest answer is None.
+        # What IS known (who sits under the point) rides in element_at_start.
+        landed = _element_matches(src.get('element'), at_start)
+
+        n_steps = max(1, int(steps))
+        try:
+            gap = max(0.0, float(interval_ms)) / 1000.0
+        except (TypeError, ValueError):
+            gap = 0.0
+        t0 = time.time()
+        cdp_call(ws, 'Input.dispatchMouseEvent',
+                 {'type': 'mousePressed', 'x': src['x'], 'y': src['y'],
+                  'button': 'left', 'clickCount': 1}, msg_id=66)
+        dispatched = 1
+        for i in range(1, n_steps + 1):
+            x = src['x'] + (dst['x'] - src['x']) * i / n_steps
+            y = src['y'] + (dst['y'] - src['y']) * i / n_steps
+            cdp_call(ws, 'Input.dispatchMouseEvent',
+                     {'type': 'mouseMoved', 'x': x, 'y': y,
+                      'button': 'left', 'buttons': 1}, msg_id=67)
+            dispatched += 1
+            if gap:
+                time.sleep(gap)
+        cdp_call(ws, 'Input.dispatchMouseEvent',
+                 {'type': 'mouseReleased', 'x': dst['x'], 'y': dst['y'],
+                  'button': 'left', 'clickCount': 1}, msg_id=68)
+        dispatched += 1
+        elapsed_ms = round((time.time() - t0) * 1000, 1)
+
+        _write_last(idx)
+        at_end = _element_at(ws, dst['x'], dst['y'], msg_id=69)
+        frame_after = _frame_at(ws)
+        state = _three_state(True, landed, 'no_readback')
+        verified = bool(state['resolved'] and state['landed'] is True)
+        return {
+            'method': 'cdp_drag',
+            'from': {'x': round(src['x'], 1), 'y': round(src['y'], 1),
+                     'how': src['how'], 'input': src['input'],
+                     'element': src.get('element')},
+            'to': {'x': round(dst['x'], 1), 'y': round(dst['y'], 1),
+                   'how': dst['how'], 'input': dst['input'],
+                   'element': dst.get('element')},
+            'steps': n_steps, 'page_index': idx, 'result': 'ok',
+            'verified': verified,
+            'resolved': state['resolved'], 'landed': state['landed'],
+            'effected': state['effected'],
+            'evidence': {
+                'space': 'css_px', 'dpr': src['dpr'],
+                'dispatched_events': dispatched,
+                'elapsed_ms': elapsed_ms,
+                'step_interval_ms': interval_ms,
+                'element_at_start': at_start,
+                'element_at_end': at_end,
+                'frame_before': frame_before,
+                'frame_after': frame_after,
+                'read_back': 'document.elementFromPoint at start/end',
+                'verified': verified,
+                'three_state': state,
+                'reason': ('drag has no readback — verify the effect by '
+                           'comparing two frames, not by this receipt'),
+            },
+        }
+    finally:
+        ws.close()
+
+
+def _parse_key_combo(spec):
+    """'Control+z' → ({modifiers, key, code, vk, ...}, None) | (None, why)."""
+    parts = [p.strip() for p in str(spec or '').split('+')]
+    if not parts or not parts[-1]:
+        return None, 'empty key spec'
+    *mods, main = parts
+    bits = 0
+    names = []
+    for m in mods:
+        if not m:
+            return None, 'empty modifier in %r' % str(spec)
+        bit = _MODIFIER_BITS.get(m.lower())
+        if bit is None:
+            return None, 'unknown modifier %r in %r' % (m, spec)
+        bits |= bit
+        names.append(m.lower())
+    mk = main.lower()
+    if mk in _NAMED_KEYS:
+        key, code, vk = _NAMED_KEYS[mk]
+    elif len(main) == 1:
+        key = main
+        if main.isalpha():
+            code = 'Key' + main.upper()
+            vk = ord(main.upper())
+        elif main.isdigit():
+            code = 'Digit' + main
+            vk = ord(main)
+        else:
+            code = ''
+            vk = ord(main)
+    else:
+        return None, ('unknown key %r — named keys: %s'
+                      % (main, ', '.join(sorted(_NAMED_KEYS))))
+    return {'modifiers': bits, 'modifier_names': names,
+            'key': key, 'code': code, 'vk': vk}, None
+
+
+def cdp_key(keys, page_sel=None):
+    """Press a key combination: modifiers down → main down → main up → mods up.
+
+    'Control+z', 'Meta+Shift+t', 'Enter', 'Escape', 'ArrowLeft'. modifier
+    order in the spec does not matter; the bitmask is what gets dispatched.
+
+    Blender's whole vocabulary is this — G/R/S plus X/Y/Z plus digits. Without
+    it hand can only type text, which in a 3D viewport is nothing.
+    """
+    info, err = _parse_key_combo(keys)
+    pages = list_pages()
+    idx, page = resolve_page(page_sel, pages)
+    ws = cdp_connect(page["webSocketDebuggerUrl"])
+    try:
+        _init_domains(ws, "Runtime")
+        if err:
+            out = _receipt_fail('cdp_key', err, keys=str(keys))
+            out['evidence'].update(_three_state(False, None, 'key_unparsed'))
+            out['resolved'], out['landed'] = False, None
+            out['effected'] = 'unknown'
+            return out
+
+        focus_before = _focus_label(_active_element(ws, msg_id=50))
+        events = []
+        for bit in (1, 2, 4, 8):
+            if info['modifiers'] & bit:
+                k, code, vk = _MODIFIER_KEYS[bit]
+                cdp_call(ws, 'Input.dispatchKeyEvent',
+                         {'type': 'rawKeyDown',
+                          'modifiers': info['modifiers'],
+                          'key': k, 'code': code,
+                          'windowsVirtualKeyCode': vk,
+                          'nativeVirtualKeyCode': vk}, msg_id=51)
+                events.append('rawKeyDown:' + k)
+        cdp_call(ws, 'Input.dispatchKeyEvent',
+                 {'type': 'rawKeyDown', 'modifiers': info['modifiers'],
+                  'key': info['key'], 'code': info['code'],
+                  'windowsVirtualKeyCode': info['vk'],
+                  'nativeVirtualKeyCode': info['vk']}, msg_id=52)
+        events.append('rawKeyDown:' + info['key'])
+        cdp_call(ws, 'Input.dispatchKeyEvent',
+                 {'type': 'keyUp', 'modifiers': info['modifiers'],
+                  'key': info['key'], 'code': info['code'],
+                  'windowsVirtualKeyCode': info['vk'],
+                  'nativeVirtualKeyCode': info['vk']}, msg_id=53)
+        events.append('keyUp:' + info['key'])
+        for bit in (8, 4, 2, 1):
+            if info['modifiers'] & bit:
+                k, code, vk = _MODIFIER_KEYS[bit]
+                cdp_call(ws, 'Input.dispatchKeyEvent',
+                         {'type': 'keyUp', 'modifiers': 0,
+                          'key': k, 'code': code,
+                          'windowsVirtualKeyCode': vk,
+                          'nativeVirtualKeyCode': vk}, msg_id=54)
+                events.append('keyUp:' + k)
+
+        focus_after = _focus_label(_active_element(ws, msg_id=55))
+        _write_last(idx)
+        landed = True if focus_after != focus_before else None
+        state = _three_state(True, landed, 'no_readback')
+        return {
+            'method': 'cdp_key', 'keys': str(keys), 'page_index': idx,
+            'result': 'ok', 'verified': False,
+            'resolved': state['resolved'], 'landed': state['landed'],
+            'effected': state['effected'],
+            'parsed': {'modifiers': info['modifiers'],
+                       'modifier_names': info['modifier_names'],
+                       'key': info['key'], 'code': info['code'],
+                       'vk': info['vk']},
+            'evidence': {
+                'dispatched_events': len(events), 'events': events,
+                'focus_before': focus_before, 'focus_after': focus_after,
+                'read_back': 'document.activeElement before/after',
+                'verified': False,
+                'three_state': state,
+                'reason': ('a key press has no read-back beyond focus change — '
+                           'verify the effect by observing the page'),
+            },
+        }
+    finally:
+        ws.close()

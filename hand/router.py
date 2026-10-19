@@ -636,6 +636,16 @@ def route_screenshot(place=None, with_data: bool = False) -> dict:
                 out["evidence"]["visual_state"] = result["visual_state"]
             if with_data:
                 out["data"] = result["data"]
+            # S4 (0.11): the frame these pixels came from — scroll position,
+            # viewport, dpr. Without it a coordinate measured on this image
+            # cannot be tied back to the image later (0.11.0 PRD F5: the
+            # scroll-between-shot-and-click miss).
+            try:
+                from hand.action.cdp_act import frame_anchor
+                out["frame"] = frame_anchor()
+            except Exception:
+                out["frame"] = {"known": False}
+            out["evidence"]["frame"] = out["frame"]
             # D1 (0.10): the image channel is `emitted` only when the base64
             # actually rides in THIS receipt. Captured-but-not-sent is a
             # declared gap (`not_requested`), never silence. Whether it then

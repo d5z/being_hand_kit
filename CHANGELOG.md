@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.11.0] — 2026-10-20
+
+> 动作原语主线（docs/prd-0.11-action-primitives.md）。0.10 让 hand 不说自己不知道的事；0.11 让 hand 能做出更多事、并且说清每件事做到了哪一步。
+>
+> 背景是方向变了：computer use 的目标要能操作 Blender。Blender 是纯视觉域——没有 DOM、没有 a11y、没有可查元素，hand 现有的「元数据 + selector + 轮询」在那里全部失效，能用的只剩像素和坐标。而 0.10 的坐标路径只支持「点」：点得了，拖不动，按不了组合键。本版补两件原语 + 一套三态回执，不接 VLM、不做帧 diff。
+
+### Added
+- **`cdp_drag(from_spec, to_spec, steps=10, interval_ms=16)`**（`hand/action/cdp_act.py`）：`mousePressed` → N×`mouseMoved(buttons=1)` → `mouseReleased`。from/to 各接受 `xy:X,Y`（物理像素）、`[idx]` 句柄或 CSS selector。这是 canvas 应用的可达性前提——实测 Excalidraw 选矩形工具后**单击画布不产生图形**，拖拽才产生；Blender 的轨道旋转 / 拉顶点 / 拖滑块同属这一类。
+- **`cdp_key(keys)`**（`hand/action/cdp_act.py`）：修饰键 down → 主键 down/up → 修饰键 up（逆序）。`'Control+z'` / `'Meta+Shift+t'` / `'Enter'` / `'Escape'` / `'ArrowLeft'`。修饰位掩码 Alt=1 / Ctrl=2 / Meta=4 / Shift=8，字符串里的修饰键顺序不影响派发。`cdp_type` 只能插入文本，这一步补的是真实按键事件——应用驱动型 UI（Blender 的 G/R/S + X/Y/Z + 数字）的全部词汇。非法组合（未知修饰键 / 空主键 / 空修饰）显式报错且**一个事件都不派发**。
+
+### Changed
+- **三态回执（click / drag / key 统一）**：`resolved`（找到目标了吗）/ `landed`（动作送到它身上了吗）/ `effected`（世界变了吗）并列出现在回执顶层。`verified` 保留但等价于 `resolved and landed`。
+  - **`effected` 本版一律 `unknown`** + `effected_reason: no_readback`。没有读回就不许报变化——0.10 的 D3「没有视觉证据不许报 blank」伸到动作层。
+  - **`landed: null` 是合法答案**（"判不了"），不等同 `false`。裸 `xy:` 源不声称任何目标元素，因此永远不会得到 `landed: true`；落点事实走 `element_at_start` / `element_at_point`。
+- **坐标点击不再盲派**：`xy:` 路径先用 `document.elementFromPoint` 记录落点（`element_at_point`），再派发。仍然不声称 `verified`——落点上确实有元素，不等于它是我想要的那个。
+- **`box` 字段语义修正**（PRD F3）：核对确认 `_handle_rect` 返回的 x/y 一直是**中心**，不是左上角——字段名自 0.9.x 起就在说谎。新增 `center` 与 `bounds`（真 BCR：left/top/right/bottom/width/height），`box` 保留一版并附 `box_deprecated` 说明。
+- **`cdp_shot` 回执加 `frame`**：`{scrollX, scrollY, viewport{w,h}, dpr}`。此前只有 `img:<sha8>` + 尺寸，一张图对应哪个滚动位置不可问——实测踩中：拿滚动前的坐标点在滚动后的页面上，回执 `ok`，落空。
+- **`xy@img:<sha8>:X,Y`** 语法：帧引用解析后写进 `frame_ref`。**未做跨帧校验**（不存历史帧台账），回执显式 `frame_verified: false` + `no_frame_ledger`，不假装验证过。
+
+### Verified
+**L3 真机（HeadlessChrome 151 / dpr 1 / 800×600）**
+- `cdp_key('r')` 在 Excalidraw 切到矩形工具（工具栏高亮，像素可见）→ `cdp_drag('xy:300,300','xy:500,420')` 画出 200×120 矩形。drag 回执：`resolved:true, landed:null, effected:unknown`——xy 源不声称目标，如实。
+- key 事件字段经页面侧监听器逐字核对：`Control+z` → 页面收到 `key:'z', ctrl:true, code:'KeyZ'`；`Shift+Alt+x` → `shift:true, alt:true`；`Escape` → `key:'Escape'`。
+- **对照实验**：同一页面 Excalidraw 对 `Control+z` 无反应（事件已正确送达，页面侧不响应）。回执如实报 `effected: unknown`——不把「送达」写成「生效」。
+- `geom.html`（BCR = 100,100,200,100）：`center:{x:200,y:150}`、`bounds:{left:100,top:100,right:300,bottom:200,width:200,height:100}`、`box:{x:200,y:150,w:200,h:100}` + deprecated 标注。
+- `[idx]` 句柄点击：`resolved:true, landed:true, effected:unknown`，DOM 回执 `CLICK:TARGET`。
+
+**L1/L2**：524 tests 11.5s OK（新增 `test_action_primitives` 27 枚：键解析 11 / 三态 2 / key 派发 5 / drag 序列 6 / 点解析 3）。0.10.0 基线 497。
+
+### Known limits（本版明确不做）
+- 跨帧台账与 `xy@img:` 的 stale 拒派发（0.12；本版只如实说"没验"）
+- `effected` 自动判定 / 帧 diff（data-gated，0.12）
+- `cdp_key_hold` / `cdp_key_release`（长按语义）
+- 修饰键 + 点击组合（`Shift+Click` 选范围）
+- Blender 本体操作验证（需要真显示器机器）
+
 ## [0.10.0] — 2026-10-19
 
 > 交付诚实主线（docs/prd-delivery-honesty.md）：感知的第四轴——证据到达调用方了吗。本版发的是 hand 侧能独自负责的那一半：D1 的 `emitted`（hand 只声明自己放进了什么）+ D3（blank 判据要视觉证据）+ D4（`hand_eye_check`）。`delivery` 归 heart/portal 署名，不在本版——hand 不写自己不知道的事。D5/D6 data-gated，未随本版。

@@ -572,6 +572,9 @@ EXPECTED_IDEMPOTENCY = {
     "hand_see_ocr": "idempotent",
     "hand_eye_check": "side_effect",
     "health": "idempotent",
+    # 0.11.0: no read-back exists for either — a retry re-does the action.
+    "cdp_drag": "side_effect",
+    "cdp_key": "side_effect",
 }
 
 EXPECTED_EVIDENCE = {
@@ -588,6 +591,10 @@ EXPECTED_EVIDENCE = {
     "hand_eye_check": "verified",
     "cdp_close": "verified",
     "health": "claimed",
+    # 0.11.0: both declare only what they observed (resolved/landed) and say
+    # `effected: unknown` — so the manifest level is 'claimed', not 'verified'.
+    "cdp_drag": "claimed",
+    "cdp_key": "claimed",
 }
 
 IDEMPOTENCY_ENUM = {"idempotent", "append", "side_effect"}

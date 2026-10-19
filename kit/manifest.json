@@ -1,6 +1,6 @@
 {
   "name": "hand",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand — built by Alice for every being who needs to reach into a GUI. Since 0.7.0 cdp_see returns the accessibility tree by default (role/name/state + stable [idx] handles that cdp_click/cdp_type accept); kind=dom and kind=interactive remain as escape hatches. Receipts distinguish verified vs claimed; tools declare idempotency.",
   "platforms": {
     "supported": [
@@ -242,6 +242,50 @@
         "properties": {}
       },
       "idempotency": "idempotent",
+      "evidence": "claimed"
+    },
+    {
+      "name": "cdp_drag",
+      "description": "Drag from one point to another (mousePressed -> N x mouseMoved -> mouseReleased). The primitive that makes canvas surfaces reachable: a click cannot create a shape, a drag can. from/to accept 'xy:X,Y' (physical px), an [idx] a11y handle, or a CSS selector. Receipt carries resolved / landed / effected separately; effected is always 'unknown' (a drag has no read-back - verify by comparing two frames). Frame anchors in evidence.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "from_spec": {
+            "type": "string"
+          },
+          "to_spec": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "integer"
+          },
+          "interval_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_spec",
+          "to_spec"
+        ]
+      },
+      "idempotency": "side_effect",
+      "evidence": "claimed"
+    },
+    {
+      "name": "cdp_key",
+      "description": "Press a key combination: modifiers down, main key down/up, modifiers up. 'Control+z', 'Meta+Shift+t', 'Enter', 'ArrowLeft', 'Escape'. Modifier bitmask Alt=1/Ctrl=2/Meta=4/Shift=8; string order does not matter. Where cdp_type inserts text, this dispatches real key events - the vocabulary of application-driven UIs. Receipt: resolved / landed (focus changed) / effected unknown.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "idempotency": "side_effect",
       "evidence": "claimed"
     }
   ]

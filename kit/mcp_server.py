@@ -210,6 +210,56 @@ def cdp_type(text: str) -> dict:
     _bump()
     return cdp_type_focused(text)
 @mcp.tool()
+def cdp_drag(from_spec: str, to_spec: str, steps: int = 10, interval_ms: int = 16) -> dict:
+    """Drag from one point to another: mousePressed -> N x mouseMoved -> mouseReleased.
+
+    This is what makes canvas surfaces reachable at all — a 3D viewport, a
+    whiteboard, a slider. A click cannot create a shape; a drag can.
+
+    `from_spec` / `to_spec` each accept 'xy:X,Y' (physical pixels), an [idx]
+    handle from cdp_see(kind=a11y), or a CSS selector. `steps` is how many
+    intermediate mouseMoved events the path is cut into (more = smoother for
+    apps that sample motion), `interval_ms` the gap between them.
+
+    The receipt carries three separate facts: `resolved` (both endpoints
+    found), `landed` (elementFromPoint at the start point is the claimed
+    element), and `effected` — which is ALWAYS 'unknown' here. A drag has no
+    read-back: verify the outcome by comparing two frames, not by trusting
+    this receipt. `verified` is true only when resolved and landed are both
+    true, and it still does not mean the world changed.
+
+    Both frames are anchored in evidence (`frame_before` / `frame_after`:
+    scrollX, scrollY, viewport, dpr) so a later reader can tell whether the
+    page moved underneath the coordinates.
+    """
+    from hand.action.cdp_act import cdp_drag as _cdp_drag
+    _bump()
+    return _cdp_drag(from_spec, to_spec, steps=steps, interval_ms=interval_ms)
+
+
+@mcp.tool()
+def cdp_key(keys: str) -> dict:
+    """Press a key combination: modifiers down, main key down/up, modifiers up.
+
+    'Control+z', 'Meta+Shift+t', 'Enter', 'Escape', 'ArrowLeft', 'Space'.
+    Modifier order in the string does not matter — the dispatched modifier
+    bitmask (Alt=1 / Ctrl=2 / Meta=4 / Shift=8) is what counts.
+
+    Use this where cdp_type cannot go: undo, save, switch tabs, and the entire
+    keyboard vocabulary of application-driven UIs (Blender's G/R/S + X/Y/Z +
+    digits). cdp_type inserts text; this dispatches real key events.
+
+    The receipt reports `resolved` (the combo parsed), `landed` (true only
+    when document.activeElement changed — otherwise null, meaning "could not
+    tell") and `effected: unknown` — a key press has no read-back beyond
+    focus. Verify the effect by observing the page.
+    """
+    from hand.action.cdp_act import cdp_key as _cdp_key
+    _bump()
+    return _cdp_key(keys)
+
+
+@mcp.tool()
 def cdp_scroll(direction: str, amount: int = None) -> dict:
     from hand.action.cdp_act import cdp_scroll as _cdp_scroll
     _bump()
