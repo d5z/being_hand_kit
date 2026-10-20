@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.12.0] — 2026-10-20
+
+> 变化可判定主线（docs/prd-0.12-change-verifiability.md）。0.11 的每个动作回执都停在 `effected: unknown` + *"compare two frames"*——hand 知道该怎么验，也诚实地告诉了调用方，**但它没替你做**。这一版把那一环装回 hand。
+>
+> 触发是一次真实的长任务：Excalidraw 从空白画布画 A→B 流程图，23 次调用 / ~15 拍。全程 6 次截图、手工比对，靠我的眼睛补上 hand 缺的那一环。补完之后 hand 的动作回执能自己回答「世界变了吗」——包括它什么都没看见的时候。
+
+### Added
+- **`hand/perception/pixels.py::frame_diff(before, after, region=None, ch_delta=12)`**：帧差分原语。`region` 限定只比一块，返回 `{comparable, changed, total, ratio, bbox}`。**第一职责是先回答两帧能不能比**——尺寸/通道数不同返回 `comparable:false` + 原因，把「比不了」和「没变化」分开。`ch_delta` 是三通道绝对差之和的容忍值（默认 12）。
+- **`hand/action/effect.py::probe_action(kind, action_fn, verify=True)`**：动作前后各抓一帧、等页面静止、只 diff **预期区域**。`effected` 从 `unknown` 变成三态：`changed` / `no_change` / `unknown`。
+- **预期区域（expect region）**：click = 派发点 ±60px（物理像素）；drag = 两端的 bbox 外扩 24px（CSS 像素 × dpr）；key = 全帧（按键没有可作用的元素可缩范围）。
+- **`change` 块**：`{verifiable, threshold, region, changed, total, ratio, bbox, waited_ms}`，另带 `whole_frame`（全帧变化）与 `changed_outside_region`。后者是**点歪了的信号**：区域里没变、别处变了——0.9.4 那批「回执绿、任务死」的根因，此前根本看不见。
+- **`verify` 参数**（`cdp_click` / `cdp_drag` / `cdp_key`，默认 `True`）：`verify=False` 逐字复现 0.11 的回执，零额外抓帧，给高频批处理路径。
+
+### Changed
+- **`effected` 不再一律 `unknown`**。三态语义：`changed`（区域内变了）/ `no_change`（两帧可比、区域内没变——动作很可能没生效）/ `unknown`（抓帧失败、不可比、页面未静止、**或动作压根没派发出去**）。
+- **动作没出门 ≠ 没变化**：报错的 click 和什么都没做的 click 在帧上一模一样。回执有 `error` 且无派发证据时一律 `unknown` + `action did not dispatch: ...`，绝不落到 `no_change`。
+- **`evidence.reason` 改写**：动作层写的「no readback — verify by comparing two frames」在判定完成后替换为 `no element read-back; the frame diff in \`change\` is the effect evidence (...)`。留着原话，回执就是在建议一件已经做完的事。
+- **`verified` 语义不变**：仍是 `resolved and landed`，永不代表世界变了。0.11 的调用方不受影响。
+
+### Fixed
+- **区域裁剪 bug**（`pixels.frame_diff`）：先 `max(0, x)` 再 `x + w` 会让负起点区域（点在页面边缘时必然出现）悄悄铺满整帧——正是 `region` 参数要防的那种过宽。改为裁剪**边**而不是起点。
+
+### Verified
+**L 层真机（HeadlessChrome 151 / dpr 1 / 800×600 / Excalidraw）**
+- **L1 负样本**：无选中状态下点画布死区 → `effected:"no_change"`，区域内 `0/14400`，同时 `whole_frame.changed:6831` + `changed_outside_region:true`（页面加载渲染在动，但点击点周围确实什么都没发生）。0.11 在这里只能给 `unknown`。
+- **L2 正样本**：点矩形工具（工具栏高亮切换）→ `effected:"changed"`，区域内 `2877/11760 = 24.5%`，bbox 落在工具栏。
+- **L3 拖拽**：`xy:200,200 → xy:350,320` 画出矩形 → `effected:"changed"`，区域内 `2823/33264 = 8.5%`，bbox `{x:191,y:176,w:168,h:153}` 落在拖拽区。
+- **L4 失败路径**：点不存在的 selector → `effected:"unknown"` + `action did not dispatch: selector did not match any element`。**不是 no_change**。
+- 560 tests green（新增 `tests/test_frame_diff.py` 10 项 + `tests/test_effect.py` 11 项）。
+
+### Known limits
+- **`no_change` 的判据是「两帧可比且区域内 0 变化」**，它证明的是「没看见变化」，不是「动作失败了」。慢渲染（懒加载、异步请求）在 `wait_stable` 超时后一律降级为 `unknown`。
+- **不做 OCR diff**：文字变化由 `type` 的 readback 覆盖；「读懂了什么」留给后续版本。
+- **不做语义判断**：不回答「这个按钮变红了吗」。只回答「这块像素变了吗」。
+- **全帧 diff 纯 Python 约 0.9s**：所以 key 走全帧是这一版最贵的一条路径（实测单次动作总耗时 ~650ms，含抓帧）。区域限定的 click/drag 便宜得多。
+
 ## [0.11.0] — 2026-10-20
 
 > 动作原语主线（docs/prd-0.11-action-primitives.md）。0.10 让 hand 不说自己不知道的事；0.11 让 hand 能做出更多事、并且说清每件事做到了哪一步。

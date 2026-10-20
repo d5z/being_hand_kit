@@ -38,12 +38,17 @@ def _read(rel):
 
 
 class TestVersion0110(unittest.TestCase):
-    def test_version_is_0110(self):
-        import hand
-        self.assertEqual(hand.__version__, "0.11.0")
+    """Historical lock (0.12.0 turned this from a current-version assertion
+    into a chain link): 0.11.0 must stay a released version in the chain."""
 
-    def test_manifest_version_is_0110(self):
-        self.assertEqual(_manifest()["version"], "0.11.0")
+    def test_version_is_at_least_0110(self):
+        import hand
+        parts = [int(x) for x in hand.__version__.split(".")]
+        self.assertGreaterEqual(parts, [0, 11, 0])
+
+    def test_manifest_version_matches_package(self):
+        import hand
+        self.assertEqual(_manifest()["version"], hand.__version__)
 
 
 class TestManifestDeclaresPrimitives(unittest.TestCase):

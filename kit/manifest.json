@@ -1,6 +1,6 @@
 {
   "name": "hand",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Hand is a being's hand on the screen. See what's there, click what you want, type what you mean, plan what you need. Works on browsers (Chrome CDP, cross-platform) and macOS native apps. One being, one hand — built by Alice for every being who needs to reach into a GUI. Since 0.7.0 cdp_see returns the accessibility tree by default (role/name/state + stable [idx] handles that cdp_click/cdp_type accept); kind=dom and kind=interactive remain as escape hatches. Receipts distinguish verified vs claimed; tools declare idempotency.",
   "platforms": {
     "supported": [
@@ -91,12 +91,17 @@
     },
     {
       "name": "cdp_click",
-      "description": "Click an element on the page. Accepts a CSS selector (e.g. 'a.login') or an [idx] handle from cdp_see(kind=a11y) (e.g. '[93]'), which is resolved through the last snapshot's handle map and verified by re-reading the element box at click time. Also accepts 'text=...' and 'xy:X,Y' (physical pixels).",
+      "description": "Click an element on the page. Accepts a CSS selector (e.g. 'a.login') or an [idx] handle from cdp_see(kind=a11y) (e.g. '[93]'), which is resolved through the last snapshot's handle map and verified by re-reading the element box at click time. Also accepts 'text=...' and 'xy:X,Y' (physical pixels). 0.12: `effected` is judged, not deferred - hand grabs a frame before and after and diffs a +/-60px box around the dispatched point, yielding 'changed' / 'no_change' / 'unknown' plus a `change` block (region, ratio, bbox, whole_frame, changed_outside_region). `unknown` is never reported as no_change.",
       "params": {
         "type": "object",
         "properties": {
           "selector": {
             "type": "string"
+          },
+          "verify": {
+            "type": "boolean",
+            "default": true,
+            "description": "0.12: judge `effected` by diffing a frame before and after the action (default true). verify=false reproduces the 0.11 receipt exactly, with no extra captures."
           }
         },
         "required": [
@@ -246,7 +251,7 @@
     },
     {
       "name": "cdp_drag",
-      "description": "Drag from one point to another (mousePressed -> N x mouseMoved -> mouseReleased). The primitive that makes canvas surfaces reachable: a click cannot create a shape, a drag can. from/to accept 'xy:X,Y' (physical px), an [idx] a11y handle, or a CSS selector. Receipt carries resolved / landed / effected separately; effected is always 'unknown' (a drag has no read-back - verify by comparing two frames). Frame anchors in evidence.",
+      "description": "Drag from one point to another (mousePressed -> N x mouseMoved -> mouseReleased). The primitive that makes canvas surfaces reachable: a click cannot create a shape, a drag can. from/to accept 'xy:X,Y' (physical px), an [idx] a11y handle, or a CSS selector. Receipt carries resolved / landed / effected separately; effected is judged in 0.12 by diffing the rectangle spanned by the two endpoints (+24px padding) before and after, yielding 'changed' / 'no_change' / 'unknown' with the numbers in `change`. Frame anchors in evidence.",
       "params": {
         "type": "object",
         "properties": {
@@ -261,6 +266,11 @@
           },
           "interval_ms": {
             "type": "integer"
+          },
+          "verify": {
+            "type": "boolean",
+            "default": true,
+            "description": "0.12: judge `effected` by diffing a frame before and after the action (default true). verify=false reproduces the 0.11 receipt exactly, with no extra captures."
           }
         },
         "required": [
@@ -273,12 +283,17 @@
     },
     {
       "name": "cdp_key",
-      "description": "Press a key combination: modifiers down, main key down/up, modifiers up. 'Control+z', 'Meta+Shift+t', 'Enter', 'ArrowLeft', 'Escape'. Modifier bitmask Alt=1/Ctrl=2/Meta=4/Shift=8; string order does not matter. Where cdp_type inserts text, this dispatches real key events - the vocabulary of application-driven UIs. Receipt: resolved / landed (focus changed) / effected unknown.",
+      "description": "Press a key combination: modifiers down, main key down/up, modifiers up. 'Control+z', 'Meta+Shift+t', 'Enter', 'ArrowLeft', 'Escape'. Modifier bitmask Alt=1/Ctrl=2/Meta=4/Shift=8; string order does not matter. Where cdp_type inserts text, this dispatches real key events - the vocabulary of application-driven UIs. Receipt: resolved / landed (focus changed) / effected judged in 0.12 by diffing the whole frame around the press.",
       "params": {
         "type": "object",
         "properties": {
           "keys": {
             "type": "string"
+          },
+          "verify": {
+            "type": "boolean",
+            "default": true,
+            "description": "0.12: judge `effected` by diffing a frame before and after the action (default true). verify=false reproduces the 0.11 receipt exactly, with no extra captures."
           }
         },
         "required": [

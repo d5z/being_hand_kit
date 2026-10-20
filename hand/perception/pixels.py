@@ -247,3 +247,106 @@ def pixel_vote(ws=None, call=None, png_b64=None):
         }
     except Exception:
         return {"available": False, "reason": "pixel-unavailable"}
+
+
+# ── 0.12.0 变化可判定：帧差分 ──────────────────────────────────────────
+#
+# 0.11 的动作回执统一停在 `effected: unknown` + "compare two frames".
+# 这一层把「比两帧」变成 hand 自己的动作而不是调用方的体力活。
+#
+# 设计依据（2026-10-20 实测，Excalidraw 800x600）：
+#   · 静止页面连抓两帧 = 0 像素差 —— 「没变」可以被强判定
+#   · 取消选中 = 5930 像素差，bbox 覆盖大半屏 —— 变化量不等于动作对
+#   · 全屏双循环纯 Python ~0.9s —— 产品化必须区域限定
+#
+# 因此 frame_diff 的第一职责不是「算出变了多少」，而是**先回答两帧能不能比**。
+# 不可比时返回 comparable:false，绝不把「比不了」算成「没变化」。
+
+FRAME_CH_DELTA = 12      # 三通道绝对差之和的容忍值；静止帧实测 0，真实变化远超此值
+
+
+def frame_diff(before, after, region=None, ch_delta=FRAME_CH_DELTA):
+    """Pixel diff of two PNGs.
+
+    region: {'x','y','w','h'} in image pixels; None = whole frame.
+    Returns {comparable, changed, total, ratio, region, bbox?, why?}.
+
+    `comparable: False` means the two frames cannot be compared at all
+    (unsupported PNG, different geometry). Callers MUST NOT read that as
+    "nothing changed" — that is exactly the substitution this function
+    exists to prevent.
+    """
+    try:
+        w1, h1, c1, buf1 = decode_png(before)
+    except PngUnsupported as exc:
+        return {'comparable': False, 'why': 'before: unsupported png (%s)' % exc}
+    try:
+        w2, h2, c2, buf2 = decode_png(after)
+    except PngUnsupported as exc:
+        return {'comparable': False, 'why': 'after: unsupported png (%s)' % exc}
+
+    if (w1, h1, c1) != (w2, h2, c2):
+        return {'comparable': False,
+                'why': 'geometry %dx%dx%d vs %dx%dx%d'
+                       % (w1, h1, c1, w2, h2, c2)}
+
+    if region:
+        # Clip the *edges*, not the origin: a region that starts off-image
+        # (a click near the border asks for x-60) must keep its full width
+        # inside the frame, otherwise the scope silently widens to the whole
+        # image — the exact over-scoping this parameter exists to avoid.
+        rx = int(region.get('x', 0))
+        ry = int(region.get('y', 0))
+        rw = int(region.get('w', w1))
+        rh = int(region.get('h', h1))
+        x0 = max(0, rx)
+        y0 = max(0, ry)
+        x1 = min(w1, rx + rw)
+        y1 = min(h1, ry + rh)
+    else:
+        x0, y0, x1, y1 = 0, 0, w1, h1
+
+    if x1 <= x0 or y1 <= y0:
+        return {'comparable': False,
+                'why': 'empty region %r inside %dx%d' % (region, w1, h1)}
+
+    ch = 3 if c1 >= 3 else c1
+    stride = w1 * c1
+    changed = 0
+    minx, miny, maxx, maxy = x1, y1, -1, -1
+
+    for y in range(y0, y1):
+        base = y * stride
+        for x in range(x0, x1):
+            off = base + x * c1
+            d = 0
+            for k in range(ch):
+                d += abs(buf1[off + k] - buf2[off + k])
+                if d > ch_delta:
+                    break
+            if d > ch_delta:
+                changed += 1
+                if x < minx:
+                    minx = x
+                if x > maxx:
+                    maxx = x
+                if y < miny:
+                    miny = y
+                if y > maxy:
+                    maxy = y
+
+    total = (x1 - x0) * (y1 - y0)
+    out = {
+        'comparable': True,
+        'changed': changed,
+        'total': total,
+        'ratio': (changed / float(total)) if total else 0.0,
+        'region': {'x': x0, 'y': y0, 'w': x1 - x0, 'h': y1 - y0},
+        'ch_delta': ch_delta,
+    }
+    if changed:
+        out['bbox'] = {'x': minx, 'y': miny,
+                       'w': maxx - minx + 1, 'h': maxy - miny + 1}
+    else:
+        out['bbox'] = None
+    return out

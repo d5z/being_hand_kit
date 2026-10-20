@@ -178,7 +178,7 @@ def cdp_see(kind: str = None) -> dict:
     _bump()
     return route_see(kind=kind)
 @mcp.tool()
-def cdp_click(selector: str) -> dict:
+def cdp_click(selector: str, verify: bool = True) -> dict:
     """Click an element. `selector` accepts a CSS selector ('a.login'), an
     [idx] handle from cdp_see(kind=a11y) ('[93]'), 'text=...' or 'xy:X,Y'
     (physical pixels). Handle clicks re-read the element box at click time, so
@@ -190,10 +190,20 @@ def cdp_click(selector: str) -> dict:
     target and grid-scans the box when the centre misses (multi-line inline
     elements); a fully covered element fails loudly. `evidence.click_point`
     names how the point was chosen ('center', 'grid_scan',
-    'redirect_target_clickable_point')."""
+    'redirect_target_clickable_point').
+
+    0.12 — `effected` is judged, not deferred. With verify=True (default)
+    hand grabs a frame before and after the click and diffs a +/-60px box
+    around the dispatched point. `effected` becomes 'changed', 'no_change'
+    or 'unknown'; `change` carries the region, ratio and bbox, plus
+    `whole_frame` and `changed_outside_region` when the world moved
+    somewhere other than where you clicked. `unknown` (grab failed / page
+    never settled) is never reported as no_change. verify=False reproduces
+    the 0.11 receipt exactly, with no extra captures."""
     from hand.router import route_do
+    from hand.action.effect import probe_action
     _bump()
-    return route_do(selector)
+    return probe_action('click', lambda: route_do(selector), verify=verify)
 @mcp.tool()
 def cdp_type(text: str) -> dict:
     """Type text into the currently focused element. Click the field first —
@@ -210,7 +220,8 @@ def cdp_type(text: str) -> dict:
     _bump()
     return cdp_type_focused(text)
 @mcp.tool()
-def cdp_drag(from_spec: str, to_spec: str, steps: int = 10, interval_ms: int = 16) -> dict:
+def cdp_drag(from_spec: str, to_spec: str, steps: int = 10, interval_ms: int = 16,
+             verify: bool = True) -> dict:
     """Drag from one point to another: mousePressed -> N x mouseMoved -> mouseReleased.
 
     This is what makes canvas surfaces reachable at all — a 3D viewport, a
@@ -223,22 +234,29 @@ def cdp_drag(from_spec: str, to_spec: str, steps: int = 10, interval_ms: int = 1
 
     The receipt carries three separate facts: `resolved` (both endpoints
     found), `landed` (elementFromPoint at the start point is the claimed
-    element), and `effected` — which is ALWAYS 'unknown' here. A drag has no
-    read-back: verify the outcome by comparing two frames, not by trusting
-    this receipt. `verified` is true only when resolved and landed are both
-    true, and it still does not mean the world changed.
+    element), and `effected` — which 0.12 judges instead of deferring. With
+    verify=True (default) hand grabs a frame before and after the drag and
+    diffs the rectangle spanned by the two endpoints (+24px padding). It
+    reads 'changed', 'no_change' or 'unknown', with the numbers under
+    `change`. `verified` is still only resolved-and-landed; it never means
+    the world changed.
 
     Both frames are anchored in evidence (`frame_before` / `frame_after`:
     scrollX, scrollY, viewport, dpr) so a later reader can tell whether the
     page moved underneath the coordinates.
     """
     from hand.action.cdp_act import cdp_drag as _cdp_drag
+    from hand.action.effect import probe_action
     _bump()
-    return _cdp_drag(from_spec, to_spec, steps=steps, interval_ms=interval_ms)
+    return probe_action(
+        'drag',
+        lambda: _cdp_drag(from_spec, to_spec, steps=steps,
+                          interval_ms=interval_ms),
+        verify=verify)
 
 
 @mcp.tool()
-def cdp_key(keys: str) -> dict:
+def cdp_key(keys: str, verify: bool = True) -> dict:
     """Press a key combination: modifiers down, main key down/up, modifiers up.
 
     'Control+z', 'Meta+Shift+t', 'Enter', 'Escape', 'ArrowLeft', 'Space'.
@@ -251,12 +269,16 @@ def cdp_key(keys: str) -> dict:
 
     The receipt reports `resolved` (the combo parsed), `landed` (true only
     when document.activeElement changed — otherwise null, meaning "could not
-    tell") and `effected: unknown` — a key press has no read-back beyond
-    focus. Verify the effect by observing the page.
+    tell") and `effected`, which 0.12 judges by diffing the whole frame
+    around the press (a key has no focus element to scope to by default).
+    Undo, delete, tool switching all land somewhere — if the frame did not
+    move, the key very likely did not either. `change.region` says whether
+    the diff was scoped or whole-frame; verify=False skips the captures.
     """
     from hand.action.cdp_act import cdp_key as _cdp_key
+    from hand.action.effect import probe_action
     _bump()
-    return _cdp_key(keys)
+    return probe_action('key', lambda: _cdp_key(keys), verify=verify)
 
 
 @mcp.tool()
