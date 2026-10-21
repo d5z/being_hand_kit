@@ -253,7 +253,8 @@ class TestCoords(unittest.TestCase):
             return {}
 
         out = ax.backend_ids_to_coords(fake_call, mock.Mock(), [105, 112], dpr=2.0)
-        self.assertEqual(out[105], {"x": 120, "y": 80})   # css center (60,40) × dpr 2
+        # 0.13: the box as well as its centre — 100×40 css → 200×80 physical.
+        self.assertEqual(out[105], {"x": 120, "y": 80, "w": 200, "h": 80})
         self.assertIsNone(out[112])                        # nodeId 0 → not rendered
         self.assertIn("DOM.getDocument", calls)
 
@@ -267,6 +268,72 @@ class TestCoords(unittest.TestCase):
 
         out = ax.backend_ids_to_coords(fake_call, mock.Mock(), [7], dpr=1.0)
         self.assertIsNone(out[7])
+
+    def test_hit_test_reports_topmost_node(self):
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "DOM.getNodeForLocation":
+                return {"backendNodeId": 999}
+            return {}
+
+        out = ax.hit_test(fake_call, mock.Mock(), [(105, 10.0, 20.0)])
+        self.assertEqual(out[105], 999)
+
+    def test_hit_test_unknown_is_none_not_error(self):
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            raise RuntimeError("Detached")
+
+        out = ax.hit_test(fake_call, mock.Mock(), [(105, 10.0, 20.0)])
+        self.assertIsNone(out[105])
+
+    def test_hit_test_uses_css_px(self):
+        seen = []
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            seen.append(params)
+            return {"backendNodeId": 105}
+
+        ax.hit_test(fake_call, mock.Mock(), [(105, 10.4, 20.6)])
+        self.assertEqual(seen[0]["x"], 10)   # css px, not dpr-scaled physical px
+        self.assertEqual(seen[0]["y"], 20)
+
+    def test_hit_test_applies_document_offset(self):
+        # 0.13: boxes are viewport coordinates, DOM.getNodeForLocation wants
+        # document coordinates. At scrollY=0 the two coincide, which is why this
+        # survived every earlier check; on a scrolled page each probe answered
+        # "No node found at given location" and the verdict layer emptied itself
+        # (MDN, scrollY=900: judged 63 → 0). The offset belongs here, in the one
+        # function that knows both spaces.
+        seen = []
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            seen.append(params)
+            return {"backendNodeId": 105}
+
+        out = ax.hit_test(fake_call, mock.Mock(), [(105, 10.0, 20.0)], offset=(0, 900))
+        self.assertEqual(seen[0]["x"], 10)   # no horizontal scroll, no shift
+        self.assertEqual(seen[0]["y"], 920)  # viewport y + scrollY
+        self.assertEqual(out[105], 105)
+
+    def test_dom_parents_walks_the_whole_tree(self):
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "DOM.getDocument":
+                return {"root": {
+                    "backendNodeId": 1, "children": [
+                        {"backendNodeId": 2, "children": [
+                            {"backendNodeId": 3, "children": []}]},
+                        {"backendNodeId": 4, "children": []}]}}
+            return {}
+
+        self.assertEqual(ax.dom_parents(fake_call, mock.Mock()),
+                         {2: 1, 3: 2, 4: 1})
+
+    def test_on_same_chain_self_ancestor_descendant(self):
+        parents = {2: 1, 3: 2, 4: 1}
+        self.assertTrue(ax.on_same_chain(2, 2, parents))    # self
+        self.assertTrue(ax.on_same_chain(3, 1, parents))    # descendant of 1
+        self.assertTrue(ax.on_same_chain(1, 3, parents))    # ancestor of 3
+        self.assertFalse(ax.on_same_chain(3, 4, parents))   # sibling branches
+        self.assertFalse(ax.on_same_chain(99, 3, parents))  # unknown node
 
 
 class TestHint(unittest.TestCase):
@@ -309,6 +376,11 @@ class TestAxSnapshot(unittest.TestCase):
                 return {"model": {"content": [0, 0, 20, 0, 20, 10, 0, 10]}}
             if method == "Browser.getVersion":
                 return {"product": "Chrome/141.0.0", "protocolVersion": "1.3"}
+            if method == "Page.getLayoutMetrics":
+                # 0.13: a page scrolled by 300 — the offset has to reach
+                # hit_test, otherwise every probe answers "No node found".
+                return {"cssLayoutViewport": {"clientWidth": 100, "clientHeight": 100},
+                        "cssVisualViewport": {"pageX": 0, "pageY": 300}}
             if method == "Runtime.evaluate":
                 return {"result": {"value": 1}}
             return {}
@@ -346,11 +418,108 @@ class TestAxSnapshot(unittest.TestCase):
         self.assertEqual(entry["backend_node_id"], 105)
         self.assertEqual(entry["x"], 10)  # css 10 × dpr 1
 
-    def test_coords_only_for_interactive_backed_nodes(self):
+    def test_coords_for_every_backed_node(self):
+        # 0.13 reverses the 0.9 rule. Coordinates used to be resolved only for
+        # interactive nodes, which left "visible but not clickable" nodes with
+        # no position at all — the band where a StaticText or a plain container
+        # lives. Every backed node is placed now; the interactive distinction
+        # survives in the handle entry, not in the coordinate map.
         out, _, _ = self._snapshot()
-        for key in out["coords"]:
-            node = [n for n in out["nodes"] if str(n["idx"]) == key][0]
-            self.assertIn(node["role"], ax.INTERACTIVE_ROLES)
+        backed = [n for n in out["nodes"] if n["backend_node_id"]]
+        self.assertTrue(backed)
+        for n in backed:
+            self.assertIn(str(n["idx"]), out["coords"])
+        self.assertTrue([n for n in backed if not n["interactive"]],
+                        "fixture must contain a non-interactive backed node")
+
+    def test_covered_node_declares_its_coverer(self):
+        # 0.13: a node whose centre is occupied reports who sits on top, and
+        # the receipt declares how many such nodes there are.
+        with mock.patch.object(
+                ax, "hit_test",
+                side_effect=lambda call, ws, pts, **kw: {b: 999 for b, _, _ in pts}):
+            out, _, _ = self._snapshot()
+        covered = [e for e in out["handles"].values() if e.get("reachable") is False]
+        self.assertTrue(covered)
+        self.assertTrue(all(e["covered_by"] == 999 for e in covered))
+        self.assertIn("covered at their centre", out.get("hint") or "")
+
+    def test_reachable_when_node_is_topmost(self):
+        with mock.patch.object(
+                ax, "hit_test",
+                side_effect=lambda call, ws, pts, **kw: {b: b for b, _, _ in pts}):
+            out, _, _ = self._snapshot()
+        entries = [e for e in out["handles"].values() if "reachable" in e]
+        self.assertTrue(entries)
+        self.assertTrue(all(e["reachable"] is True for e in entries))
+        self.assertNotIn("covered", out.get("hint") or "")
+
+    def test_scroll_offset_reaches_hit_test(self):
+        # 0.13: the offset is read from Page.getLayoutMetrics →
+        # cssVisualViewport and handed to hit_test. This locks the wiring;
+        # the arithmetic itself is locked in test_hit_test_applies_document_offset.
+        seen = {}
+
+        def fake_offset(call, ws, pts, offset=(0.0, 0.0)):
+            seen["offset"] = offset
+            return {b: b for b, _, _ in pts}
+
+        with mock.patch.object(ax, "hit_test", side_effect=fake_offset):
+            self._snapshot()
+        self.assertEqual(seen.get("offset"), (0.0, 300.0))
+
+    def test_iframe_content_is_merged(self):
+        # 0.13: getFullAXTree without a frameId answers for the root document
+        # only, so everything a page embeds was invisible — measured on a
+        # one-iframe fixture, 0 of the frame's named nodes reached the handle
+        # map. The frame's own tree comes back per frameId, and its
+        # backendNodeIds resolve in top-level coordinates (no offset math).
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "Accessibility.getFullAXTree":
+                if (params or {}).get("frameId") == "F_FRAME":
+                    return {"nodes": [
+                        _n("777", "button", "Frame button", parent="1", backend_id=777),
+                    ]}
+                return {"nodes": fixture_nodes()}
+            if method == "Page.getFrameTree":
+                return {"frameTree": {"frame": {"id": "F_MAIN"},
+                                      "childFrames": [{"frame": {"id": "F_FRAME"}}]}}
+            if method == "DOM.getDocument":
+                return {"root": {"nodeId": 1}}
+            if method == "DOM.pushNodesByBackendIdsToFrontend":
+                return {"nodeIds": [11, 22, 33, 44]}
+            if method == "DOM.getBoxModel":
+                return {"model": {"content": [0, 0, 20, 0, 20, 10, 0, 10]}}
+            if method == "Browser.getVersion":
+                return {"product": "Chrome/141.0.0", "protocolVersion": "1.3"}
+            if method == "Page.getLayoutMetrics":
+                return {"cssLayoutViewport": {"clientWidth": 800, "clientHeight": 600}}
+            return {}
+
+        tmp = tempfile.mkdtemp()
+        with mock.patch.object(ax, "list_pages", return_value=[PAGE]), \
+             mock.patch.object(ax, "resolve_page", return_value=(0, PAGE)), \
+             mock.patch.object(ax, "cdp_connect", return_value=_FakeWS()), \
+             mock.patch.object(ax, "cdp_call", side_effect=fake_call), \
+             mock.patch.object(ax, "_init_domains", return_value=None), \
+             mock.patch.object(ax, "_write_last", return_value=None):
+            out = ax.ax_snapshot(handle_map_path=os.path.join(tmp, "h.json"))
+        names = [e.get("name") for e in out["handles"].values()]
+        self.assertIn("Frame button", names)
+        self.assertIn("child frame(s) merged", out.get("hint") or "")
+
+    def test_descendant_hit_is_reachable_not_covered(self):
+        # elementFromPoint returns the deepest element, so a container whose
+        # centre reports its own child was never covered — the click still
+        # bubbles through it. Only an off-chain branch counts as a block.
+        with mock.patch.object(ax, "hit_test",
+                               side_effect=lambda call, ws, pts, **kw: {b: 500 for b, _, _ in pts}), \
+             mock.patch.object(ax, "dom_parents",
+                               return_value={500: 105, 105: 1, 1: None}):
+            out, _, _ = self._snapshot()
+        e = [x for x in out["handles"].values() if x["backend_node_id"] == 105][0]
+        self.assertTrue(e["reachable"])
+        self.assertNotIn("covered_by", e)
 
     def test_natural_evidence_fields(self):
         out, _, _ = self._snapshot()
@@ -469,3 +638,63 @@ class TestZeroAreaBox(unittest.TestCase):
 
         out = ax.backend_ids_to_coords(fake_call, mock.Mock(), [9], dpr=1.0)
         self.assertIsNone(out[9])
+
+
+class TestReachabilityInputs(unittest.TestCase):
+    """0.13: three inputs the verdict depends on, each found by measuring
+    real pages on 2026-10-21 (github.com, developer.mozilla.org)."""
+
+    def test_coords_prefer_the_border_box(self):
+        # content box under-reports every padded control: a clickable 40px
+        # button whose content is 20px read as 20px, so "how much error does
+        # this forgive" answered with the wrong number (71/233 nodes off >2px,
+        # worst 2x, measured on github.com).
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            if method == "DOM.pushNodesByBackendIdsToFrontend":
+                return {"nodeIds": [11]}
+            if method == "DOM.getBoxModel":
+                return {"model": {"content": [10, 10, 30, 10, 30, 30, 10, 30],
+                                  "border": [0, 0, 40, 0, 40, 40, 0, 40]}}
+            return {}
+
+        out = ax.backend_ids_to_coords(fake_call, mock.Mock(), [5], dpr=2.0)
+        self.assertEqual(out[5]["w"], 80)      # border 40 css * dpr 2
+        self.assertEqual(out[5]["h"], 80)
+        self.assertEqual(out[5]["x"], 40)      # centre 20 css * dpr 2
+
+    def test_hit_test_does_not_pierce_ua_shadow(self):
+        # With includeUserAgentShadowDOM a point over an <input> answers with
+        # its internal UA-shadow editor div, which dom_parents cannot place on
+        # any chain — every text field read as "covered by a stranger".
+        seen = []
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            seen.append((method, dict(params or {})))
+            return {"backendNodeId": 7}
+
+        out = ax.hit_test(fake_call, None, [(5, 10.5, 20.5)])
+        self.assertEqual(out[5], 7)
+        params = seen[0][1]
+        self.assertNotIn("includeUserAgentShadowDOM", params)
+        self.assertEqual(params["x"], 10)      # CDP input space: integer CSS px
+
+    def test_dom_parents_places_shadow_and_pseudo_children(self):
+        # shadow roots hang off "shadowRoots" and ::before/::after off
+        # "pseudoElements" — neither is in "children". Walking only "children"
+        # made every web component and every icon-button read as cross-branch.
+        doc = {"root": {
+            "backendNodeId": 1,
+            "children": [{"backendNodeId": 2, "children": []}],
+            "shadowRoots": [{"children": [
+                {"backendNodeId": 3, "children": [{"backendNodeId": 4}]}]}],
+            "pseudoElements": [{"backendNodeId": 5}],
+        }}
+
+        def fake_call(ws, method, params=None, msg_id=1, timeout=10):
+            return doc
+
+        parents = ax.dom_parents(fake_call, None)
+        self.assertEqual(parents[2], 1)
+        self.assertEqual(parents[3], 1)   # a shadow child bubbles to its host
+        self.assertEqual(parents[4], 3)
+        self.assertEqual(parents[5], 1)   # ::before belongs to its host

@@ -32,7 +32,15 @@ import urllib.request
 import json
 
 CDP_PORT = int(os.environ.get("HAND_CDP_PORT", "9222"))
-CDP_HOST = f"http://localhost:{CDP_PORT}"
+CDP_HOST = f"http://127.0.0.1:{CDP_PORT}"
+
+# 2026-10-20 (root cause from Judy's Windows 实测, D5-NJ-DT-0067): 必须是
+# 127.0.0.1 字面量, 不能写 localhost。Windows 上 localhost 的 getaddrinfo
+# 同时返回 AF_INET/AF_INET6, TCP 栈先试 ::1; Chrome 调试端口只监听
+# 127.0.0.1, ::1 的拒绝要约 2s 才返回再回退 IPv4。单次截图付两遍这笔
+# (list_pages + ws 握手) => 4.2s/帧, 真正抓帧只有 30ms。改为字面量后
+# 4203ms -> 123ms。Linux 上 localhost 只回 127.0.0.1, 所以此病在 Linux
+# 完全隐形, 别把它"优化"回去。
 
 # LOCAL PATCH 2026-09-25 (haitian-mac, reported to #34): on macOS with a
 # system-level proxy (scutil --proxy), urllib's default opener routes loopback
@@ -298,6 +306,16 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
             proc.cdp_flags = flags
             proc.cdp_profile = {"dir": profile_dir(), "mode": profile_mode(),
                                 "headless": headless(), "binary": chrome}
+            # 0.13: a fresh browser instance invalidates the recorded session
+            # page — target ids belong to the old process. Clearing the record
+            # is what keeps the next resolve on the "no session page yet" path
+            # instead of raising "the page you were on is gone", which would be
+            # true but useless right after we ourselves restarted the browser.
+            try:
+                from hand.perception.cdp_core import _clear_last
+                _clear_last()
+            except Exception:
+                pass
             return proc
         time.sleep(CDP_PROBE_INTERVAL)
 

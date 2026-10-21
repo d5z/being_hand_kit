@@ -10,10 +10,18 @@ Covers PRD docs/prd-receipt-contract.md S1–S4:
 import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Hermetic session state (see tests/harness/__init__.py). These tests mock
+# their own pages, so they must not answer to a record left behind by an
+# earlier module in the same run: point at a path that never exists and the
+# resolver takes the "no session page was ever set" branch.
+os.environ["HAND_CDP_STATE_FILE"] = os.path.join(tempfile.mkdtemp(), "state")
+
 
 import hand.perception.cdp_launcher as cdp_launcher
 import hand.router as router
@@ -835,6 +843,9 @@ class TestHandleActionReceipts(unittest.TestCase):
         with mock.patch("hand.action.cdp_act.list_pages",
                         return_value=[{"id": "1", "type": "page",
                                        "webSocketDebuggerUrl": "ws://x/1"}]), \
+             mock.patch("hand.action.cdp_act.resolve_page",
+                        return_value=(0, {"id": "1", "type": "page",
+                                          "webSocketDebuggerUrl": "ws://x/1"})), \
              mock.patch("hand.action.cdp_act.cdp_connect",
                         return_value=mock.Mock()), \
              mock.patch("hand.action.cdp_act.cdp_call", side_effect=fake_call), \
@@ -897,6 +908,9 @@ class TestHandleActionReceipts(unittest.TestCase):
         with mock.patch("hand.action.cdp_act.list_pages",
                         return_value=[{"id": "1", "type": "page",
                                        "webSocketDebuggerUrl": "ws://x/1"}]), \
+             mock.patch("hand.action.cdp_act.resolve_page",
+                        return_value=(0, {"id": "1", "type": "page",
+                                          "webSocketDebuggerUrl": "ws://x/1"})), \
              mock.patch("hand.action.cdp_act.cdp_connect",
                         return_value=mock.Mock()), \
              mock.patch("hand.action.cdp_act.cdp_call", side_effect=fake_call), \

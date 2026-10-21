@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.13.0] — 2026-10-21
+
+> 「看见了」和「摸得到」之间的一层。0.9 起，`see` 只给 interactive 节点解算坐标——这条规则把**看得见但点不着**的那一层整个漏掉了：静态文字在树里有名字、在屏幕上有位置，却没有盒子，于是没有任何一句话能说它在哪、上面压着什么。
+>
+> 触发是一次 grounding 实测。造了一块被完全覆盖的元素，它在三个系统里同时呈现三种状态：截图里看不见、a11y 树里有名字、`elementFromPoint` 够不着（点在中心，命中的是压在上面的那个）。三个答案都真，但没有一个调用能同时把它们说出来。
+
+### Added
+- **`hand/perception/ax_tree.py::hit_test(call, ws, points)`**：可点性判读。每个屏内节点在自己的中心做一次 `DOM.getNodeForLocation`（`elementFromPoint` 的 CDP 形式）。点用 CSS px——那是 CDP 的输入空间，不是 handle map 里存的物理 px。
+- **`dom_parents(call, ws)`**：一次 `DOM.getDocument(depth=-1)` 建 `{backendNodeId: parent}` 索引。判读需要它：`elementFromPoint` 返回最深的元素，所以「中心命中自己的子元素」和「中心命中自己的容器」都不是被盖住。
+- **`on_same_chain(a, b, parents)`**：同链判定。相等、祖先、后代都算同链——点在子元素上会冒泡，点在容器里还在自己范围内。只有跨分支才是真遮挡。
+- **handle 条目新增 `w` / `h`**：中心点只说往哪儿瞄，宽高说这个目标能容忍多少误差（150px 的块宽容 40px，20px 的图标不宽容）。
+- **handle 条目新增 `reachable`（bool）与 `covered_by`（backendNodeId）**：`reachable:false` 时 `covered_by` 指向压在上面的那个节点，可在同一份 handle map 里查回来。
+- **三条新的 skipped 声明**：坐标超出预算的、中心在视口外的、以及「被覆盖的节点数」进 hint。判不了的部分全部说出来，不留白。
+
+### Changed
+- **坐标解算覆盖全部有 backend id 的节点**，不再只限 interactive。预算 `MAX_COORD_NODES = 400`，interactive 优先占用，超出部分如实声明。
+- **`backend_ids_to_coords` 返回值从 `{x, y}` 变成 `{x, y, w, h}`**（都是物理 px，与 handle map 同一空间）。
+- **视口外的节点只给盒子、不给判读**：`DOM.getNodeForLocation` 对视口外无意义。这部分计入 `reachable for N node(s)` 的 skipped，读法是「先滚过去再 see」。
+- **iframe 内容进同一棵树**（新增能力）。`Accessibility.getFullAXTree` 不带 `frameId` 时只答根文档——页面里嵌的一切（视频、支付、OAuth、评论、文档小部件）在 see 里是**黑洞**：单 iframe 夹具实测，frame 内 11 个有名字的节点**一个都没出现**。现在按 `Page.getFrameTree` 广度优先合并每个子 frame 的树（`MAX_FRAMES = 8`，超了声明不合并）。子 frame 的 `backendNodeId` 在顶层 DOM agent 里就能解析，且坐标**已经是顶层坐标**（实测：iframe 在 x=102.7，其内部按钮报 x=120.7，边框偏移已含），不需要手算偏移。hint 里逐次声明「N child frame(s) merged」。真实页实测：MDN `<iframe>` 文档页合并 6 个 frame、600 节点、judged 60、covered 0。
+
+### Fixed
+- **会话页按身份解析，不再按列表下标**。`/tmp` 里的 last-page 记录只存了 index，而 index 会随任何一次关 tab 整体前移——于是记录静默地指向另一个页，之后每一次不带 `page_sel` 的调用都作用在错的 tab 上，读数照样绿。实测形状：全量套件报「handle map 里没有文本框」，当时它其实在问另一个测试遗留的页。现在记录 `{id, url, idx}`，解析按 id → url 前缀 → （只有旧格式才信）idx；**记录过但页已不在时报错，并报出丢的是哪页、现在有几个页**，不再回退 `pages[0]`——回退正是把「我的 tab 被关了」变成「我读了另一个页并且信了它」。同批修测试卫生：mock 型测试不再读开发机上的真实会话记录（`HAND_CDP_STATE_FILE`，每处 pin 到不存在的路径），`tests/test_page_identity.py` 七条锁住三态。
+- **盒子取 border box，不再是 content box**。`DOM.getBoxModel` 返回 content / padding / border / margin 四组 quad，原来只取 content——那会把每个带 padding 的控件量小：一个 44px 高、内容 24px 的按钮读成 24px，于是 `w/h` 回答「这个目标能容忍多少误差」时数字是错的（点击区就在 padding 里）。实测 github.com 首页 233 个节点，71 个偏差 >2px，最坏 2 倍。现在按 border → padding → content 依次取。
+- **hit test 不再带 `includeUserAgentShadowDOM`**。带上它时，`<input>` 中心点返回的是 input 内部的 UA shadow 编辑器 div——那个节点 `dom_parents`（pierce=false）放不到任何链上，于是**每个输入框都判成「被陌生元素盖住」**。实测 github.com：`textbox "Enter your email"` 报 covered，而真点一下焦点进了这个 input，页面内 `document.elementFromPoint` 也答 input 自己。现在它就是 `elementFromPoint` 的语义：返回一次点击真正会落在的元素。
+- **`dom_parents` 走 `shadowRoots` 与 `pseudoElements`**。shadow 内容挂在宿主的 `shadowRoots` 上、`::before`/`::after` 挂在 `pseudoElements` 上，都不在 `children` 里。只走 `children` 的后果是：所有 web component 内部节点、所有图标按钮（点落在 `::before` 上）结构性判成「跨分支」，被判 covered。实测 developer.mozilla.org 那一个页面 6 个 covered 里 4 个是这么来的；修完 0。
+- **handle 条目新增 `covered_by_label`**。`covered_by` 只是 backendNodeId，覆盖者自己没挣到 handle 时就读不出来——实测 github.com 10 个覆盖者里 5 个打印成 `?`，等于只说「不能点」不说「是谁挡的」。现在每个覆盖者在 see 时解析一次，带 `role name` 或 `tag.class` 标签。
+- **`CDP_HOST` 用 `127.0.0.1` 字面量，不再写 `localhost`**（`cdp_core.py` / `cdp_launcher.py`）。根因来自 Judy 的 Windows 真机实测（D5-NJ-DT-0067）：Windows 上 `localhost` 的 getaddrinfo 同时返回 AF_INET/AF_INET6，TCP 栈先试 `::1`，而 Chrome 调试端口只监听 `127.0.0.1`——`::1` 的拒绝要约 2s 才返回，单帧截图要付两遍（list_pages + ws 握手）。改字面量后 4203ms → 123ms。Linux/macOS 上 `localhost` 只回 `127.0.0.1`，此病在本机完全隐形，`tests/test_windows_support.py` 新增断言守住，不许"优化"回去。
+- **滚动后坐标口径**：`hit_test` 现在把页面滚动量加进探测点（`offset=(scrollX, scrollY)`）。`getBoxModel` 与 `getBoundingClientRect` 一样是**视口坐标**，而 `DOM.getNodeForLocation` 要的是**文档坐标**——滚动 0 时两者重合，所以此前每一次检查都是绿的；一旦页面滚动，每个点都答 `No node found at given location`，判读层整层静默清空（MDN，scrollY=900：judged 63 → **0**）。修后同一页面 judged **58**、covered 6，且 6 个都是真的 sticky nav 遮挡。这条是本轮「复杂真实场景」测出来的——不滚动就永远看不见它。
+- **父链穿进 `contentDocument`**：iframe 内部节点挂在 `contentDocument` 下，不在 `children` 里；不穿过去，它们在自己页面里也全是「没有祖先」的孤儿，第一个诚实的 hit test 就会把它们全判成「被陌生元素盖住」。现在 contentDocument 的**子节点直接挂到 `<iframe>` 元素上**（document 节点本身通常没有 backend id），那就是一次点击真正冒泡的链。
+- **`RootWebArea` 这类文档级节点不再参与判读**：它的「中心」是整个视口的中点，一个点击落在它某个后代身上，于是一直读成「被自己的内容盖住」（夹具上实测 `RootWebArea ← HTML`，纯粹是记账假象）。它保留盒子，只是不再产出判决。
+
+### Verified
+**L2 单测**：640 绿（`discover`，2 skipped；标准入口 `run_tests.py` 593 绿）。`tests/test_ax_tree.py` 新增 14 项——hit test 三态 / CSS px 口径 / 滚动偏移（算术 + 接线各一条）/ 父链遍历 / 同链四态 / 覆盖声明 / 后代命中不算被盖 / border box 优先 / 不穿 UA shadow / shadow+pseudo 子节点落链 / iframe 合并。
+
+**L 层真机（HeadlessChrome 151 / dpr 1 / 800×600，2026-10-21）**
+
+| 站点 | 节点 | 有盒子 | 屏内判读 | 判被覆盖 | 耗时 |
+|---|---|---|---|---|---|
+| github.com | 507 | 350 | 27 | 7 | 0.62s |
+| news.ycombinator.com | 600 | 384 | 305 | 0 | 0.41s |
+| developer.mozilla.org | 459 | 391 | 63 | 0 | 0.58s |
+| en.wikipedia.org/wiki/Bamboo | 600 | 391 | 124 | 2 | 2.63s |
+| excalidraw.com | 76 | 72 | 72 | 22 | 0.11s |
+
+**逐条对照真值**（三条独立通道：页面内 `getBoundingClientRect`、`document.elementFromPoint`、`Input.dispatchMouseEvent` 真点一次看 `activeElement`）：
+- **坐标**：github 233 个节点、MDN 178 个节点，与 `getBoundingClientRect`（中心口径）偏差 >2px 的：**0**。修复前同一口径 71/233 偏，最坏 2 倍。
+- **被判覆盖的 7 个 github 节点全部核实为真**：其中 2 个来自 GitHub 自己的 `SPAN.progress-pjax-loader`（`position:fixed`、`opacity:0`、`z-index:99999`、2px 高、全宽）——一条视觉不可见的进度条会吞掉页面顶部那一带的点击；1 个来自 hero 背景 `CANVAS`；2 个是 floating label 与它的 input 重叠（点 label 中心落到 input 上，功能上正确，结构上确实不是 label）。
+- **MDN 修完 0 覆盖**：修前 6 个全是假警报（4 个 `::before` 图标、2 个 shadow/UA shadow）。
+- **Wikipedia 的 2 个是真读数**：`Search` 文字被一个 `opacity:0` 的 `<input type=checkbox>`（z-index 1）盖住——那是 Vector 2022 皮肤用来开搜索面板的透明开关。文字不可点，可点的是那个 checkbox。
+- **excalidraw 的 22 个是 canvas 应用的结构**：UI 层 `pointer-events:none`，视觉在画布之上但不接指针，点击穿透到 canvas。判读正确，措辞见下条。
+
+### Known limits
+- **`covered_by` 混着两种成因**：①真有东西画在上面（z 更高、接指针）；②视觉在上但 `pointer-events:none`，点击穿透（excalidraw 的 UI 层就是）。读数同形，靠 `covered_by_label` 指到具体元素、再看那个元素的 computed style 才能分开。判读答的是「点击会落在谁身上」，不是「谁画在上面」。
+- **`reachable` 只对视口内的中心点成立**：滚出视口的节点没有判读，不是 `false`。
+- **中心点是必要条件，不是充分条件**：中心可点不等于整个目标可点（边缘可能被压住）。要判边缘得逐点采样，这一版不做。
+- **sr-only / visually-hidden 节点会以「被覆盖」出现**：它们的盒子是内容的排布尺寸（可能 84×520），但被容器 clip 成 0 面积，中心点落在外面。技术正确、语义噪声——读的时候先看 `covered_by_label` 是不是普通容器。
+- **代价**：`see` 变慢了（Wikipedia 真页 2.63s，主要是 391 次 box model + 124 次 hit test + 一次 pierce=true 的全文 DOM 遍历）。要快的路径仍可用 `resolve_coords=False`。
+
 ## [0.12.0] — 2026-10-20
 
 > 变化可判定主线（docs/prd-0.12-change-verifiability.md）。0.11 的每个动作回执都停在 `effected: unknown` + *"compare two frames"*——hand 知道该怎么验，也诚实地告诉了调用方，**但它没替你做**。这一版把那一环装回 hand。

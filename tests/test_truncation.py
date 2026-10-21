@@ -19,6 +19,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Hermetic session state (see tests/harness/__init__.py). These tests mock
+# their own pages, so each call below pins the resolver to a path that never
+# exists — otherwise it answers to a record written by an earlier module in the
+# same run, and the failure has nothing to do with the code under test.
+os.environ.setdefault("HAND_CDP_STATE_FILE", os.path.join(tempfile.mkdtemp(), "state"))
+NO_STATE = os.path.join(tempfile.mkdtemp(), "never-written")
+
 import hand.perception.ax_tree as ax
 import hand.perception.cdp_snapshot as snap
 from hand.receipt import truncation, skipped, merge_hints
@@ -342,7 +349,9 @@ class TestNetworkBodyTruncation(unittest.TestCase):
              mock.patch.object(net, "cdp_connect"), \
              mock.patch.object(net, "cdp_call_raw",
                                return_value={"body": body, "base64Encoded": False}), \
-             mock.patch.object(net, "_write_last"):
+             mock.patch.object(net, "_write_last"), \
+             mock.patch("hand.perception.cdp_core._state_file",
+                        return_value=NO_STATE):
             return net.network_snapshot(
                 fetch_body_id="R1", duration=0.05,
                 max_small_body=max_small_body)

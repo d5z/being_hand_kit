@@ -5,7 +5,7 @@ Extracted from Hand V5 browser_cdp.py. Production-tested.
 import json, os, time, urllib.request, tempfile, websocket
 from typing import Optional
 
-CDP_HOST = f"http://localhost:{os.environ.get('HAND_CDP_PORT', '9222')}"
+CDP_HOST = f"http://127.0.0.1:{os.environ.get('HAND_CDP_PORT', '9222')}"
 
 # LOCAL PATCH 2026-09-25 (haitian-mac): loopback CDP must bypass proxies
 # (macOS system proxy 502s localhost) - see cdp_launcher.py note.
@@ -14,37 +14,105 @@ CONNECT_TIMEOUT = 10
 LOAD_TIMEOUT = 30
 LAST_STATE_FILE = os.path.join(tempfile.gettempdir(), 'hand_cdp_last_idx')
 
+def _state_file():
+    """Session-page record path.
+
+    HAND_CDP_STATE_FILE lets a test run (or a second browser session) keep its
+    own record instead of reading whatever the machine's last real interaction
+    left behind — a unit test that answers to the dev machine's session state is
+    not hermetic, and it fails for reasons that have nothing to do with the code
+    under test.
+    """
+    return os.environ.get('HAND_CDP_STATE_FILE') or LAST_STATE_FILE
+
+
 def _json_get(path):
     url = f'{CDP_HOST}{path}'
     with _NO_PROXY.open(url, timeout=CONNECT_TIMEOUT) as resp:
         return json.loads(resp.read().decode())
 def list_pages():
     return [p for p in _json_get('/json') if p.get('type') == 'page']
-def _read_last():
+def _read_last_state():
+    """The recorded session page. Legacy files held a bare index; current ones
+    hold {'idx', 'id', 'url'}. A bare index is not an identity — see
+    _resolve_session_page."""
     try:
-        with open(LAST_STATE_FILE, encoding="utf-8") as f: return int(f.read().strip())
-    except: return None
-def _write_last(idx):
+        with open(_state_file(), encoding="utf-8") as f:
+            raw = f.read().strip()
+    except Exception:
+        return None
+    if not raw: return None
+    if raw.isdigit(): return {'idx': int(raw)}
+    try:
+        st = json.loads(raw)
+    except Exception:
+        return None
+    return st if isinstance(st, dict) else None
+def _read_last():
+    """Back-compat: the recorded index, or None."""
+    st = _read_last_state() or {}
+    return st.get('idx')
+def _write_last(idx, page=None):
+    """Remember the session page by *identity*; the index is only a hint.
+
+    0.13: storing the index alone was the root of a silent class of wrong-page
+    bugs. Indices shift whenever any tab closes, so a stale index names a
+    different page and every later call without an explicit page_sel works on
+    the wrong tab — the reading stays green and the target is wrong. Measured:
+    a full-suite run reported "no text field in the handle map" while it was
+    actually interrogating an unrelated page left in the session.
+    """
+    if page is None:
+        try:
+            pages = list_pages()
+            if isinstance(idx, int) and 0 <= idx < len(pages): page = pages[idx]
+        except Exception:
+            page = None
+    st = {'idx': idx}
+    if page:
+        st['id'] = page.get('id')
+        st['url'] = (page.get('url') or '')[:300]
     try:
         os.makedirs(tempfile.gettempdir(), exist_ok=True)
-        with open(LAST_STATE_FILE,'w',encoding="utf-8") as f: f.write(str(idx))
+        with open(_state_file(),'w',encoding="utf-8") as f: f.write(json.dumps(st))
     except: pass
-def _ref(page):
-    return page.get('id','unknown')[:8]
-def _header(idx, page):
-    title = (page.get('title') or '(no title)')[:60]
-    url = (page.get('url') or '')[:60]
-    return f'#p{idx} r:{_ref(page)} {title} | {url}'
+def _clear_last():
+    """Forget the session page. Called when the browser instance itself is
+    replaced: target ids belong to the process that minted them."""
+    try:
+        os.remove(_state_file())
+    except Exception:
+        pass
+def _resolve_session_page(pages):
+    """The recorded session page: identity first.
+
+    An index is only trusted when it is all the record has (a file written by an
+    older build). A record that names a page we can no longer find raises
+    instead of falling back to pages[0] — falling back is what turns "my tab
+    closed" into "I silently read a different page and believed it".
+    """
+    st = _read_last_state()
+    if not st: return 0, pages[0]          # no session page has ever been set
+    pid, url, idx = st.get('id'), st.get('url'), st.get('idx')
+    if pid:
+        for i, p in enumerate(pages):
+            if p.get('id') == pid: return i, p
+    if url:
+        for i, p in enumerate(pages):
+            if (p.get('url') or '').startswith(url[:120]): return i, p
+    if not pid and not url and isinstance(idx, int) and 0 <= idx < len(pages):
+        return idx, pages[idx]             # legacy record: index is all we have
+    raise RuntimeError(
+        "Session page is gone (recorded id=%s url=%s); %d page(s) open now. "
+        "Pass an explicit page_sel, or run one see/click to set a new session page."
+        % (pid or '-', (url or '-')[:80], len(pages)))
 def resolve_page(selector, pages):
     if not pages: raise RuntimeError('No open pages')
     if selector is None or selector == 'first':
-        idx = _read_last()
-        if idx is not None and 0 <= idx < len(pages): return idx, pages[idx]
-        return 0, pages[0]
+        return _resolve_session_page(pages)
     if selector == 'last':
-        idx = _read_last()
-        if idx is not None and 0 <= idx < len(pages): return idx, pages[idx]
-        raise RuntimeError('No last page recorded')
+        if not _read_last_state(): raise RuntimeError('No last page recorded')
+        return _resolve_session_page(pages)
     try:
         idx = int(selector)
         if 0 <= idx < len(pages): return idx, pages[idx]
@@ -54,6 +122,12 @@ def resolve_page(selector, pages):
         haystack = (p.get('url','') + ' ' + p.get('title','')).lower()
         if selector.lower() in haystack: return i, p
     raise RuntimeError(f'No page matching {selector!r}')
+def _ref(page):
+    return page.get('id','unknown')[:8]
+def _header(idx, page):
+    title = (page.get('title') or '(no title)')[:60]
+    url = (page.get('url') or '')[:60]
+    return f'#p{idx} r:{_ref(page)} {title} | {url}'
 def cdp_connect(ws_url):
     return websocket.create_connection(ws_url, timeout=CONNECT_TIMEOUT, suppress_origin=True)
 def cdp_call(ws, method, params=None, msg_id=1, timeout=LOAD_TIMEOUT):

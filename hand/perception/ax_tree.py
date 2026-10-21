@@ -57,6 +57,22 @@ from hand.receipt import truncation, skipped, merge_hints
 from hand.perception.visual_state import probe as visual_probe
 
 AX_FORMAT_VERSION = "a11y-v2.1"
+# 0.13: coordinate budget. Every node carrying a backend id now gets a box
+# (interactive ones first when a page is huge), plus one hit test per box —
+# a self-hit is the third leg of perception: not only "what" and "where", but
+# "would a hand aimed here land on it".
+MAX_COORD_NODES = 400
+
+# 0.13: iframe budget. Page.getFrameTree + one getFullAXTree per child frame.
+# A page that embeds ads or a video player can nest dozens; past this many we
+# stop merging and say so rather than spend the perception in someone's ad net.
+MAX_FRAMES = 8
+
+# 0.13: roles whose "centre" is not a click target — a document/root node spans
+# the viewport, so a hit test at its centre answers whatever descendant sits
+# there and always reads as "covered by its own content". They keep their box,
+# they just do not get a verdict.
+NON_TARGET_ROLES = frozenset({"RootWebArea", "WebArea", "document", "Document"})
 
 # Roles that can be acted on — these are the nodes that get coordinates.
 INTERACTIVE_ROLES = frozenset({
@@ -344,10 +360,17 @@ def backend_ids_to_coords(call, ws, backend_ids, dpr=1.0):
             continue
         try:
             box = call(ws, "DOM.getBoxModel", {"nodeId": nid}, msg_id=73, timeout=10)
-            quad = ((box or {}).get("model") or {}).get("content") or []
+            model = (box or {}).get("model") or {}
         except Exception:
             out[bid] = None   # not in the render tree (display:none, detached…)
             continue
+        # 0.13: the box a reader needs is the CLICKABLE one — border box,
+        # which is what getBoundingClientRect reports and where a control's
+        # padding lives. The content box under-reported every padded control
+        # (a 44px button with a 24px icon read as 24px), so w/h answered
+        # "how much room is there" with the wrong number — measured on
+        # github.com 2026-10-21, 71/233 nodes off by >2px, worst cases 2x.
+        quad = model.get("border") or model.get("padding") or model.get("content") or []
         if len(quad) < 8:
             out[bid] = None
             continue
@@ -361,7 +384,140 @@ def backend_ids_to_coords(call, ws, backend_ids, dpr=1.0):
         out[bid] = {
             "x": round((min(xs) + max(xs)) / 2 * dpr),
             "y": round((min(ys) + max(ys)) / 2 * dpr),
+            # 0.13: the box, not just its centre. A centre alone answers "where
+            # to aim"; w/h answers "how much room is there" — which is what
+            # tells a reader whether a few px of error still lands (a 150px
+            # block forgives 40px, a 20px icon does not).
+            "w": round((max(xs) - min(xs)) * dpr),
+            "h": round((max(ys) - min(ys)) * dpr),
         }
+    return out
+
+
+def dom_parents(call, ws):
+    """{backendNodeId: parent_backendNodeId} for the whole document.
+
+    0.13: needed to read a hit test honestly. `elementFromPoint` returns the
+    DEEPEST element under a point, so a node whose centre reports its own
+    child, or its own container, was never "covered" — the click lands inside
+    it and the event bubbles. Only a node from an unrelated branch is actually
+    blocked. This map is what makes that distinction computable.
+    """
+    doc = call(ws, "DOM.getDocument", {"depth": -1, "pierce": True},
+               msg_id=75, timeout=20)
+    out = {}
+    stack = [(doc or {}).get("root")]
+    while stack:
+        n = stack.pop()
+        if not n:
+            continue
+        bid = n.get("backendNodeId")
+        # 0.13: shadow roots hang off their host, not off `children`. Their
+        # direct children are placed on the host's chain — that is the chain a
+        # click would bubble along. Without this branch, every node inside a
+        # web component (github.com uses several) was "cross-branch" by
+        # construction: no parent, no chain, no verdict but "covered".
+        for sr in (n.get("shadowRoots") or []):
+            for c in (sr.get("children") or []):
+                cb = c.get("backendNodeId")
+                if cb and bid:
+                    out[cb] = bid
+                stack.append(c)
+        for c in (n.get("children") or []):
+            cb = c.get("backendNodeId")
+            if cb and bid:
+                out[cb] = bid
+            stack.append(c)
+        # 0.13: pseudo-elements (::before / ::after) are not children — they
+        # hang off `pseudoElements`. A hit test over a button's icon often lands
+        # on its ::before, which is part of the button, not a stranger on top.
+        # Measured on developer.mozilla.org 2026-10-21: "Toggle navigation"
+        # read as covered by a 24x24 ::before while a real click hit the button.
+        for p in (n.get("pseudoElements") or []):
+            pb = p.get("backendNodeId")
+            if pb and bid:
+                out[pb] = bid
+            stack.append(p)
+        # 0.13: frame content hangs off `contentDocument`, not off `children`.
+        # Without this branch every iframe-internal node has no chain at all,
+        # so the first honest hit test would call all of them covered by
+        # strangers. Measured on the one-iframe fixture: the frame's own button
+        # reported "covered" until its document was walked. The document node
+        # itself usually carries no backend id, so its children are attached to
+        # the <iframe> element instead — that is the chain a click bubbles along.
+        cd = n.get("contentDocument")
+        if cd:
+            for c in (cd.get("children") or []):
+                cb = c.get("backendNodeId")
+                if cb and bid:
+                    out[cb] = bid
+                stack.append(c)
+            for sr in (cd.get("shadowRoots") or []):
+                stack.append(sr)
+    return out
+
+
+def on_same_chain(a, b, parents):
+    """True when a and b are equal, or one is an ancestor of the other.
+
+    Same-chain means a click at b's centre still belongs to a: it lands on a
+    descendant and bubbles up, or on a container and stays inside it. Anything
+    off the chain is a different branch painted on top — a real block.
+    """
+    if a == b:
+        return True
+    seen = set()
+    cur = a
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        cur = parents.get(cur)
+        if cur == b:
+            return True
+    cur = b
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        cur = parents.get(cur)
+        if cur == a:
+            return True
+    return False
+
+
+def hit_test(call, ws, points, offset=(0.0, 0.0)):
+    """{(backendNodeId, css_x, css_y)} → {backendNodeId: hit_backendNodeId|None}.
+
+    0.13: the third leg of a perception. A tree says *what exists*, a box says
+    *where*, and this says *whether a hand aimed there would land on it*.
+    DOM.getNodeForLocation is the CDP form of document.elementFromPoint: it
+    answers with the topmost node at that point, so a node whose centre reports
+    someone else's id is covered by it — visible in the DOM, unreachable by a
+    click. Points are CSS px (CDP's input space), not the physical px the
+    handle map stores.
+
+    None = the browser refused to answer (detached / crashed); "error" strings
+    are never written — an unknown hit is unknown, not a mismatch.
+
+    `offset` is the page scroll (scrollX, scrollY) in CSS px. Boxes are viewport
+    coordinates, but DOM.getNodeForLocation speaks document coordinates; passing
+    the offset here keeps the conversion in the one place that knows both.
+    """
+    out = {}
+    ox, oy = offset
+    for bid, x, y in points:
+        try:
+            # 0.13: NO includeUserAgentShadowDOM. With it, a point over an
+            # <input> answers with the input's internal UA-shadow editor div —
+            # a node that dom_parents (pierce=False) cannot place on any chain,
+            # so every text field read as "covered by a stranger". Measured on
+            # github.com 2026-10-21: textbox "Enter your email" reported covered
+            # while a real click focused it and document.elementFromPoint
+            # answered the input itself. This returns what a click lands on,
+            # which is the question the verdict is supposed to answer.
+            res = call(ws, "DOM.getNodeForLocation",
+                       {"x": int(x + ox), "y": int(y + oy)},
+                       msg_id=74, timeout=5)
+            out[bid] = (res or {}).get("backendNodeId")
+        except Exception:
+            out[bid] = None
     return out
 
 
@@ -484,6 +640,37 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
         _init_domains(ws, "Runtime")
         raw = cdp_call(ws, "Accessibility.getFullAXTree", {}, msg_id=60)
         nodes = (raw or {}).get("nodes") or []
+        # 0.13: iframe content. Accessibility.getFullAXTree without a frameId
+        # answers for the root document only — everything a page embeds (video,
+        # payment, OAuth, comments, docs widgets) was a black hole: measured on
+        # a one-iframe fixture, 0 of the frame's 11 named nodes appeared in the
+        # handle map. A frameId gives that frame's own tree, and its
+        # backendNodeIds resolve in the top-level DOM agent **already in
+        # top-level coordinates** (verified 2026-10-21: an iframe at x=102.7
+        # reported its inner button at x=120.7 — border offset included, no
+        # hand math). Frames are merged breadth-first, depth-capped so a page
+        # that nests ads cannot spend the whole budget here.
+        frames_merged = 0
+        try:
+            ft = cdp_call(ws, "Page.getFrameTree", {}, msg_id=64, timeout=5)
+            queue = list(((ft or {}).get("frameTree") or {}).get("childFrames") or [])
+            while queue and frames_merged < MAX_FRAMES:
+                cf = queue.pop(0)
+                queue.extend(cf.get("childFrames") or [])
+                fid = (cf.get("frame") or {}).get("id")
+                if not fid:
+                    continue
+                try:
+                    sub = cdp_call(ws, "Accessibility.getFullAXTree",
+                                   {"frameId": fid}, msg_id=65, timeout=5)
+                    sub_nodes = (sub or {}).get("nodes") or []
+                    if sub_nodes:
+                        nodes.extend(sub_nodes)
+                        frames_merged += 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
         ser = serialize(nodes, max_lines=max_lines)
 
         dpr = _get_dpr(ws)
@@ -498,14 +685,74 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                           "version_error": f"{type(e).__name__}: {e}"}
 
         coords = {}
+        hits = {}
+        parents = {}
+        coords_skipped = 0
+        offscreen = 0
+        wanted = []
+        vw = vh = 0
+        scroll_x = scroll_y = 0.0
         if resolve_coords:
-            wanted = [n for n in ser["nodes"] if n["interactive"] and n["backend_node_id"]]
+            # Viewport first: a hit test can only answer for points that are
+            # actually on screen. Nodes below the fold get a box and no verdict.
+            try:
+                metrics = cdp_call(ws, "Page.getLayoutMetrics", {}, msg_id=62, timeout=5)
+                vp = metrics.get("cssLayoutViewport") or {}
+                vw = int(vp.get("clientWidth") or 0)
+                vh = int(vp.get("clientHeight") or 0)
+                # 0.13: scroll offset. getBoxModel reports VIEWPORT coordinates
+                # (same frame as getBoundingClientRect), but DOM.getNodeForLocation
+                # wants DOCUMENT coordinates. At scrollY=0 the two coincide, which
+                # is why every earlier check passed; on a scrolled page every probe
+                # came back "No node found at given location" and the whole verdict
+                # layer silently emptied (MDN, scrollY=900: judged 63 → 0).
+                vv = metrics.get("cssVisualViewport") or {}
+                scroll_x = float(vv.get("pageX") or 0)
+                scroll_y = float(vv.get("pageY") or 0)
+            except Exception:
+                vw = vh = 0
+                scroll_x = scroll_y = 0.0
+            # 0.13: every node with a backend id, not only the interactive ones.
+            # The excluded band was the interesting one: a StaticText or a plain
+            # visual container is visible but not clickable, and without a box
+            # nothing could be said about where it sits or what covers it.
+            # Interactive nodes go first so a budget cut costs the least.
+            backed = [n for n in ser["nodes"] if n["backend_node_id"]]
+            backed.sort(key=lambda n: (not n["interactive"], n["idx"]))
+            wanted = backed[:MAX_COORD_NODES]
+            coords_skipped = len(backed) - len(wanted)
             if wanted:
                 by_bid = backend_ids_to_coords(cdp_call, ws,
                                                [n["backend_node_id"] for n in wanted],
                                                dpr=dpr)
                 for n in wanted:
                     coords[str(n["idx"])] = by_bid.get(n["backend_node_id"])
+                pts = []
+                offscreen = 0
+                for n in wanted:
+                    c = by_bid.get(n["backend_node_id"])
+                    if not c:
+                        continue
+                    # 0.13: document-level nodes are not click targets. A
+                    # RootWebArea's "centre" is the middle of the page, where a
+                    # click lands on whatever descendant happens to sit there —
+                    # it always read as covered by its own content (fixture:
+                    # RootWebArea ← HTML, a pure artefact). They keep their box
+                    # and lose only the verdict, which never meant anything.
+                    if (n.get("role") or "") in NON_TARGET_ROLES:
+                        continue
+                    cx, cy = c["x"] / dpr, c["y"] / dpr
+                    # CSS px for the hit test: DOM.getNodeForLocation is CDP
+                    # input space, not the physical space in the map. Points
+                    # outside the viewport cannot be answered — counted, not
+                    # silently skipped.
+                    if vw and vh and not (0 <= cx < vw and 0 <= cy < vh):
+                        offscreen += 1
+                        continue
+                    pts.append((n["backend_node_id"], cx, cy))
+                if pts:
+                    hits = hit_test(cdp_call, ws, pts, offset=(scroll_x, scroll_y))
+                    parents = dom_parents(cdp_call, ws)
 
         # 0.9.4-P1 M1: the see-time navigation anchor. Page.getNavigationHistory
         # is browser-side state (currentEntry index) — it survives MCP process
@@ -525,17 +772,74 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             if not n["backend_node_id"]:
                 continue
             c = coords.get(str(n["idx"]))
-            handles[str(n["idx"])] = {
+            bid = n["backend_node_id"]
+            hit = hits.get(bid)
+            entry = {
                 "role": n["role"],
                 "name": n["name"],
-                "backend_node_id": n["backend_node_id"],
+                "backend_node_id": bid,
                 "interactive": n["interactive"],
                 # 0.9.4-P4: does this node's subtree wrap an interactive node?
                 # Read at click time to redirect a heading click onto its link.
                 "contains_interactive": bool(n.get("contains_interactive")),
                 "x": (c or {}).get("x"),
                 "y": (c or {}).get("y"),
+                # 0.13: the box. A centre says where to aim; w/h says how much
+                # error the target forgives before the click lands elsewhere.
+                "w": (c or {}).get("w"),
+                "h": (c or {}).get("h"),
             }
+            # 0.13: reachability verdict — would a click at this node's centre
+            # end up on this node? True when the point lands on the node itself
+            # or anywhere on its own ancestor chain (a child of it, or a
+            # container wrapping it) — the click still belongs to it. False
+            # means another branch is painted on top; `covered_by` carries that
+            # node's backendNodeId, resolvable against this same map. The keys
+            # are absent when the browser could not answer: unknown is never
+            # written as "covered".
+            if bid in hits and hits[bid] is not None:
+                ok = on_same_chain(hits[bid], bid, parents)
+                entry["reachable"] = ok
+                if not ok:
+                    entry["covered_by"] = hits[bid]
+            handles[str(n["idx"])] = entry
+
+        # 0.13: `covered_by` alone is a backendNodeId — readable only when the
+        # coverer happened to earn a handle of its own. Measured on github.com
+        # 2026-10-21: 5 of 10 coverers printed as "?" , which turns "you cannot
+        # click this" into "something, somewhere, is on top" — half a verdict.
+        # Resolve every coverer at see time and carry a label next to the id.
+        bid_index = {v.get("backend_node_id"): v for v in handles.values()}
+        strangers = sorted({e.get("covered_by") for e in handles.values()
+                            if e.get("covered_by") is not None})
+        stranger_labels = {}
+        for sbid in strangers[:64]:
+            try:
+                d = cdp_call(ws, "DOM.describeNode", {"backendNodeId": sbid},
+                             msg_id=76, timeout=5)
+                node = (d or {}).get("node") or {}
+                attrs = node.get("attributes") or []
+                amap = dict(zip(attrs[0::2], attrs[1::2]))
+                cls = (amap.get("class") or "").strip()
+                stranger_labels[sbid] = "%s%s" % (node.get("nodeName") or "?",
+                                                  ("." + cls[:48]) if cls else "")
+            except Exception:
+                pass
+        for e in handles.values():
+            cb = e.get("covered_by")
+            if cb is None:
+                continue
+            known = bid_index.get(cb)
+            named = (known.get("name") or "").strip() if known else ""
+            if known and named:
+                e["covered_by_label"] = "%s %s" % (known.get("role"), named)
+            elif cb in stranger_labels:
+                e["covered_by_label"] = stranger_labels[cb]
+            elif known:
+                # a handle without a name still gets a face: role alone reads
+                # like "generic", which is not a thing a reader can act on.
+                e["covered_by_label"] = "%s (%s)" % (stranger_labels.get(cb, known.get("role")),
+                                                     known.get("role"))
         handle_map_path = save_handle_map(handles, path=handle_map_path,
                                           nav_id=nav_id)
 
@@ -545,27 +849,53 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
         # {"verified": bool, "evidence": {...}} wrapper is applied by
         # hand.router._with_receipt — one ruler for every perception backend
         # (PRD S3: "新眼睛过同一把尺").
-        try:
-            metrics = cdp_call(ws, "Page.getLayoutMetrics", {}, msg_id=62, timeout=5)
-            vp = metrics.get("cssLayoutViewport") or {}
-            coord = _build_coord(vp.get("clientWidth", 0), vp.get("clientHeight", 0), dpr)
-        except Exception:
-            coord = _build_coord(0, 0, dpr)
+        if vw and vh:
+            coord = _build_coord(vw, vh, dpr)
+        else:
+            try:
+                metrics = cdp_call(ws, "Page.getLayoutMetrics", {}, msg_id=62, timeout=5)
+                vp = metrics.get("cssLayoutViewport") or {}
+                coord = _build_coord(vp.get("clientWidth", 0), vp.get("clientHeight", 0), dpr)
+            except Exception:
+                coord = _build_coord(0, 0, dpr)
         coord["coords_space"] = "physical"
 
-        # S1 skipped-step channel: coordinates are resolved only for
-        # interactive nodes that are actually in the render tree; the ones
+        # S1 skipped-step channel: coordinates are resolved for every node in
+        # the render tree (0.13), not just the interactive ones; the ones
         # dropped are declared, not silently missing.
         notes = []
+        if frames_merged:
+            notes.append(f"{frames_merged} child frame(s) merged into this tree "
+                         "(iframe content is otherwise invisible)")
         if resolve_coords:
-            backed = [n for n in ser["nodes"]
-                      if n["interactive"] and n["backend_node_id"]]
-            unresolved = sum(1 for n in backed
-                             if not coords.get(str(n["idx"])))
+            unresolved = sum(1 for n in wanted if not coords.get(str(n["idx"])))
             if unresolved:
                 notes.append(skipped(
-                    f"coordinates for {unresolved} interactive node(s)",
+                    f"coordinates for {unresolved} node(s)",
                     "not in the render tree (display:none / detached)"))
+            if coords_skipped:
+                notes.append(skipped(
+                    f"coordinates for {coords_skipped} node(s)",
+                    f"over the {MAX_COORD_NODES}-node budget "
+                    "(interactive nodes kept first)"))
+            if offscreen:
+                notes.append(skipped(
+                    f"reachability for {offscreen} node(s)",
+                    "centre outside the viewport — placed but not hit-tested; "
+                    "scroll to them and see again"))
+            # 0.13: the band this release exists for — nodes that are in the
+            # tree, have a box, and still cannot be reached, because another
+            # branch is painted over their centre. Declared, not silently
+            # clickable.
+            covered = sum(1 for n in wanted
+                          if hits.get(n["backend_node_id"]) is not None
+                          and not on_same_chain(hits[n["backend_node_id"]],
+                                                n["backend_node_id"], parents))
+            if covered:
+                notes.append(skipped(
+                    f"{covered} node(s) covered at their centre",
+                    "hit test reports another branch on top — present and placed, "
+                    "but a click aimed there lands on the other one"))
         hint = merge_hints(overflow_hint(ser["nodes"]), notes)
 
         # S2 (0.9): what the page *looks* like right now (DOM heuristic).

@@ -21,12 +21,13 @@ def _manifest():
 
 
 class TestVersion0120(unittest.TestCase):
-    def test_version_is_0120(self):
-        import hand
-        self.assertEqual(hand.__version__, "0.12.0")
+    """Historical lock: 0.12.0 shipped 2026-10-20
+    (docs/prd-0.12-change-verifiability.md). The version itself has moved on —
+    current-version assertions live in test_release_0130. This class locks
+    what shipped, so it can stay registered forever."""
 
-    def test_manifest_version_is_0120(self):
-        self.assertEqual(_manifest()["version"], "0.12.0")
+    def test_changelog_entry_present(self):
+        self.assertIn("## [0.12.0]", _read("CHANGELOG.md"))
 
 
 class TestDiffPrimitive(unittest.TestCase):

@@ -210,6 +210,30 @@ class TestWindowsSupport(unittest.TestCase):
             covered.update(platforms)
         self.assertTrue(set(supported).issubset(covered))
 
+    def test_cdp_host_is_literal_loopback_not_localhost(self):
+        """CDP_HOST 必须是 127.0.0.1 字面量，不许写 localhost。
+
+        Judy 2026-10-20 Windows 真机实测（D5-NJ-DT-0067）：Windows 上
+        localhost 的 getaddrinfo 同时返回 AF_INET/AF_INET6，TCP 栈先试
+        ::1；Chrome 调试端口只监听 127.0.0.1，::1 的拒绝要约 2s 才返回
+        才回退 IPv4。单帧截图付两遍这笔（list_pages + ws 握手），实测
+        4203ms -> 123ms（34x），真正抓帧只有 30ms。
+
+        Linux/macOS 上 localhost 只回 127.0.0.1，这个病在本机完全隐形，
+        所以只能靠这条断言守住——别把它"优化"回去。
+        """
+        import hand.perception.cdp_core as cdp_core
+
+        for mod, name in ((cdp_launcher, "cdp_launcher"), (cdp_core, "cdp_core")):
+            self.assertNotIn(
+                "localhost", mod.CDP_HOST,
+                f"{name}.CDP_HOST 含 localhost——Windows 上会先撞 ::1 白等 2s/次",
+            )
+            self.assertTrue(
+                mod.CDP_HOST.startswith("http://127.0.0.1:"),
+                f"{name}.CDP_HOST 必须是 127.0.0.1 字面量，实为 {mod.CDP_HOST}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
