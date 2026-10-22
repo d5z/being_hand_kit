@@ -21,13 +21,20 @@ def _read(rel):
         return f.read()
 
 
+def _vtuple(text):
+    return tuple(int(x) for x in text.strip().split("."))
+
+
 class TestVersion0134(unittest.TestCase):
 
     def test_version_bumped_everywhere(self):
+        """Historical lock: 0.13.4 shipped. The *current* version is checked by
+        the newest release test, not here — pinning "the version is 0.13.4
+        forever" would go red on every later release and teach nothing."""
         with open(os.path.join(ROOT, "kit", "manifest.json"), encoding="utf-8") as f:
             manifest = json.load(f)
-        self.assertEqual(manifest["version"], "0.13.4")
-        self.assertIn('__version__ = "0.13.4"', _read("hand/__init__.py"))
+        self.assertGreaterEqual(_vtuple(manifest["version"]), (0, 13, 4))
+        self.assertRegex(_read("hand/__init__.py"), r'__version__ = "\d+\.\d+\.\d+"')
 
     def test_changelog_has_0134_entry(self):
         log = _read("CHANGELOG.md")

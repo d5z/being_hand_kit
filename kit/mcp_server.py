@@ -193,13 +193,20 @@ def cdp_click(selector: str, verify: bool = True) -> dict:
     'redirect_target_clickable_point').
 
     0.12 — `effected` is judged, not deferred. With verify=True (default)
-    hand grabs a frame before and after the click and diffs a +/-60px box
-    around the dispatched point. `effected` becomes 'changed', 'no_change'
-    or 'unknown'; `change` carries the region, ratio and bbox, plus
-    `whole_frame` and `changed_outside_region` when the world moved
-    somewhere other than where you clicked. `unknown` (grab failed / page
-    never settled) is never reported as no_change. verify=False reproduces
-    the 0.11 receipt exactly, with no extra captures."""
+    hand reads the world on two channels — `pixel` (a frame before and after,
+    diffed in a +/-60px box around the dispatched point) and `document` (the
+    a11y tree as text, plus URL and title, which is also the only one of the
+    two that reaches inside child frames). `change.channels` carries each
+    channel's own verdict and a `blind_to` line saying what that channel
+    cannot see; pixel is blind to title/URL/aria state (they never become
+    ink), document is blind to colour, position and repaint. `effected` is
+    'changed' if either channel saw something, 'no_change' only when both
+    looked and saw nothing, and 'unknown' when the silent one could not look
+    — a blind channel's silence is never reported as a negative. `change`
+    also carries the region, ratio and bbox, plus `whole_frame` and
+    `changed_outside_region` when the world moved somewhere other than where
+    you clicked. verify=False reproduces the 0.11 receipt exactly, with no
+    extra captures."""
     from hand.router import route_do
     from hand.action.effect import probe_action
     _bump()
@@ -235,15 +242,15 @@ def cdp_drag(from_spec: str, to_spec: str, steps: int = 10, interval_ms: int = 1
     The receipt carries three separate facts: `resolved` (both endpoints
     found), `landed` (elementFromPoint at the start point is the claimed
     element), and `effected` — which 0.12 judges instead of deferring. With
-    verify=True (default) hand grabs a frame before and after the drag and
-    diffs the rectangle spanned by the two endpoints (+24px padding). It
-    reads 'changed', 'no_change' or 'unknown', with the numbers under
-    `change`. `verified` is still only resolved-and-landed; it never means
-    the world changed.
-
-    Both frames are anchored in evidence (`frame_before` / `frame_after`:
-    scrollX, scrollY, viewport, dpr) so a later reader can tell whether the
-    page moved underneath the coordinates.
+    verify=True (default) hand reads two channels: `pixel` (a frame before and
+    after, diffed over the rectangle spanned by the two endpoints, +24px
+    padding) and `document` (a11y tree / URL / title, the only one that sees
+    inside child frames). `change.channels` names each channel's verdict and
+    what it is blind to; `effected` is 'changed' if either saw something,
+    'no_change' only if both looked and saw nothing, 'unknown' when the silent
+    one could not look. Both pixel frames are anchored in evidence
+    (`frame_before` / `frame_after`: scrollX, scrollY, viewport, dpr) so a
+    later reader can tell whether the page moved underneath the coordinates.
     """
     from hand.action.cdp_act import cdp_drag as _cdp_drag
     from hand.action.effect import probe_action

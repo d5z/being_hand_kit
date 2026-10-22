@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.13.5] — 2026-10-22
+
+> 0.13.4 收尾时撞见一个反向假象：点击**真的发生了**，回执却报
+> `no_change`，整帧变化率 0.000。那个按钮改的是 `document.title`——标题
+> 不落墨，像素通道看不见它。这不是某一版漏了检查，是判据只有一条通道。
+
+### 改了什么
+
+- `effected` 现在由两条通道并报，每条都带着自己的判词和盲区：
+  - `pixel` — 动作前后各一帧，在预期区域内做差分（0.12 那条路）
+  - `document` — 动作前后的 a11y 树文本 + URL + 标题；它是唯一能看进子帧
+    的一条（顶层的 `Runtime.evaluate` 到不了子帧——第一版修法就是用它写
+    的，在触发这次修复的那个样本上，两条通道都会沉默，回执会带着两份不
+    在场证明继续报 `no_change`）
+- `change.channels` 里每条通道都有 `verdict`（`changed` / `no_change` /
+  `unavailable`）和 `blind_to`（它看不见什么）。`document` 还报 `moved`：
+  究竟是 `title`、`url` 还是 `content` 动了。
+- 合并判词：任一条看见变化就是 `changed`；**两条都看了且都没看见**才是
+  `no_change`；一条沉默、另一条看不见时是 `unknown`，理由里点明是哪条瞎
+  了、为什么瞎。盲区的阴性不当阴性用。
+- `cdp_click` / `cdp_drag` 的工具说明同步改写；`change.reason` 在三种判词
+  下都说人话，不再只给数字。
+
+### 计数
+
+- 新增 `tests/test_effect_channels.py`（真页 L2，四个象限各一条）
+- `tests/test_effect.py` 扩到 18 条：标题变了=changed、纯墨迹变化=changed、
+  两条都静=no_change、一条瞎=unknown
+- 全套 660 tests 绿。
+
 ## [0.13.4] — 2026-10-22
 
 > 0.13.1 加了一句提示：合并进来的行，有的读得到、点不到。0.13.4 修的是**那个数**——它数的是原始 AX 节点，不是树上印出来的行。
