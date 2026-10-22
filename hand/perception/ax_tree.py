@@ -651,6 +651,8 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
         # hand math). Frames are merged breadth-first, depth-capped so a page
         # that nests ads cannot spend the whole budget here.
         frames_merged = 0
+        frame_of_bid = {}
+        frame_bidless = 0
         try:
             ft = cdp_call(ws, "Page.getFrameTree", {}, msg_id=64, timeout=5)
             queue = list(((ft or {}).get("frameTree") or {}).get("childFrames") or [])
@@ -665,6 +667,17 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                                    {"frameId": fid}, msg_id=65, timeout=5)
                     sub_nodes = (sub or {}).get("nodes") or []
                     if sub_nodes:
+                        # 0.13.1: remember which frame each merged node came
+                        # from. A handle that does not say this cannot be
+                        # clicked correctly — its rect is frame-local while the
+                        # dispatch is top-level (0.13.0 missed by the frame's
+                        # own origin and still reported landed=true).
+                        for sn in sub_nodes:
+                            bnid = sn.get("backendDOMNodeId")
+                            if bnid:
+                                frame_of_bid[bnid] = fid
+                            else:
+                                frame_bidless += 1
                         nodes.extend(sub_nodes)
                         frames_merged += 1
                 except Exception:
@@ -789,6 +802,11 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                 "w": (c or {}).get("w"),
                 "h": (c or {}).get("h"),
             }
+            if bid in frame_of_bid:
+                # 0.13.1: which child frame this node lives in. cdp_click_handle
+                # needs it to translate the frame-local rect into dispatch space;
+                # a reader needs it to know the box is drawn inside a frame.
+                entry["frame_id"] = frame_of_bid[bid]
             # 0.13: reachability verdict — would a click at this node's centre
             # end up on this node? True when the point lands on the node itself
             # or anywhere on its own ancestor chain (a child of it, or a
@@ -867,6 +885,16 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
         if frames_merged:
             notes.append(f"{frames_merged} child frame(s) merged into this tree "
                          "(iframe content is otherwise invisible)")
+            # 0.13.1: merged is not the same as addressable. Measured 2026-10-22
+            # on a two-level fixture: nodes from a frame nested inside another
+            # frame come back WITHOUT backendDOMNodeId, so they get a line and no
+            # handle — readable, not clickable. Say which, instead of letting the
+            # merge note imply the whole frame is usable.
+            if frame_bidless:
+                notes.append(
+                    f"{frame_bidless} node(s) in child frames carry no backend id — "
+                    "their text is readable here but they have no [idx] handle "
+                    "to click (nested frames, measured 2026-10-22)")
         if resolve_coords:
             unresolved = sum(1 for n in wanted if not coords.get(str(n["idx"])))
             if unresolved:

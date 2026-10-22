@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.1] — 2026-10-22
+
+> 一处坐标系错配。0.13.0 把子 frame 的节点并进了 a11y 树，`see` 画对了像素；但 `click` 用另一条读法重新量了一遍那个元素，量出来的是**帧内坐标**，然后按顶层坐标派发。iframe 在 (8, 59.4) 的夹具上，这是一步 61px 的偏差：点落在 frame 自己的 padding 上，frame 不跳转，回执写着 `result=ok / resolved=true / landed=true`。
+>
+> 这一版没有新增能力，只是让「看见的那个点」和「点下去的那个点」变成同一个点。
+
+### Fixed
+- **子 frame 内节点的点击坐标换算**。`getBoundingClientRect`（`_handle_rect`）与 `elementFromPoint` 探针（`_clickable_point`）都在**节点自己那个 frame 的坐标系**里取值；`Input.dispatchMouseEvent` 要的是顶层视口坐标。现在统一在 `cdp_click_handle` 里换算一次：`_dispatch_offset` 读出节点所属 frame，`_frame_content_origin` 用 `DOM.getFrameOwner` + `DOM.getBoxModel` 取该 frame **content box** 的左上角（边框/内边距已排除），提示点加上它再派发。
+  - 实测口径：`DOM.getBoxModel` 对 frame owner 返回的**已经是顶层视口坐标**——两级嵌套夹具（frame 在 (100,50) 里再套一个 (20,30) 的 frame）报出的是 (120,80)，不是 (20,30)。所以任意嵌套深度只要查一次，不需要逐级求和。
+  - 反过来，`DOM.describeNode` 对元素节点**不返回 `frameId`**（2026-10-22 实测），所以 frame 身份不能现查——由 `cdp_see` 写进 handle map（新增 `frame_id`）。
+  - 换算失败时**拒绝派发**并说明原因：「element lives in child frame X but its position could not be read」。宁可不动，不发一个已知错位的点。
+- **回执里两套空间分开标**。帧内点击的 `evidence.frame` 带 `frame_id` / `origin` / `local_space` / `dispatch_space` / `local`（帧内的 center 与 bounds）；顶层 `bounds`、`center`、`dispatched`、`click_point` 都是换算后的顶层坐标。`cdp_see` 给某个 handle 报的中心点，与 `click` 的 `dispatched` 现在相等——这条相等关系就是这一版的验收判据。
+- **合并 ≠ 可寻址**。两级嵌套 frame 的内层节点回来时**没有 `backendDOMNodeId`**（实测 2026-10-22）：文本可读、没有 `[idx]` 句柄、点不到。此前 hint 只说「N child frame(s) merged」，读起来像整棵 frame 都能用。现在补一条声明，报出有多少个这样的节点。
+
+### Verified
+- `tests/test_iframe_coords.py`（新）：行为证明，不看回执——点完**子 frame 的 URL 必须变成 B**。同一夹具上把换算关掉（对照实验）复现 0.13.0：`dispatched` 报 `[36, 20]` 而 `see` 报 `[158, 102]`，差值 (122, 82) 正是 frame 原点到边框的距离。
+- 全套 605 tests 绿（含新模块与 `tests/test_release_0131.py`）。
+
 ## [0.13.0] — 2026-10-21
 
 > 「看见了」和「摸得到」之间的一层。0.9 起，`see` 只给 interactive 节点解算坐标——这条规则把**看得见但点不着**的那一层整个漏掉了：静态文字在树里有名字、在屏幕上有位置，却没有盒子，于是没有任何一句话能说它在哪、上面压着什么。

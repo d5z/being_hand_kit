@@ -591,6 +591,85 @@ def _viewport_size(ws, msg_id=33):
     return {"w": 0, "h": 0}, False
 
 
+def _main_frame_id(ws, msg_id=44):
+    """The page's root frame id (None if the browser will not say)."""
+    try:
+        raw = cdp_call(ws, "Page.getFrameTree", {}, msg_id=msg_id, timeout=10)
+    except Exception:
+        return None
+    tree = ((raw or {}).get("frameTree") or {})
+    return ((tree.get("frame") or {}).get("id")) or None
+
+
+def _node_frame_id(ws, object_id, msg_id=45):
+    """frameId that owns a live node (None unknown).
+
+    0.13.1: a handle from cdp_see can point INTO a merged child frame. Whether it
+    does changes the meaning of every number this module reads for it.
+    """
+    try:
+        raw = cdp_call(ws, "DOM.describeNode", {"objectId": object_id},
+                       msg_id=msg_id, timeout=10)
+    except Exception:
+        return None
+    return ((raw or {}).get("node") or {}).get("frameId") or None
+
+
+def _frame_content_origin(ws, frame_id, msg_id=46):
+    """(dx, dy) — a child frame's CONTENT box top-left in top-level CSS px.
+
+    Measured 2026-10-22 on a two-level fixture: DOM.getBoxModel on a frame's
+    owner returns the box already in TOP-LEVEL viewport coordinates (a frame at
+    (100,50) holding a frame at (20,30) reported its inner owner at (120,80),
+    not (20,30)). So one lookup is enough at any nesting depth — no summing.
+
+    Contrast with `getBoundingClientRect` via Runtime.callFunctionOn, which is
+    FRAME-local for a node inside a frame. That mismatch was the 0.13.0 bug:
+    see drew the right pixel (getBoxModel, top-level) and click dispatched a
+    frame-local one (the probe and the rect are both frame-local, then used as
+    top-level).
+    """
+    try:
+        own = cdp_call(ws, "DOM.getFrameOwner", {"frameId": frame_id},
+                       msg_id=msg_id, timeout=10)
+        bid = (own or {}).get("backendNodeId")
+        if not bid:
+            return None
+        box = cdp_call(ws, "DOM.getBoxModel", {"backendNodeId": bid},
+                       msg_id=msg_id + 1, timeout=10)
+    except Exception:
+        return None
+    model = (box or {}).get("model") or {}
+    quad = model.get("content") or model.get("border") or []
+    if not isinstance(quad, list) or len(quad) < 8:
+        return None
+    xs, ys = quad[0::2], quad[1::2]
+    return float(min(xs)), float(min(ys))
+
+
+def _dispatch_offset(ws, object_id, frame_id=None):
+    """(dx, dy, frame_id, error) → top-level offset for a node's own frame.
+
+    `frame_id` is the handle's own record (cdp_see writes it for merged child
+    frames); DOM.describeNode is the fallback, and it does NOT report frameId for
+    element nodes (measured 2026-10-22) — which is why the handle map carries it.
+
+    Main-frame node: (0, 0, None, None) — unchanged behaviour. Child frame whose
+    box cannot be located: error set, because dispatching a frame-local number at
+    top level is a silent miss (that was 0.13.0).
+    """
+    fid = frame_id or _node_frame_id(ws, object_id)
+    main = _main_frame_id(ws)
+    if not fid or not main or fid == main:
+        return 0.0, 0.0, fid, None
+    origin = _frame_content_origin(ws, fid)
+    if origin is None:
+        return 0.0, 0.0, fid, ('element lives in child frame '
+                               f'{fid[:8]} but its position could not be read — '
+                               'refusing to dispatch a frame-local point')
+    return origin[0], origin[1], fid, None
+
+
 def _handle_object_id(ws, backend_node_id):
     """backendNodeId → live objectId (None if the node is gone / unresolvable).
 
@@ -699,6 +778,19 @@ def cdp_click_handle(handle, page_sel=None):
                 f'handle [{entry["idx"]}] element has no box (display:none, '
                 f'zero-size or detached) — call cdp_see again',
                 entry=entry, handle=str(handle), nav=nav_ev)
+        # 0.13.1: inside a merged child frame every number read above is
+        # FRAME-local (getBoundingClientRect and the elementFromPoint probe both
+        # run in the frame's own context), while Input.dispatchMouseEvent wants
+        # top-level viewport px. 0.13.0 skipped this translation: cdp_see drew
+        # the right pixel and the click landed on the frame's own padding, with
+        # result=ok/landed=true. Translate once, keep both spaces in evidence.
+        dx, dy, frame_id, frame_err = _dispatch_offset(ws, oid,
+                                                       entry.get("frame_id"))
+        if frame_err:
+            return _handle_fail(
+                f'handle [{entry["idx"]}] {frame_err}',
+                entry=entry, handle=str(handle), nav=nav_ev,
+                frame_id=frame_id)
         # 0.9.4-P5: the box centre may sit in an inline line gap — a point that
         # belongs to no element, where the click would land on an ancestor
         # (receipt ok, nothing happens). Verify the hit chain; grid-scan when
@@ -723,6 +815,15 @@ def cdp_click_handle(handle, page_sel=None):
             if click_pt is None:
                 click_pt = [rect["x"], rect["y"]]
                 click_how = "center (probe unavailable)"
+        # 0.13.1: click_pt is frame-local here (probe or centre, both in the
+        # node's own frame). Keep it — it is the auditable local answer — and
+        # dispatch its top-level translation.
+        click_local = [float(click_pt[0]), float(click_pt[1])]
+        click_pt = [click_local[0] + dx, click_local[1] + dy]
+        rect_local = {"x": rect["x"], "y": rect["y"],
+                      "w": rect["w"], "h": rect["h"]}
+        rect = {"x": rect["x"] + dx, "y": rect["y"] + dy,
+                "w": rect["w"], "h": rect["h"]}
         viewport, vp_known = _viewport_size(ws)
         vw, vh = viewport["w"], viewport["h"]
         in_viewport = None
@@ -774,6 +875,20 @@ def cdp_click_handle(handle, page_sel=None):
             "source": "cdp_see(kind=a11y) handle map",
             "verified": True,
         }
+        if frame_id and (dx or dy):
+            # 0.13.1: which space each number lives in, stated rather than implied.
+            evidence["frame"] = {
+                "frame_id": frame_id,
+                "origin": {"x": round(dx, 2), "y": round(dy, 2)},
+                "local_space": "frame viewport (getBoundingClientRect / probe)",
+                "dispatch_space": "top-level viewport",
+                "local": {"center": {"x": round(click_local[0], 1),
+                                     "y": round(click_local[1], 1)},
+                          "bounds": {"left": round(rect_local["x"] - rect_local["w"] / 2.0, 1),
+                                     "top": round(rect_local["y"] - rect_local["h"] / 2.0, 1),
+                                     "width": round(rect_local["w"], 1),
+                                     "height": round(rect_local["h"], 1)}},
+            }
         evidence['three_state'] = _three_state(True, landed, 'no_readback')
         if redirect_ev:
             evidence.update(redirect_ev)
