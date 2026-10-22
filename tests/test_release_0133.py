@@ -35,12 +35,9 @@ def _manifest():
 class TestVersion0133(unittest.TestCase):
     """Current-version assertions — these move with the next bump."""
 
-    def test_version_is_0133(self):
-        import hand
-        self.assertEqual(hand.__version__, "0.13.3")
-
-    def test_manifest_version_is_0133(self):
-        self.assertEqual(_manifest()["version"], "0.13.3")
+    # (0.13.4 folded these historic value checks away: a release test that
+    # asserts "the current version is mine" turns red on every later release
+    # and teaches nothing. What 0.13.3 *did* stays pinned below.)
 
     def test_changelog_has_0133_entry(self):
         self.assertIn("## [0.13.3]", _read("CHANGELOG.md"))

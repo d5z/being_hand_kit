@@ -116,10 +116,18 @@ class TestHandleCarriesFrameId(unittest.TestCase):
         self.assertIn("frame_of_bid[bnid] = fid", src)
 
     def test_bidless_frame_nodes_are_declared(self):
-        """Merged ≠ addressable: a node without a backend id gets a note."""
-        src = _read("hand/perception/ax_tree.py")
-        self.assertIn("frame_bidless", src)
-        self.assertIn("carry no backend id", src)
+        """Merged ≠ addressable: a line without a backend id gets a note.
+
+        0.13.4 moved the count from raw AX nodes to printed lines and reworded
+        the note ("readable here, but not aimable"), so this pins the *contract*
+        — a note exists and it is derived from the frame bookkeeping — not the
+        0.13.1 sentences, which outlived their truth.
+        """
+        from hand.perception import ax_tree
+        import inspect
+        src = inspect.getsource(ax_tree.ax_snapshot)
+        self.assertIn("frame_lines_without_handle", src)
+        self.assertIn("merged into this tree", src)
 
 
 if __name__ == "__main__":

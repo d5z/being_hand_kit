@@ -262,6 +262,9 @@ def _traverse(kept):
             "idx": idx,
             "role": role,
             "name": name,
+            # internal (0.13.4): lets serialize() tell whether this line came
+            # from a merged child frame. Stripped before the map is returned.
+            "_node_id": node["nodeId"],
             "states": states,
             "backend_node_id": bid,
             "interactive": role in INTERACTIVE_ROLES,
@@ -280,14 +283,30 @@ def _traverse(kept):
     return lines, meta
 
 
-def serialize(nodes, max_lines=DEFAULT_MAX_LINES):
+def serialize(nodes, max_lines=DEFAULT_MAX_LINES, frame_nodeids=None):
     """AX nodes → {"lines", "nodes", "truncated", "nodes_omitted", ...}.
 
     Deterministic: same nodes + same max_lines → identical bytes.
+
+    `frame_nodeids` (0.13.4) is the set of AX nodeIds that came from merged
+    child frames. It only feeds one counter — how many *printed lines* from
+    those frames have no backend id, i.e. are readable but cannot be aimed at.
+    Before 0.13.4 the count was taken over raw AX nodes instead, which counted
+    structural nodes that never become a line at all: a cross-origin fixture
+    with every visible node addressable still reported "3 node(s) … have no
+    [idx] handle", and a nested fixture reported "1". Both were arithmetic
+    facts about the payload and lies about the tree.
     """
     raw = list(nodes or [])
     kept = filter_nodes(raw)
     lines, meta = _traverse(kept)
+    frame_lines_without_handle = 0
+    if frame_nodeids:
+        frame_lines_without_handle = sum(
+            1 for m in meta
+            if m.get("backend_node_id") is None and m.get("_node_id") in frame_nodeids)
+    for m in meta:
+        m.pop("_node_id", None)
     full_line_count = len(lines)
     truncated = max_lines is not None and full_line_count > max_lines
     if truncated:
@@ -313,6 +332,7 @@ def serialize(nodes, max_lines=DEFAULT_MAX_LINES):
         "kept_count": len(kept),
         "max_lines": max_lines,
         "format": AX_FORMAT_VERSION,
+        "frame_lines_without_handle": frame_lines_without_handle,
     }
     if block:
         ser["truncation"] = block
@@ -652,7 +672,7 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
         # that nests ads cannot spend the whole budget here.
         frames_merged = 0
         frame_of_bid = {}
-        frame_bidless = 0
+        frame_nodeids = set()
         try:
             ft = cdp_call(ws, "Page.getFrameTree", {}, msg_id=64, timeout=5)
             queue = list(((ft or {}).get("frameTree") or {}).get("childFrames") or [])
@@ -676,15 +696,15 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                             bnid = sn.get("backendDOMNodeId")
                             if bnid:
                                 frame_of_bid[bnid] = fid
-                            else:
-                                frame_bidless += 1
+                            if sn.get("nodeId"):
+                                frame_nodeids.add(sn["nodeId"])
                         nodes.extend(sub_nodes)
                         frames_merged += 1
                 except Exception:
                     pass
         except Exception:
             pass
-        ser = serialize(nodes, max_lines=max_lines)
+        ser = serialize(nodes, max_lines=max_lines, frame_nodeids=frame_nodeids)
 
         dpr = _get_dpr(ws)
         ax_version = {}
@@ -885,16 +905,16 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
         if frames_merged:
             notes.append(f"{frames_merged} child frame(s) merged into this tree "
                          "(iframe content is otherwise invisible)")
-            # 0.13.1: merged is not the same as addressable. Measured 2026-10-22
-            # on a two-level fixture: nodes from a frame nested inside another
-            # frame come back WITHOUT backendDOMNodeId, so they get a line and no
-            # handle — readable, not clickable. Say which, instead of letting the
-            # merge note imply the whole frame is usable.
-            if frame_bidless:
+            # 0.13.1: merged is not the same as addressable. 0.13.4: say it over
+            # *printed lines*, not raw AX nodes — the old counter included
+            # structural nodes that never reach the tree, so a page whose every
+            # visible frame node was clickable still reported three unclickable
+            # nodes. A reader acts on lines, so lines are what the count is about.
+            if ser.get("frame_lines_without_handle"):
                 notes.append(
-                    f"{frame_bidless} node(s) in child frames carry no backend id — "
-                    "their text is readable here but they have no [idx] handle "
-                    "to click (nested frames, measured 2026-10-22)")
+                    f"{ser['frame_lines_without_handle']} line(s) from child frames "
+                    "have no backend id — readable here, but not aimable: no box, "
+                    "no click (nested / cross-origin frames, measured 2026-10-22)")
         if resolve_coords:
             unresolved = sum(1 for n in wanted if not coords.get(str(n["idx"])))
             if unresolved:

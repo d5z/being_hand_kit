@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.4] — 2026-10-22
+
+> 0.13.1 加了一句提示：合并进来的行，有的读得到、点不到。0.13.4 修的是**那个数**——它数的是原始 AX 节点，不是树上印出来的行。
+
+### Fixed
+- **计数改为「印出来的、没有 backend id 的行」**。跨源夹具上每个可见节点都可寻址，旧计数照样报 `3 node(s) in child frames carry no backend id`；两级嵌套报 `1`。两个数字都是对载荷的算术事实、对树的谎言——读它的人按行办事，数就得是行。
+- **措辞改为 readable / not aimable**：这些行是有 `[idx]` 的，缺的是 backend id——没有盒、没有可点的坐标。旧措辞 `have no [idx] handle` 自己错了一次，我照着它把「嵌套内层缺 backend id」记了半天。
+- **顺带坐实**：0.13.1 记的「两级嵌套时内层节点没有 backendDOMNodeId」在这一版已不成立——内层按钮有 id、有 frame_id、点得到（点完内层 `document.title` 翻成 `inner clicked`），跨源同理（`xor clicked`）。帧身份靠合并那一步记进 handle，坐标一次查 frame owner，任意深度不求和。
+- 新增 L2 套件 `tests/test_frame_origins.py`（8 tests，真 Chrome）：跨源（两个 origin，不同端口）与两级嵌套的合并／坐标落在 iframe 盒内／点击真的到达子文档（用 isolated world 读子文档 title 当行为证据）／提示不再谎报／计数的三条 hermetic 断言。
+- 行文契约不变：`tree` 文本与 sha256 与 0.13.3 逐字相同，只有 note 与新增的 `frame_lines_without_handle` 字段变了。
+- 全套 642 tests 绿。
+
 ## [0.13.3] — 2026-10-22
 
 > 0.13.2 收尾时在同一个夹具上撞见：整页内容都在 `iframe` 里时，`cdp_see(kind=dom)` 回 `error: "empty page (CSR?)"` / `hint: "try render-wait"` / `evidence.reason: "cdp_dom returned neither url nor title"`。
