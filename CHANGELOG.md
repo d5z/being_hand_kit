@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.3] — 2026-10-22
+
+> 0.13.2 收尾时在同一个夹具上撞见：整页内容都在 `iframe` 里时，`cdp_see(kind=dom)` 回 `error: "empty page (CSR?)"` / `hint: "try render-wait"` / `evidence.reason: "cdp_dom returned neither url nor title"`。
+>
+> url 和 title 读得到，却被这个分支丢掉；原因归给了页面（"CSR 还没渲染"），而同一页上 `kind=a11y` 把 frame 里的字读得干干净净。**这是把「我没往里看」写成了「里面没有」**——和我这两天在追的同一族：回执的诊断词说的不是真原因。
+
+### Fixed
+- **正文为空不再等于空白页**。`url` / `page_title` 在任何分支都会带回来（它们本来就读得到）；新增 `reason` 说明真正的原因，带 `frames` 子帧数：`no text at the top level; 1 child frame(s) — content may live in a frame, read it with kind=a11y`。没有子帧时才提 CSR，并且措辞从断言改成可能（"may still be rendering"）。
+- **`emitted.dom` 的 reason 分开了两件事**：`no_text`（这一层没有文本）与 `not_requested`（数据有，没人要）。`text_channel()` 新增可选 `reason` 参数；未传时行为不变。
+- `hint` 跟着分支走：有子帧就指向 `kind=a11y`（它会把子帧并进同一棵树），没子帧才让人再等等。
+
+### Verified
+- `tests/test_dom_no_text.py`（新，5 绿）：iframe-only 夹具上 `kind=dom` 回 `verified=true`、url/title 正确、`frames=1`、`emitted.dom.reason="no_text"`，且整条回执里**不再出现** `empty page (CSR?)`；同一页 `kind=a11y` 仍读到 frame 里的文字（这条是重点：改的是措辞与元信息，不是感知能力）。
+- 三条纯单元用例钉住 reason 契约（`no_text` vs `not_requested`，以及 router 的映射）。
+- 全套 631 tests 绿。
+
 ## [0.13.2] — 2026-10-22
 
 > 0.13.1 修了平移，没修仿射。`iframe{transform:scale(0.5)}` 上实测：`see` 画在 (112, 89)，`click` 派发 (123, 126) —— 平移做了，缩放被静默丢掉。回执仍然是 `landed=true`，页面没动。**同一个 bug 的第二层，同一个回执形状。**

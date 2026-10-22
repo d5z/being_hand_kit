@@ -130,7 +130,8 @@ def _emitted_for(method, result):
     if method == "cdp_snapshot":
         return {"dom": text_channel(result.get("text"),
                                     count=result.get("chars"),
-                                    unit="chars", key="text")}
+                                    unit="chars", key="text",
+                                    reason="no_text" if result.get("reason") else None)}
     if method == "cdp_a11y":
         return {"a11y": text_channel(result.get("tree"),
                                      count=result.get("node_count"),

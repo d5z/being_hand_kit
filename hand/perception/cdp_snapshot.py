@@ -15,6 +15,22 @@ from hand.receipt import truncation
 from hand.perception.visual_state import probe as visual_probe
 
 
+def _child_frame_count(ws, msg_id=95):
+    """How many child frames the page has (0 when the call fails — the count is
+    diagnostic, never a gate)."""
+    try:
+        tree = cdp_call(ws, 'Page.getFrameTree', {}, msg_id=msg_id,
+                        timeout=5).get('frameTree') or {}
+    except Exception:
+        return 0
+    n, stack = 0, list(tree.get('childFrames') or [])
+    while stack:
+        node = stack.pop(0)
+        n += 1
+        stack.extend(node.get('childFrames') or [])
+    return n
+
+
 def cdp_snapshot(max_chars=8000, page_sel=None):
     """Return page text snapshot.
 
@@ -28,16 +44,38 @@ def cdp_snapshot(max_chars=8000, page_sel=None):
         expr = (
             '(function(){'
             'var b=document.body;'
-            'if(!b)return JSON.stringify({error:"no body"});'
+            'var meta={page_title:document.title||"(no title)",url:window.location.href};'
+            'if(!b){meta.error="no body";return JSON.stringify(meta);}'
             'var t=b.innerText||b.textContent||"";'
-            'if(!t.trim())return JSON.stringify({error:"empty page (CSR?)",hint:"try render-wait"});'
+            'if(!t.trim()){meta.text_chars=0;return JSON.stringify(meta);}'
             'var r=t.length>' + m + '?t.substring(0,' + m + '):t;'
             'var lines=r.split("\\n").filter(function(l){return l.trim()});'
-            'return JSON.stringify({page_title:document.title||"(no title)",url:window.location.href,line_count:lines.length,chars:r.length,total_chars:t.length,truncated:t.length>' + m + ',text:r});'
+            'return JSON.stringify({page_title:meta.page_title,url:meta.url,line_count:lines.length,chars:r.length,total_chars:t.length,truncated:t.length>' + m + ',text:r});'
             '})()')
         raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True})
         value_str = raw.get('result', {}).get('value') or '{}'
         data = json.loads(value_str)
+        # 0.13.3: an empty top-level body is not a blank page. Measured 2026-10-22
+        # on a page whose whole content lives in an <iframe>: cdp_see(kind=dom)
+        # said "empty page (CSR?)" and dropped url/title, i.e. it blamed the page
+        # for our own not looking inside the frame. Report what was read (url,
+        # title, frame count) and name the real reason.
+        if 'text' not in data:
+            frames = _child_frame_count(ws)
+            data['text_chars'] = 0
+            data['visual_state'] = 'interactive'
+            if data.get('error') == 'no body':
+                data['reason'] = 'no body element'
+            elif frames:
+                data['reason'] = (f'no text at the top level; {frames} child '
+                                  f'frame(s) — content may live in a frame, '
+                                  f'read it with kind=a11y')
+            else:
+                data['reason'] = ('no text in the document; if this is a CSR app '
+                                  'the body may still be rendering')
+            data['frames'] = frames
+            data['hint'] = ('kind=a11y merges child frames into one tree' if frames
+                            else 'try again after the page settles')
         # S1 (0.9): the 8000-char cap was only declared as a bool + total_chars;
         # the unified block says which field, why, and how many chars were cut.
         if data.get('truncated'):

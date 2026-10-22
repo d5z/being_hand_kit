@@ -32,14 +32,8 @@ def _manifest():
 
 
 class TestVersion0132(unittest.TestCase):
-    """Current-version assertions — these move with the next bump."""
-
-    def test_version_is_0132(self):
-        import hand
-        self.assertEqual(hand.__version__, "0.13.2")
-
-    def test_manifest_version_is_0132(self):
-        self.assertEqual(_manifest()["version"], "0.13.2")
+    """Historical lock: 0.13.2 shipped 2026-10-22. The version itself has moved
+    on — current-version assertions live in the newest test_release_*."""
 
     def test_changelog_has_0132_entry(self):
         self.assertIn("## [0.13.2]", _read("CHANGELOG.md"))

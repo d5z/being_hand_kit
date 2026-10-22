@@ -140,14 +140,18 @@ def image_channel(b64=None, fmt=None, path=None):
     return emitted_channel(False, "not_requested")
 
 
-def text_channel(text=None, count=None, unit="chars", key=None):
+def text_channel(text=None, count=None, unit="chars", key=None, reason=None):
     """Text-ish channel (dom text, a11y tree, vlm description, ocr lines).
 
     `count`/`unit` describe the payload that actually went into the receipt;
     `key` names the field it rides in, so a consumer can find it.
+
+    `reason` (0.13.3) lets the caller say WHY a channel is empty when that is
+    not the caller's choice — "no_text" (the page has none at this level) is a
+    different statement from "not_requested" (data existed, nobody asked).
     """
     if text is None:
-        return emitted_channel(False, "not_requested")
+        return emitted_channel(False, reason or "not_requested")
     n = count if count is not None else len(text)
     return emitted_channel(True, count=n, unit=unit, key=key)
 
