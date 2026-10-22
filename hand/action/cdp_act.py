@@ -647,6 +647,65 @@ def _frame_content_origin(ws, frame_id, msg_id=46):
     return float(min(xs)), float(min(ys))
 
 
+def _element_border_quad(ws, backend_node_id, msg_id=47):
+    """The element's BORDER box corners in top-level viewport px, or None.
+
+    0.13.2: this is the read `cdp_see` draws with — so a click point taken from
+    it lives in the space see drew, by construction. It also reflects CSS
+    transforms on the element AND on its ancestors, which is exactly what no
+    read taken inside a child frame can see: a `transform: scale(0.5)` on the
+    <iframe> owner is invisible to `getBoundingClientRect` running in the
+    frame's own context (measured 2026-10-22: 0.13.1 translated but did not
+    scale — dispatched (123,126) where see drew (112,89)).
+    """
+    try:
+        raw = cdp_call(ws, "DOM.getBoxModel", {"backendNodeId": backend_node_id},
+                       msg_id=msg_id, timeout=10)
+    except Exception:
+        return None
+    quad = ((raw or {}).get("model") or {}).get("border") or []
+    if not isinstance(quad, list) or len(quad) < 8:
+        return None
+    return [float(v) for v in quad[:8]]
+
+
+def _map_local_to_top(quad, local_bounds, pt):
+    """frame-local point → top-level px, via the element's own quad (bilinear).
+
+    An affine transform (translate / scale / rotate / skew) preserves bilinear
+    interpolation on a quad, so expressing the local point's position inside the
+    local rect and reading that position across the quad's corners is exact for
+    every affine — not just the pure translation 0.13.1 handled.
+    """
+    w = local_bounds.get("width") or 1.0
+    h = local_bounds.get("height") or 1.0
+    u = (pt[0] - local_bounds.get("left", 0.0)) / w
+    v = (pt[1] - local_bounds.get("top", 0.0)) / h
+    tl = (quad[0], quad[1])
+    tr = (quad[2], quad[3])
+    br = (quad[4], quad[5])
+    bl = (quad[6], quad[7])
+    x = ((1 - u) * (1 - v) * tl[0] + u * (1 - v) * tr[0]
+         + u * v * br[0] + (1 - u) * v * bl[0])
+    y = ((1 - u) * (1 - v) * tl[1] + u * (1 - v) * tr[1]
+         + u * v * br[1] + (1 - u) * v * bl[1])
+    return x, y
+
+
+def _quad_center_size(quad):
+    """(cx, cy, w, h) of a border quad in top-level px — the same numbers
+    cdp_see reports for the node, so receipt and drawing cannot drift apart."""
+    tl = (quad[0], quad[1])
+    tr = (quad[2], quad[3])
+    br = (quad[4], quad[5])
+    bl = (quad[6], quad[7])
+    cx = (tl[0] + tr[0] + br[0] + bl[0]) / 4.0
+    cy = (tl[1] + tr[1] + br[1] + bl[1]) / 4.0
+    w = ((tr[0] - tl[0]) ** 2 + (tr[1] - tl[1]) ** 2) ** 0.5
+    h = ((bl[0] - tl[0]) ** 2 + (bl[1] - tl[1]) ** 2) ** 0.5
+    return cx, cy, w, h
+
+
 def _dispatch_offset(ws, object_id, frame_id=None):
     """(dx, dy, frame_id, error) → top-level offset for a node's own frame.
 
@@ -657,6 +716,10 @@ def _dispatch_offset(ws, object_id, frame_id=None):
     Main-frame node: (0, 0, None, None) — unchanged behaviour. Child frame whose
     box cannot be located: error set, because dispatching a frame-local number at
     top level is a silent miss (that was 0.13.0).
+
+    0.13.2 keeps this as the *diagnostic* origin (it names where the frame sits),
+    not as the dispatch translation — that now comes from the element's own quad,
+    because a translation cannot express a scale.
     """
     fid = frame_id or _node_frame_id(ws, object_id)
     main = _main_frame_id(ws)
@@ -778,15 +841,20 @@ def cdp_click_handle(handle, page_sel=None):
                 f'handle [{entry["idx"]}] element has no box (display:none, '
                 f'zero-size or detached) — call cdp_see again',
                 entry=entry, handle=str(handle), nav=nav_ev)
-        # 0.13.1: inside a merged child frame every number read above is
+        # 0.13.1/0.13.2: inside a merged child frame every number read above is
         # FRAME-local (getBoundingClientRect and the elementFromPoint probe both
         # run in the frame's own context), while Input.dispatchMouseEvent wants
-        # top-level viewport px. 0.13.0 skipped this translation: cdp_see drew
-        # the right pixel and the click landed on the frame's own padding, with
-        # result=ok/landed=true. Translate once, keep both spaces in evidence.
+        # top-level viewport px. 0.13.0 skipped the translation (dispatched the
+        # frame-local number, receipt still said landed=true); 0.13.1 translated
+        # by the frame origin, which is right only for an untransformed owner.
+        # 0.13.2 takes the dispatch point from the element's own border quad —
+        # the same read cdp_see draws with — so translation, scale and rotation
+        # all come from one source and receipt/drawing cannot drift apart.
         dx, dy, frame_id, frame_err = _dispatch_offset(ws, oid,
                                                        entry.get("frame_id"))
-        if frame_err:
+        main_id = _main_frame_id(ws)
+        is_child = bool(frame_id) and bool(main_id) and frame_id != main_id
+        if is_child and frame_err:
             return _handle_fail(
                 f'handle [{entry["idx"]}] {frame_err}',
                 entry=entry, handle=str(handle), nav=nav_ev,
@@ -815,15 +883,35 @@ def cdp_click_handle(handle, page_sel=None):
             if click_pt is None:
                 click_pt = [rect["x"], rect["y"]]
                 click_how = "center (probe unavailable)"
-        # 0.13.1: click_pt is frame-local here (probe or centre, both in the
-        # node's own frame). Keep it — it is the auditable local answer — and
-        # dispatch its top-level translation.
+        # 0.13.1/0.13.2: click_pt is frame-local here (probe or centre, both in
+        # the node's own frame). Keep it — it is the auditable local answer — and
+        # dispatch its top-level image. For a main-frame node the two spaces are
+        # the same (an element's own transform is already inside
+        # getBoundingClientRect); for a frame node the mapping comes from the
+        # element's border quad, not from adding the frame origin.
         click_local = [float(click_pt[0]), float(click_pt[1])]
-        click_pt = [click_local[0] + dx, click_local[1] + dy]
         rect_local = {"x": rect["x"], "y": rect["y"],
                       "w": rect["w"], "h": rect["h"]}
-        rect = {"x": rect["x"] + dx, "y": rect["y"] + dy,
-                "w": rect["w"], "h": rect["h"]}
+        local_bounds = {"left": round(rect_local["x"] - rect_local["w"] / 2.0, 3),
+                        "top": round(rect_local["y"] - rect_local["h"] / 2.0, 3),
+                        "width": rect_local["w"], "height": rect_local["h"]}
+        mapping = "same space (main frame)"
+        if is_child:
+            quad = _element_border_quad(ws, entry["backend_node_id"])
+            if quad is None:
+                return _handle_fail(
+                    f'handle [{entry["idx"]}] element lives in child frame '
+                    f'{frame_id[:8]} but its border box could not be read — '
+                    f'refusing to dispatch a frame-local point',
+                    entry=entry, handle=str(handle), nav=nav_ev,
+                    frame_id=frame_id)
+            click_pt = list(_map_local_to_top(quad, local_bounds, click_local))
+            qcx, qcy, qw, qh = _quad_center_size(quad)
+            rect = {"x": qcx, "y": qcy, "w": qw, "h": qh}
+            mapping = "element border quad (bilinear, top-level)"
+        else:
+            click_pt = [click_local[0], click_local[1]]
+            rect = dict(rect_local)
         viewport, vp_known = _viewport_size(ws)
         vw, vh = viewport["w"], viewport["h"]
         in_viewport = None
@@ -875,19 +963,21 @@ def cdp_click_handle(handle, page_sel=None):
             "source": "cdp_see(kind=a11y) handle map",
             "verified": True,
         }
-        if frame_id and (dx or dy):
-            # 0.13.1: which space each number lives in, stated rather than implied.
+        if is_child:
+            # 0.13.1/0.13.2: which space each number lives in, stated rather than
+            # implied — and how the local point became a dispatch point.
             evidence["frame"] = {
                 "frame_id": frame_id,
-                "origin": {"x": round(dx, 2), "y": round(dy, 2)},
+                "origin": None if frame_err else {"x": round(dx, 2), "y": round(dy, 2)},
                 "local_space": "frame viewport (getBoundingClientRect / probe)",
                 "dispatch_space": "top-level viewport",
+                "mapping": mapping,
                 "local": {"center": {"x": round(click_local[0], 1),
                                      "y": round(click_local[1], 1)},
-                          "bounds": {"left": round(rect_local["x"] - rect_local["w"] / 2.0, 1),
-                                     "top": round(rect_local["y"] - rect_local["h"] / 2.0, 1),
-                                     "width": round(rect_local["w"], 1),
-                                     "height": round(rect_local["h"], 1)}},
+                          "bounds": {"left": round(local_bounds["left"], 1),
+                                     "top": round(local_bounds["top"], 1),
+                                     "width": round(local_bounds["width"], 1),
+                                     "height": round(local_bounds["height"], 1)}},
             }
         evidence['three_state'] = _three_state(True, landed, 'no_readback')
         if redirect_ev:

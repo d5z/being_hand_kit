@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.2] — 2026-10-22
+
+> 0.13.1 修了平移，没修仿射。`iframe{transform:scale(0.5)}` 上实测：`see` 画在 (112, 89)，`click` 派发 (123, 126) —— 平移做了，缩放被静默丢掉。回执仍然是 `landed=true`，页面没动。**同一个 bug 的第二层，同一个回执形状。**
+>
+> 根因是同一条：`click` 从帧内读了一个点，然后自己想办法把它搬到顶层。只要「搬」是我写的，就永远有下一层没写对的变换。这一版不再搬——派发点直接取元素自己的 border quad（顶层坐标、浏览器已经把 transform 算完），帧内点用双线性映射过去。
+
+### Fixed
+- **子 frame 内节点的派发点改由 `DOM.getBoxModel` 的 border quad 决定**。quad 就是 `cdp_see` 画图用的那一次读数：一个来源，一个空间，回执与画面在构造上不可能再各说各话。双线性在平行四边形上对任意仿射变换精确（平移/缩放/旋转/斜切），所以不需要为每种 transform 单独写算式。
+- **帧原点降级为诊断信息**。`evidence.frame.origin` 仍在（它说明帧坐在哪里），但不再参与派发；新增 `evidence.frame.mapping` 写明这次用的是哪条路径（`element border quad (bilinear, top-level)` 或 `same space (main frame)`）。帧原点读不到时不再拒绝点击（quad 才是权威读数），quad 读不到才拒绝。
+- **回执里的 `bounds`/`center`/`w`/`h` 也从 quad 算**，所以点完看到的框与 `see` 报的框是同一组数——不再有「回执说框在这、画面说框在那」的可能。
+
+### Verified
+- `tests/test_iframe_transform.py`（新）：行为证明。0.5 缩放夹具上，`dispatched` 与 `see` 的 centre 相差 ≤1px，且点完**子 frame 真的跳到 B**（不看回执）。另有四条纯数学用例把双线性钉住：平移、缩放、90° 旋转（局部中心映射到 quad 中心）、零尺寸不除零。
+- 同一夹具在 0.13.1 上复现失败：`dispatched=[123,126]` vs `see=(112,89)`，`effected=no_change`，frame URL 不变。
+- 全套 621 tests 绿。
+
 ## [0.13.1] — 2026-10-22
 
 > 一处坐标系错配。0.13.0 把子 frame 的节点并进了 a11y 树，`see` 画对了像素；但 `click` 用另一条读法重新量了一遍那个元素，量出来的是**帧内坐标**，然后按顶层坐标派发。iframe 在 (8, 59.4) 的夹具上，这是一步 61px 的偏差：点落在 frame 自己的 padding 上，frame 不跳转，回执写着 `result=ok / resolved=true / landed=true`。
