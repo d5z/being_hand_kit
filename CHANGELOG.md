@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.13.7] — 2026-10-24
+
+> 0.13.6 把 handle 路径的 `landed` 从「派发前的承诺」挪到「派发后的回读」。
+> 同一份标定线上还留着两处同样的形状：xy 的 `landed` 仍然来自派发**前**
+> 读到的「点上有谁」；`text=` 的匹配用 `normalize-space()`，只折叠 ASCII
+> 空白，于是标签里带 U+00A0 的元素永远匹配不上，而回执写「text element
+> not found」——读起来像「没有这个标签」，实际只差一个词的字节。
+
+### 改了什么
+
+- **xy 的 landed 改为派发后判决**，顺序固定：① 文档变了吗（href /
+  `performance.timeOrigin`）→ 变了就**不给 hit/miss**，坐标在新文档里
+  已经指别的东西；② 调用方声明了目标 → `landed` = 事件有没有到它；
+  ③ 没声明 → 只报「现在点上有谁」，不编判决。新增
+  `element_at_point_before` / `element_at_point_after` /
+  `landed_source` / `navigated` / `document_before` / `document_after`。
+- **`xy:X,Y @expect=<handle|selector>`**：裸坐标第一次可以声明目标，从而
+  给出 hit/miss。`@expect` 在派发**前**解析——过期的 handle 是它自己的
+  问题，不该在派发后被读成一个「没点到」。关系词沿用 0.13.6 的
+  self/descendant/ancestor/other/none。
+- **xy 前置检查**：点在视口外时拒绝派发并报出真实视口尺寸，不再让
+  事件被无声丢弃。
+- **`xy@img:<sha8>:X,Y` 真正可用**：0.11.0 的文档写了它，但解析只认
+  `xy:`，字符串落进 CSS 选择器分支报「element not found」。
+- **`text=` 改为 Unicode 空白折叠匹配**：U+00A0 / U+2000–200A / U+202F /
+  U+205F / U+3000 / U+FEFF 均折叠为空格后再比较（仍然大小写敏感）。
+  成功回执带 `match.matched_raw_bytes`——告诉调用方这次是字节命中还是
+  折叠后才命中；失败回执逐候选标 `raw_contains` / `casefold_contains`，
+  并给出 `whitespace_mismatch_only` / `case_mismatch_only`，把「标签存在但
+  字节不同」与「确实没有这个标签」分开。
+
+### 真页当天又掏出两处（都在 text= 上，都是「说错了原因」）
+
+- **空查询被拒**：`text=` 传空串时，`contains("")` 对任何标签都为真，于是
+  点了文档里第一个元素。真页第一次用就撞上（变量解析成空串）。
+- **视口外的标签先滚进视口**：以前报「no clickable point (covered)」——
+  `elementFromPoint` 在视口外答 null，那是「不在视口里」，不是「被遮住」。
+  现在与 handle 路径一致：先 `scrollIntoView`，再量、再点。
+
+真页读数（HN Guidelines，9 个 inline 链接，dpr=1，视口 800×600）：
+
+| 点 | landed=True | landed=False |
+|---|---|---|
+| 报告框中心 | 9/9（self） | 0 |
+| 边侧 +3px | 9/9（self） | 0 |
+| 中心下移 8px | 0 | 9/9（ancestor） |
+
+同一个几何，昨天只能读出「点上是 P」，今天读得出「没点到」——而且原因
+写在 `landed_source` 里。
+
+### 未改
+
+`effected` 仍然只到 `unknown`（需要动作前后的世界比较）；`frame_ref`
+仍无历史帧账本，`frame_verified: false` 照旧；iframe 内的 `@expect`
+选择器不生效（选择器无帧身份）——会读成 `missing`，不假装命中。
+
 ## [0.13.6] — 2026-10-23
 
 > 一天的真页标定测出一件比坐标更基础的事：`landed` 在 handle 路径上

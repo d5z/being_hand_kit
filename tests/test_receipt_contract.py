@@ -403,8 +403,9 @@ class TestActionReceipts(unittest.TestCase):
 
     def test_click_do_text_match_verified(self):
         def dispatcher(method, params):
-            if "XPathResult" in params.get("expression", ""):
-                return {"result": {"value": '{"x":5,"y":5,"tag":"A","text":"Learn more"}'}}
+            if "function fold(" in params.get("expression", ""):
+                return {"result": {"value": '{"x":5,"y":5,"tag":"A","text":"Learn more",'
+                                            '"how":"center","match":{"mode":"unicode-space-folded contains"}}'}}
             return {}
 
         from hand.action.cdp_act import cdp_click_do

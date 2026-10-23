@@ -50,6 +50,9 @@ FIXTURE_HTML = """<!doctype html><html><head><title>Text Match</title></head>
   <button id="deep" onclick="window.clicked=(window.clicked||0)+1"><em>Deep Button</em></button>
   <a id="plain" href="#" onclick="window.clicked=(window.clicked||0)+1;return false">Plain Link</a>
   <div id="exact">Exact Only</div>
+  <a id="nbsp" href="#" onclick="window.clicked=(window.clicked||0)+1;return false">52&nbsp;comments</a>
+  <div style="height:2000px"></div>
+  <a id="far" href="#" onclick="window.clicked=(window.clicked||0)+1;return false">Far Below Target</a>
 </body></html>"""
 
 PATHS = {"/text-match": FIXTURE_HTML}
@@ -258,6 +261,69 @@ class TextMatch(unittest.TestCase):
             self.assertFalse(r["verified"], f"{query!r} must not hit: {r}")
             self.assertIn("text element not found", r["error"])
         self.assertEqual(_clicked(), 0)
+
+
+    # ── 6 ───────────────────────────────────────────────────────────
+    def test_unicode_space_label_matches_and_says_so(self):
+        """0.13.7: a label carrying U+00A0 must match a query with a normal
+        space — and the receipt must say the raw bytes did *not* match, so a
+        caller can tell a byte-level surprise from an ordinary hit."""
+        self.tab = _open_fixture("/text-match")
+        self.assertEqual(_reset(), 0)
+        # the fixture is genuinely dangerous: XPath's normalize-space does not
+        # fold U+00A0, so the pre-0.13.7 matcher could not see this label.
+        self.assertEqual(
+            _js("(function(){var a=document.getElementById('nbsp');"
+                "return a.innerText.indexOf('52\\u00a0comments')>=0;})()"), True,
+            "fixture is not dangerous: the label has no U+00A0")
+        self.assertFalse(_xpath_hits('//a[contains(normalize-space(.), "52 comments")]'),
+                         "the old XPath already matched — fixture not dangerous")
+
+        r = cdp_click_do("text=52 comments")
+        self.assertTrue(r["verified"], r)
+        self.assertEqual(r["tag"], "A", r)
+        self.assertEqual(r["evidence"]["element"], 'A "52\u00a0comments"', r["evidence"])
+        self.assertIs(r["match"]["matched_raw_bytes"], False, r["match"])
+        self.assertEqual(r["match"]["mode"], "unicode-space-folded contains")
+        self.assertEqual(_clicked(), 1, "receipt claimed a hit but the page never saw it")
+
+        # byte-identical queries still report matched_raw_bytes=True
+        r2 = cdp_click_do("text=52\u00a0comments")
+        self.assertTrue(r2["verified"], r2)
+        self.assertIs(r2["match"]["matched_raw_bytes"], True, r2["match"])
+
+    # ── 7 ───────────────────────────────────────────────────────────
+    def test_failure_receipt_carries_byte_evidence(self):
+        """A miss keeps naming the closest labels, now with byte-level detail:
+        raw_contains / casefold_contains per candidate."""
+        self.tab = _open_fixture("/text-match")
+        self.assertEqual(_reset(), 0)
+        r = cdp_click_do("text=52 Comments")
+        self.assertFalse(r["verified"], r)
+        cands = r["candidates"]
+        self.assertEqual(len(cands), 1, cands)
+        self.assertEqual(cands[0]["tag"], "A", cands)
+        self.assertIs(cands[0]["raw_contains"], False, cands)
+        self.assertIs(cands[0]["folded_contains"], True, cands)
+        self.assertIn("whitespace_mismatch_only", r["evidence"])
+        self.assertIn("case_mismatch_only", r["evidence"])
+        self.assertEqual(_clicked(), 0, "a failed match clicked something")
+
+
+    # ── 8 ───────────────────────────────────────────────────────────
+    def test_offscreen_label_is_scrolled_into_view(self):
+        """0.13.7: 折叠之外的第二个真页病灶——视口外的标签曾被报成
+        「no clickable point (covered)」。先滚进视口再量。"""
+        self.tab = _open_fixture("/text-match")
+        self.assertEqual(_reset(), 0)
+        before = _js("document.getElementById('far').getBoundingClientRect().top")
+        self.assertGreater(before, 600, "fixture is not dangerous: the link is visible")
+        r = cdp_click_do("text=Far Below Target")
+        self.assertTrue(r["verified"], r)
+        self.assertEqual(r["tag"], "A", r)
+        after = _js("document.getElementById('far').getBoundingClientRect().top")
+        self.assertLess(after, 600, "the receipt claimed a hit but nothing scrolled")
+        self.assertEqual(_clicked(), 1)
 
 
 if __name__ == "__main__":

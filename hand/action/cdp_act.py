@@ -7,7 +7,7 @@ interactive_map/_element_info, and do input such as "xy:X,Y") are PHYSICAL
 pixels = CSS px × devicePixelRatio. CDP Input.dispatchMouseEvent expects
 viewport CSS px, so _click_at divides by dpr before dispatching.
 """
-import json, time
+import json, re, time
 from hand.perception.cdp_core import (
     list_pages, resolve_page, cdp_connect, cdp_call,
     _init_domains, _element_info, _scroll_into_view,
@@ -1271,65 +1271,121 @@ def cdp_click_do(action, app_name=None):
         return cdp_click_handle(action)
     if action.startswith('text='):
         text_val = action[5:]
+        if not text_val.strip():
+            # 0.13.7: an empty query contains every label, so the first match is
+            # whatever sits first in the document. Real page found this the day
+            # it was first used (a variable that resolved to an empty string).
+            return _receipt_fail('cdp_click',
+                                 'empty text= query — refusing to match the whole page',
+                                 action=action)
         pages = list_pages()
         idx, page = resolve_page(None, pages)
         ws = cdp_connect(page['webSocketDebuggerUrl'])
         try:
             _init_domains(ws, 'Runtime')
-            # Use single-quote JS strings for XPath to avoid nesting conflicts with json.dumps double-quotes
             q = json.dumps(text_val)  # produces "Learn more" — double-quoted
             # 0.9.4-P2 (spec docs/spec-0.9.4-p2-textmatch.md): `text()` matches
             # only *direct* text children, so an `<a><span>Title</span></a>` —
             # GitHub issues, most modern sites — never matched, while `.` is the
-            # node's full string value (all descendant text). normalize-space()
-            # folds whitespace differences; the third branch keeps the exact
-            # (`=`) semantic as the "whole text" fallback. Matching stays
-            # case-sensitive (XPath contains) — unchanged by this fix.
+            # node's full string value (all descendant text). The third branch
+            # keeps the exact ("whole text") semantic as a fallback. Matching
+            # stays case-sensitive.
+            #
+            # 0.13.7: normalize-space() folds only ASCII whitespace. A label
+            # whose text carries U+00A0 ("52\u00a0comments") therefore never
+            # matched the query "52 comments", and the receipt said
+            # "text element not found" — which reads as "no such label" while
+            # the truth was a byte difference inside one word. The scan now
+            # folds Unicode spaces on both sides and reports, per candidate,
+            # whether it matched raw bytes or only after folding, so a byte
+            # mismatch is named as a byte mismatch.
             expr = (
                 "(function(){"
-                "var xpath='//a[contains(normalize-space(.),"+q+")]|"
-                "//button[contains(normalize-space(.),"+q+")]|"
-                "//*[normalize-space(.)="+q+" and not(*[normalize-space(.)="+q+"])]';"
-                "var r=document.evaluate(xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null);"
-                "var el=r.singleNodeValue;"
-                "if(!el)return JSON.stringify({error:'text element not found',search:"+q+",candidates:"
-                "(function(){var qt="+q+";var out=[];"
-                "var all=document.evaluate('//a|//button',document,null,XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,null);"
-                "for(var i=0;i<all.snapshotLength&&out.length<3;i++){var n=all.snapshotItem(i);"
-                "var t=(n.innerText||'').trim();"
-                "if(t&&t.toLowerCase().indexOf(qt.toLowerCase())>=0){"
-                "out.push({tag:n.tagName,text:t.substring(0,80),href:n.getAttribute('href')||null});}}"
-                "return out;})()});"
-                "var box=null;"
+                "var qRaw=" + q + ";"
+                "function fold(s){return (''+(s==null?'':s))"
+                ".replace(/[\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000\\ufeff]/g,' ')"
+                ".replace(/\\s+/g,' ').trim();}"
+                "var q=fold(qRaw);var qLower=q.toLowerCase();"
+                "var hit=null,exact=false;"
+                "var prim=document.querySelectorAll('a,button,[role=\"button\"],"
+                "[role=\"link\"],input[type=\"submit\"],input[type=\"button\"]');"
+                "for(var i=0;i<prim.length;i++){var n=prim[i];"
+                "var t=(n.innerText!==undefined&&n.innerText!==null)?n.innerText:(n.value||'');"
+                "if(fold(t).indexOf(q)>=0){hit={el:n,raw:t};break;}}"
+                "if(!hit){var all=document.querySelectorAll('body *');"
+                "for(var i=0;i<all.length;i++){var n=all[i];var t=n.innerText||'';"
+                "if(fold(t)!==q)continue;var kids=n.children,same=false;"
+                "for(var j=0;j<kids.length;j++){if(fold(kids[j].innerText||'')===q){same=true;break;}}"
+                "if(!same){hit={el:n,raw:t};exact=true;break;}}}"
+                "if(!hit){var out=[];"
+                "var scan=document.querySelectorAll('a,button,[role=\"button\"],"
+                "[role=\"link\"],label,summary');"
+                "for(var i=0;i<scan.length&&out.length<5;i++){var n=scan[i];var t=n.innerText||'';"
+                "if(!t)continue;var ft=fold(t);"
+                "if(ft.toLowerCase().indexOf(qLower)>=0){"
+                "out.push({tag:n.tagName,text:t.substring(0,80),"
+                "raw_contains:(t.indexOf(qRaw)>=0),"
+                "casefold_contains:(t.toLowerCase().indexOf((''+qRaw).toLowerCase())>=0),"
+                "folded_contains:true,"
+                "href:(n.getAttribute?n.getAttribute('href'):null)});}}"
+                "var wsOnly=false,caseOnly=false;"
+                "for(var i=0;i<out.length;i++){var c=out[i];"
+                "if(!c.folded_contains||c.raw_contains)continue;"
+                "if(c.casefold_contains)wsOnly=true;else caseOnly=true;}"
+                "return JSON.stringify({error:'text element not found',search:qRaw,"
+                "folded_search:q,search_folding_changed:(q!==(''+qRaw).trim()),"
+                "whitespace_mismatch_only:wsOnly,case_mismatch_only:caseOnly,"
+                "candidates:out});}"
+                "var el=hit.el;"
+                # 0.13.7: a label below the fold used to be reported as
+                # "no clickable point (covered)" — elementFromPoint answers
+                # null outside the viewport, which is not the same fact as
+                # "something covers it". Bring the node into view first, the
+                # way the handle path already does, then measure.
+                "el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});"
                 "function hits(x,y){var e=document.elementFromPoint(x,y);"
                 "return !!(e&&(e===el||el.contains(e)));}"
                 "var r=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;"
                 "if(r.width<=0||r.height<=0)"
-                "return JSON.stringify({error:'no clickable point (zero-size)',search:"+q+"});"
+                "return JSON.stringify({error:'no clickable point (zero-size)',search:qRaw});"
+                "var rawText=''+hit.raw;"
+                "var info={tag:el.tagName,text:rawText.substring(0,80),match:{"
+                "mode:'unicode-space-folded contains',exact_branch:exact,"
+                "folded_query:q,raw_query:qRaw,matched_raw_bytes:(rawText.indexOf(qRaw)>=0),"
+                "folding_changed_query:(q!==(''+qRaw).trim())}};"
                 "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
-                "if(hits(cx,cy))return JSON.stringify({x:cx*dpr,y:cy*dpr,how:'center',"
-                "tag:el.tagName,text:(el.innerText||'').substring(0,80)});"
+                "if(hits(cx,cy)){info.x=cx*dpr;info.y=cy*dpr;info.how='center';"
+                "return JSON.stringify(info);}"
                 "for(var yi=1;yi<=15;yi++){for(var xi=1;xi<=5;xi++){"
                 "var gx=r.left+r.width*xi/6;var gy=r.top+r.height*yi/16;"
-                "if(hits(gx,gy))return JSON.stringify({x:gx*dpr,y:gy*dpr,how:'grid_scan',"
-                "tag:el.tagName,text:(el.innerText||'').substring(0,80)});}}"
-                "return JSON.stringify({error:'no clickable point (covered)',search:"+q+","
-                "tag:el.tagName,text:(el.innerText||'').substring(0,80)});"
+                "if(hits(gx,gy)){info.x=gx*dpr;info.y=gy*dpr;info.how='grid_scan';"
+                "return JSON.stringify(info);}}}"
+                "return JSON.stringify({error:'no clickable point (covered)',search:qRaw,"
+                "tag:el.tagName,text:rawText.substring(0,80)});"
                 "})()")
             raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True})
             value_str = raw.get('result', {}).get('value', '{}')
             info = json.loads(value_str)
             if 'error' in info:
-                # Failure receipt + one loose scan: the a/button labels that came
+                # Failure receipt + one loose scan: the labels that came
                 # closest, so "not found" is diagnosable instead of a guess.
                 # The scan ignores case on purpose (a case miss is the most
-                # common reason a label exists but the XPath did not hit).
+                # common reason a label exists but the match did not hit).
+                # 0.13.7: each candidate now says whether it matched raw bytes
+                # or only after Unicode-space folding, and the receipt carries
+                # `byte_mismatch_only` — the label existed; the bytes differed.
                 cands = info.get('candidates') or []
                 out = _receipt_fail('cdp_click',
                                     f"{info['error']}: {text_val!r}",
                                     action=action, text_match=text_val,
                                     candidates=cands)
                 out['evidence']['candidates'] = cands
+                out['evidence']['whitespace_mismatch_only'] = bool(
+                    info.get('whitespace_mismatch_only'))
+                out['evidence']['case_mismatch_only'] = bool(
+                    info.get('case_mismatch_only'))
+                out['evidence']['folded_search'] = info.get('folded_search')
+                out['evidence']['match_mode'] = 'unicode-space-folded contains'
                 return out
 
             x, y = info['x'], info['y']
@@ -1340,21 +1396,40 @@ def cdp_click_do(action, app_name=None):
                                     'text': info.get('text')})
             ev['verified'] = True
             ev['text_match'] = text_val
+            ev['match'] = info.get('match')
             ev['click_point'] = {'how': info.get('how'),
                                  'x': round(x / dpr, 1), 'y': round(y / dpr, 1)}
-            ev['read_back'] = ('XPath normalize-space(.) hit + '
-                              'elementFromPoint hit-chain verified')
+            ev['read_back'] = ('Unicode-space-folded text hit + '
+                               'elementFromPoint hit-chain verified')
             return {'method': 'cdp_click', 'text_match': text_val,
-                    'tag': info.get('tag'), 'page_index': idx, 'result': 'ok',
+                    'tag': info.get('tag'), 'match': info.get('match'),
+                    'page_index': idx, 'result': 'ok',
                     'verified': True, 'evidence': ev}
         finally:
             ws.close()
-    if action.startswith('xy:'):
+    if action.startswith('xy:') or action.startswith('xy@'):
         spec = action[3:].strip()
         frame_ref = None
-        if '@' in spec:
-            # 0.11.0 (S4): 'xy@img:<sha8>:X,Y' — name the frame the point came
-            # from, so "which picture did I measure on" stops being unaskable.
+        expect_spec = None
+        # 0.11.0 (S4) documented 'xy@img:<sha8>:X,Y' but only 'xy:' was ever
+        # accepted: a string starting 'xy@' fell through to CSS-selector
+        # handling and failed as "element not found". 0.13.7 accepts it.
+        if action.startswith('xy@'):
+            lead, _, coords = spec.rpartition(':')
+            if coords and ',' in coords:
+                frame_ref = lead.strip() or None
+                spec = coords
+        # 0.13.7: the caller may declare what it expects under the point.
+        # Without a declared target a bare coordinate has nothing to compare
+        # against — which is why 0.13.6 could only report who sits there.
+        # `@expect` takes the rest of the string: a CSS selector may contain
+        # spaces (descendant combinators), and a real page found that hole the
+        # first time it was used.
+        m = re.search(r'@expect=(.+)$', spec)
+        if m:
+            expect_spec = m.group(1).strip()
+            spec = spec[:m.start()].strip()
+        if '@' in spec:                        # legacy in-spec frame naming
             frame_ref, spec = spec.split('@', 1)
             frame_ref = frame_ref.strip() or None
         try:
@@ -1362,8 +1437,8 @@ def cdp_click_do(action, app_name=None):
             x, y = int(round(float(parts[0].strip()))), int(round(float(parts[1].strip())))
         except (ValueError, IndexError):
             return _receipt_fail('cdp_click',
-                                 'invalid xy format, expected "xy:X,Y" or '
-                                 '"xy@img:<sha8>:X,Y"', action=action)
+                                 'invalid xy format, expected "xy:X,Y" '
+                                 '[@expect=<handle|selector>]', action=action)
         pages = list_pages()
         idx, page = resolve_page(None, pages)
         ws = cdp_connect(page['webSocketDebuggerUrl'])
@@ -1375,37 +1450,128 @@ def cdp_click_do(action, app_name=None):
             in_viewport = None
             if vp_known:
                 in_viewport = (0 <= x / dpr < vp['w']) and (0 <= y / dpr < vp['h'])
-            # 0.11.0: the point can now name who is under it. That converts a
-            # blind dispatch into a landed=True/None fact — still no claim that
-            # the world changed.
-            at_point = _element_at(ws, x / dpr, y / dpr, msg_id=43)
+                if not in_viewport:
+                    # 0.13.7 pre-check: outside the viewport a mouse event has
+                    # no target and is dropped without a trace. Refuse, and
+                    # name the viewport that made it impossible.
+                    return _receipt_fail(
+                        'cdp_click',
+                        'point (%d,%d) is outside viewport (%dx%d) — refused '
+                        'before dispatch' % (x, y, vp['w'], vp['h']),
+                        action=action, xy=[x, y])
+            # Resolve the declared target BEFORE dispatching: a stale handle is
+            # its own fault, not a miss to be discovered after the fact.
+            expect_oid = None
+            expect_selector = None
+            expect_label = None
+            if expect_spec:
+                if looks_like_handle(expect_spec):
+                    entry = resolve_handle(expect_spec)
+                    if 'error' in entry:
+                        return _receipt_fail('cdp_click',
+                                             'xy @expect target: %s' % entry['error'],
+                                             action=action, expect=expect_spec)
+                    expect_oid = _handle_object_id(ws, entry.get('backend_node_id'))
+                    if not expect_oid:
+                        return _receipt_fail(
+                            'cdp_click',
+                            'xy @expect handle %s element is gone — call cdp_see again'
+                            % expect_spec, action=action, expect=expect_spec)
+                    expect_label = _handle_label(entry)
+                else:
+                    prox = _element_info(ws, expect_spec)
+                    if not prox or prox.get('error'):
+                        return _receipt_fail(
+                            'cdp_click',
+                            'xy @expect selector %r not found: %s'
+                            % (expect_spec, (prox or {}).get('error', 'no element')),
+                            action=action, expect=expect_spec)
+                    expect_selector = expect_spec
+                    expect_label = '%s %r' % (prox.get('tag'),
+                                              (prox.get('text') or '')[:40])
+            before_doc = _doc_identity(ws, msg_id=44)
+            at_point_before = _element_at(ws, x / dpr, y / dpr, msg_id=43)
             _click_at(ws, x, y, dpr)
             _write_last(idx)
-            landed = True if at_point is not None else None
+            # 0.13.7: judge after the fact, in this order.
+            #   1) did the document change? Then no hit/miss is readable — the
+            #      same coordinate now means something else. (0.11.0 learned
+            #      this about the *dispatch*; this is that lesson applied to
+            #      the verdict.)
+            #   2) declared target? landed = did the event reach it.
+            #   3) no target declared? report who sits there now; invent nothing.
+            after_doc = _doc_identity(ws, msg_id=45)
+            navigated = None
+            if before_doc.get('ok') and after_doc.get('ok'):
+                navigated = (before_doc.get('href') != after_doc.get('href')
+                             or before_doc.get('timeOrigin') != after_doc.get('timeOrigin'))
+            hit = None
+            at_point_after = None
+            if navigated:
+                landed = None
+                landed_source = ('page navigated during dispatch (different '
+                                 'document) — no hit/miss verdict')
+            elif expect_spec:
+                if expect_oid:
+                    hit = _hit_relation(ws, expect_oid, x / dpr, y / dpr, msg_id=46)
+                else:
+                    hit = _hit_relation_selector(ws, expect_selector,
+                                                 x / dpr, y / dpr, msg_id=46)
+                relation = (hit or {}).get('relation')
+                if relation in ('self', 'descendant'):
+                    landed = True
+                elif relation in ('ancestor', 'other', 'none'):
+                    landed = False
+                else:
+                    landed = None
+                landed_source = ('post-dispatch elementFromPoint vs declared '
+                                 'target (@expect)')
+            else:
+                at_state, at_point_after = _element_at_checked(
+                    ws, x / dpr, y / dpr, msg_id=46)
+                if at_state == 'hit':
+                    landed = True
+                    landed_source = 'post-dispatch elementFromPoint at the point'
+                elif at_state == 'none':
+                    landed = None
+                    landed_source = ('post-dispatch elementFromPoint returned no '
+                                     'element — nothing there to judge')
+                else:
+                    landed = None
+                    landed_source = ('post-dispatch read failed — no verdict '
+                                     '(a bare coordinate declares no target)')
             state = _three_state(in_viewport is not False, landed, 'no_readback')
             ev = {'verified': False, 'space': 'physical',
                   'dispatched': [x, y], 'dpr': dpr,
                   'frame': frame, 'in_viewport': in_viewport,
                   'frame_ref': frame_ref,
-                  'element_at_point': at_point,
-                  'read_back': 'document.elementFromPoint at the point',
+                  'element_at_point': at_point_before,
+                  'element_at_point_before': at_point_before,
+                  'element_at_point_after': at_point_after,
+                  'hit_relation': (hit or {}).get('relation'),
+                  'expect': ({'spec': expect_spec, 'element': expect_label}
+                             if expect_spec else None),
+                  'navigated': navigated,
+                  'document_before': before_doc if before_doc.get('ok') else None,
+                  'document_after': after_doc if after_doc.get('ok') else None,
+                  'landed_source': landed_source,
+                  'read_back': 'document.elementFromPoint before and after dispatch',
                   'three_state': state,
-                  'reason': 'coordinate click: dispatch-only, no element to verify '
-                            '(use a selector for a verified receipt)'}
+                  'reason': 'coordinate click: dispatch-only unless @expect names '
+                            'a target; no claim that the world changed'}
             if frame_ref:
                 # Honest limit: this build records the frame on the receipt but
                 # keeps no ledger of past frames, so it cannot re-check one.
                 ev['frame_verified'] = False
                 ev['frame_reason'] = ('no_frame_ledger: past frames are not '
-                                     're-checkable in 0.11.0')
+                                      're-checkable in this build')
             return {'method': 'cdp_click', 'xy': [x, y], 'page_index': idx,
                     'result': 'ok', 'verified': False,
-                    # 0.13.6: who sits under the point is the one fact this
-                    # path can state. It stays `landed` (the event had
-                    # somewhere to land) but says so in the caller's face, and
-                    # names why no hit/miss verdict accompanies it: a bare
-                    # coordinate declares no target to compare against.
-                    'element_at_point': at_point,
+                    'element_at_point': at_point_before,
+                    'element_at_point_after': at_point_after,
+                    'hit_relation': (hit or {}).get('relation'),
+                    'landed_source': landed_source,
+                    'navigated': navigated,
                     'resolved': state['resolved'], 'landed': state['landed'],
                     'effected': state['effected'], 'evidence': ev}
         finally:
@@ -1681,8 +1847,13 @@ def frame_anchor(page_sel=None):
         ws.close()
 
 
-def _element_at(ws, x_css, y_css, msg_id=71):
-    """Who is under this CSS point right now, or None when unanswerable."""
+def _element_at_checked(ws, x_css, y_css, msg_id=71):
+    """Three answers instead of one: ('hit', info) / ('none', None) / ('unknown', None).
+
+    `_element_at` collapses "nothing is there" and "could not read" into None.
+    After a dispatch those are different facts: no element at an in-viewport
+    point is a reading; a JS error or a dead context is not.
+    """
     expr = '%s(%r,%r)' % (_ELEMENT_AT_FN, float(x_css), float(y_css))
     try:
         raw = cdp_call(ws, 'Runtime.evaluate',
@@ -1690,14 +1861,46 @@ def _element_at(ws, x_css, y_css, msg_id=71):
                        msg_id=msg_id, timeout=5)
         value = ((raw or {}).get('result') or {}).get('value')
     except Exception:
-        return None
-    if not isinstance(value, str) or value == 'null':
-        return None
+        return 'unknown', None
+    if not isinstance(value, str):
+        return 'unknown', None
+    if value == 'null':
+        return 'none', None
     try:
         data = json.loads(value)
     except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+        return 'unknown', None
+    return ('hit', data) if isinstance(data, dict) else ('unknown', None)
+
+
+def _element_at(ws, x_css, y_css, msg_id=71):
+    """Who is under this CSS point right now, or None when unanswerable."""
+    state, data = _element_at_checked(ws, x_css, y_css, msg_id=msg_id)
+    return data if state == 'hit' else None
+
+
+def _doc_identity(ws, msg_id=44):
+    """Which document are we in? href + timeOrigin, or {'ok': False}.
+
+    A verdict read after a navigation is read in a *different* document, where
+    the same coordinate means something else. Unreadable is `ok: False` —
+    never silently "the same document".
+    """
+    expr = ("(function(){var l=location||{};return JSON.stringify({"
+            "href:''+(l.href||''),"
+            "timeOrigin:(performance&&performance.timeOrigin)||null});})()")
+    try:
+        raw = cdp_call(ws, 'Runtime.evaluate',
+                       {'expression': expr, 'returnByValue': True},
+                       msg_id=msg_id, timeout=5)
+        value = ((raw or {}).get('result') or {}).get('value')
+        data = json.loads(value) if isinstance(value, str) else None
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {'ok': False}
+    data['ok'] = True
+    return data
 
 
 def _element_matches(claim, at):
@@ -1747,6 +1950,41 @@ def _hit_relation(ws, object_id, x_css, y_css, msg_id=78):
                         "functionDeclaration": _HIT_REL_FN,
                         "arguments": [{"value": float(x_css)},
                                       {"value": float(y_css)}],
+                        "returnByValue": True}, msg_id=msg_id, timeout=5)
+        value = ((raw or {}).get("result") or {}).get("value")
+    except Exception:
+        return None
+    try:
+        data = json.loads(value) if isinstance(value, str) else None
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+_HIT_REL_SEL_FN = (
+    "function(x,y,sel){var t=document.querySelector(sel);"
+    "if(!t)return JSON.stringify({relation:'missing'});"
+    "var e=document.elementFromPoint(x,y);"
+    "if(!e)return JSON.stringify({relation:'none'});"
+    "var r=(e===t)?'self':(t.contains(e)?'descendant':"
+    "(e.contains(t)?'ancestor':'other'));"
+    "return JSON.stringify({relation:r,tag:e.tagName,id:e.id||'',"
+    "text:((e.innerText||e.value||'')+'').slice(0,60)});}"
+)
+
+
+def _hit_relation_selector(ws, selector, x_css, y_css, msg_id=79):
+    """`_hit_relation` for a declared CSS selector instead of a live objectId.
+
+    Same relation vocabulary. `missing` means the declared target no longer
+    exists (re-render) — the caller decides what that is worth; it is never
+    silently folded into `other`. Main document only: a selector has no frame
+    identity here, so a target inside a child frame will read `missing`.
+    """
+    try:
+        raw = cdp_call(ws, "Runtime.evaluate",
+                       {"expression": "(%s)(%r,%r,%r)"
+                        % (_HIT_REL_SEL_FN, float(x_css), float(y_css), selector),
                         "returnByValue": True}, msg_id=msg_id, timeout=5)
         value = ((raw or {}).get("result") or {}).get("value")
     except Exception:
