@@ -933,8 +933,24 @@ def cdp_click_handle(handle, page_sel=None):
         # 0.11.0: a probe that landed on the element is `landed=True`; the
         # legacy centre fallback is `landed=None` — "could not tell", never
         # claimed as true.
-        landed = True if click_how in ('center', 'grid_scan',
-                                       'redirect_target_clickable_point') else None
+        landed_probe = True if click_how in ('center', 'grid_scan',
+                                             'redirect_target_clickable_point') else None
+        # 0.13.6: the probe above is a *pre-dispatch promise* ("this point
+        # belongs to the target"). It never said who received the event. Read
+        # the receiver back and judge `landed` on that, so "clicked the wrong
+        # element" and "clicked right, nothing happened" stop sharing a receipt.
+        # The point is frame-local — the same space the caller dispatched from
+        # and the space `objectId` lives in — so no re-mapping here.
+        hit = _hit_relation(ws, oid, click_local[0], click_local[1], msg_id=78)
+        if hit is not None:
+            landed = hit.get('relation') in ('self', 'descendant')
+            landed_source = 'post-dispatch elementFromPoint vs target node'
+        else:
+            # Node detached (navigation) or context gone: the read cannot
+            # answer, but the probe's promise is still real knowledge. Keep it
+            # and name where it came from rather than degrading to None.
+            landed = landed_probe
+            landed_source = 'pre-dispatch probe only (post-dispatch read failed)'
         evidence = {
             "element": _handle_label(entry),
             "role": entry.get("role"),
@@ -961,6 +977,9 @@ def cdp_click_handle(handle, page_sel=None):
                             "x": round(click_pt[0], 1), "y": round(click_pt[1], 1)},
             "read_back": "getBoundingClientRect via DOM.resolveNode",
             "source": "cdp_see(kind=a11y) handle map",
+            "element_at_point": hit,
+            "hit_relation": (hit or {}).get("relation"),
+            "landed_source": landed_source,
             "verified": True,
         }
         if is_child:
@@ -1381,6 +1400,12 @@ def cdp_click_do(action, app_name=None):
                                      're-checkable in 0.11.0')
             return {'method': 'cdp_click', 'xy': [x, y], 'page_index': idx,
                     'result': 'ok', 'verified': False,
+                    # 0.13.6: who sits under the point is the one fact this
+                    # path can state. It stays `landed` (the event had
+                    # somewhere to land) but says so in the caller's face, and
+                    # names why no hit/miss verdict accompanies it: a bare
+                    # coordinate declares no target to compare against.
+                    'element_at_point': at_point,
                     'resolved': state['resolved'], 'landed': state['landed'],
                     'effected': state['effected'], 'evidence': ev}
         finally:
@@ -1691,6 +1716,46 @@ def _element_matches(claim, at):
         if val and val in text_claim:
             return True
     return None if not (at.get('text') or at.get('name')) else False
+
+
+_HIT_REL_FN = (
+    "function(x,y){var e=document.elementFromPoint(x,y);"
+    "if(!e)return JSON.stringify({relation:'none'});"
+    "var r=(e===this)?'self':(this.contains(e)?'descendant':"
+    "(e.contains(this)?'ancestor':'other'));"
+    "return JSON.stringify({relation:r,tag:e.tagName,id:e.id||'',"
+    "text:((e.innerText||e.value||'')+'').slice(0,60)});}"
+)
+
+
+def _hit_relation(ws, object_id, x_css, y_css, msg_id=78):
+    """Who actually received the event at this point, relative to `object_id`.
+
+    Runs in the *node's own* execution context, so a frame-local point is the
+    right input for a frame node (the caller passes the frame-local point it
+    dispatched from). `relation` is one of:
+      self / descendant  — the event reached the claimed element (or inside it)
+      ancestor           — it landed on a container: the control was missed
+      other              — it landed on an unrelated element
+      none               — no element at that point
+    None means "could not tell" (context died, node detached after a
+    navigation, CDP error) — never a silent `other`.
+    """
+    try:
+        raw = cdp_call(ws, "Runtime.callFunctionOn",
+                       {"objectId": object_id,
+                        "functionDeclaration": _HIT_REL_FN,
+                        "arguments": [{"value": float(x_css)},
+                                      {"value": float(y_css)}],
+                        "returnByValue": True}, msg_id=msg_id, timeout=5)
+        value = ((raw or {}).get("result") or {}).get("value")
+    except Exception:
+        return None
+    try:
+        data = json.loads(value) if isinstance(value, str) else None
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _point_from_spec(ws, spec, msg_id=72):

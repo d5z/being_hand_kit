@@ -33,16 +33,22 @@ def _read(*parts):
 class TestVersion0135(unittest.TestCase):
 
     def test_version_bumped_everywhere(self):
+        """Historical lock: 0.13.5 shipped. The *current* version is checked by
+        the newest release test — pinning "the version is 0.13.5 forever" would
+        go red on every later bump and teach nothing."""
         init = _read("hand", "__init__.py")
-        self.assertIn('__version__ = "0.13.5"', init)
+        self.assertRegex(init, r'__version__ = "\d+\.\d+\.\d+"')
         manifest = _read("kit", "manifest.json")
-        self.assertIn('"version": "0.13.5"', manifest)
+        m = re.search(r'"version": "(\d+)\.(\d+)\.(\d+)"', manifest)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(tuple(int(x) for x in m.groups()), (0, 13, 5))
 
     def test_changelog_has_0135_entry(self):
         body = _read("CHANGELOG.md")
-        self.assertIn("## [0.13.5]", body)
-        head = body.split("## [")[1]
-        self.assertIn("0.13.5", head)
+        self.assertIn("## [0.13.5] — 2026-10-22", body)
+        # the entry must name the thing that changed, not just the version
+        section = body.split("## [0.13.5]")[1].split("## [")[0]
+        self.assertIn("effected", section)
 
     def test_two_channels_exist(self):
         self.assertTrue(callable(effect.grab_png))
