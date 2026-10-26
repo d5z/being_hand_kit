@@ -110,6 +110,32 @@ def _version():
         return __version__
     except Exception:
         return "unknown"
+
+def _manifest_version(base=None):
+    """What the installer / router believes this kit is.
+
+    The package literal answers "what am I now"; the manifest answers
+    "what am I taken to be". Nothing keeps the two equal (a bump that
+    touches one and not the other still parses, imports, and reports
+    green), so health names both and flags the fork instead of picking
+    one and staying silent.
+
+    Only a *sibling* manifest counts. Both real layouts put the manifest
+    beside the server (deployed kit: ./manifest.json; repo: kit/ beside
+    kit/mcp_server.py), so walking up the tree buys nothing and costs
+    correctness: 2026-10-26 a stray /tmp/manifest.json ("hand 6.9.0",
+    left by a publish fixture) was one directory above a temp probe and
+    would have been reported as this kit's installed version.
+    """
+    import json, pathlib
+    here = pathlib.Path(base) if base else pathlib.Path(__file__).resolve().parent
+    try:
+        return json.loads((here / "manifest.json").read_text()).get("version", "unknown")
+    except Exception:
+        return "absent"
+
+
+
 @mcp.tool()
 def cdp_open(url: str) -> dict:
     from hand.router import route_open
@@ -369,6 +395,14 @@ def health() -> dict:
         pages = list_pages()
         chrome_state = f"connected ({len(pages)} pages)" if pages else "no pages"
     except: chrome_state = "not reachable"
-    return {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count, "chrome": chrome_state, "hand_version": _version()}
+    pkg_v, man_v = _version(), _manifest_version()
+    out = {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count,
+           "chrome": chrome_state, "hand_version": pkg_v, "manifest_version": man_v}
+    if man_v not in ("absent", "unknown") and man_v != pkg_v:
+        out["version_fork"] = {
+            "package": pkg_v, "manifest": man_v,
+            "detail": "package literal and manifest disagree: 'what I am now' is not 'what I am taken to be'",
+        }
+    return out
 if __name__ == "__main__":
     mcp.run()

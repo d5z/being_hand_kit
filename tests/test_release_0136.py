@@ -58,7 +58,13 @@ class TestVersion0136(unittest.TestCase):
     def test_changelog_has_0136_entry(self):
         body = _read("CHANGELOG.md")
         self.assertIn("## [0.13.6]", body)
-        self.assertIn("0.13.6", body.split("## [")[1])
+        # Name the section, do not count to it. An index ("[1]") silently
+        # rebinds to whatever section was inserted above, which is the same
+        # class of brittleness as pinning the current version: the test goes
+        # red when the file is *correct*, and green when 0.13.6's text wanders
+        # into someone else's section.
+        section = "## [0.13.6]" + body.split("## [0.13.6]")[1].split("## [")[0]
+        self.assertIn("0.13.6", section)
 
 
 class TestReceiverReadback(unittest.TestCase):
