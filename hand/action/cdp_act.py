@@ -555,6 +555,63 @@ def _dpr_now(ws):
         return _get_dpr(ws)
 
 
+_DPR_DECL_RE = re.compile(r'@dpr=([0-9]*\.?[0-9]+)(?=@|$)')
+
+
+def _split_dpr_decl(spec):
+    """('412,188@dpr=2') → ('412,188', 2.0). No declaration → (spec, None).
+
+    A physical-pixel coordinate is *computed* under one devicePixelRatio and
+    *dispatched* under whatever the page reports at dispatch time. When those
+    two differ, the same number points at a different place on screen — and
+    nothing in the receipt can say so: `dpr` is printed, but not the dpr the
+    caller assumed when it did the multiplication. Declaring it here turns a
+    silent miss into a refusal.
+
+    The declaration may sit anywhere after the coordinates (before or after
+    `@expect=`): '412,188@dpr=2@expect=#save' and '412,188@expect=#save@dpr=2'
+    are the same string to this parser.
+    """
+    s = str(spec or '')
+    m = _DPR_DECL_RE.search(s)
+    if not m:
+        return s, None
+    try:
+        declared = float(m.group(1))
+    except ValueError:
+        return s, None
+    if declared <= 0:
+        return s, None
+    rest = (s[:m.start()] + s[m.end():]).strip().strip('@').strip()
+    return rest, declared
+
+
+def _dpr_decl_error(declared, runtime):
+    """Reason string when the caller's dpr assumption does not hold, else None.
+
+    `declared is None` means the caller made no claim — nothing to enforce.
+    An unreadable runtime dpr is *not* a pass: the declaration exists exactly
+    to prevent a silent misplacement, so guessing is the one thing we can't do.
+    """
+    if declared is None:
+        return None
+    try:
+        rt = float(runtime)
+    except (TypeError, ValueError):
+        rt = None
+    if rt is None or rt <= 0:
+        return ('coordinates were declared for dpr=%s but this page would not '
+                'report devicePixelRatio — refusing rather than guessing'
+                % declared)
+    if abs(rt - declared) < 1e-6:
+        return None
+    return ('dpr mismatch: coordinates were computed for dpr=%s but this page '
+            'reports dpr=%s — physical px do not transfer across dpr, so this '
+            'number lands on a different element. Refused before dispatch '
+            '(recompute under dpr=%s, or drop the @dpr= declaration to accept '
+            'the risk)' % (declared, rt, rt))
+
+
 def _viewport_size(ws, msg_id=33):
     """Viewport size in CSS px (`window.innerWidth/innerHeight`) → (size, known).
 
@@ -1264,6 +1321,10 @@ def cdp_click_do(action, app_name=None):
     - text= prefix: 'text=Learn more'
     - xy: prefix: 'xy:412,188' — physical pixels (CSS px × devicePixelRatio),
       same convention as interactive_map's {x, y}; feed those values straight in.
+      Optional `@dpr=<n>` declares the ratio the numbers were computed under:
+      if the page reports a different one at dispatch time, the click is
+      refused instead of silently landing somewhere else.
+      'xy:412,188@dpr=2@expect=#save' accepts both suffixes.
     """
     sel = action
     if looks_like_handle(action):
@@ -1409,6 +1470,7 @@ def cdp_click_do(action, app_name=None):
             ws.close()
     if action.startswith('xy:') or action.startswith('xy@'):
         spec = action[3:].strip()
+        spec, declared_dpr = _split_dpr_decl(spec)
         frame_ref = None
         expect_spec = None
         # 0.11.0 (S4) documented 'xy@img:<sha8>:X,Y' but only 'xy:' was ever
@@ -1438,13 +1500,18 @@ def cdp_click_do(action, app_name=None):
         except (ValueError, IndexError):
             return _receipt_fail('cdp_click',
                                  'invalid xy format, expected "xy:X,Y" '
-                                 '[@expect=<handle|selector>]', action=action)
+                                 '[@expect=<handle|selector>] [@dpr=<n>]', action=action)
         pages = list_pages()
         idx, page = resolve_page(None, pages)
         ws = cdp_connect(page['webSocketDebuggerUrl'])
         try:
             _init_domains(ws, 'Runtime')
             dpr = _get_dpr(ws)
+            decl_err = _dpr_decl_error(declared_dpr, dpr)
+            if decl_err:
+                return _receipt_fail('cdp_click', decl_err, action=action,
+                                     xy=[x, y], dpr_declared=declared_dpr,
+                                     dpr_runtime=dpr)
             frame = _frame_at(ws, msg_id=41)
             vp, vp_known = _viewport_size(ws, msg_id=42)
             in_viewport = None
@@ -1543,6 +1610,7 @@ def cdp_click_do(action, app_name=None):
             state = _three_state(in_viewport is not False, landed, 'no_readback')
             ev = {'verified': False, 'space': 'physical',
                   'dispatched': [x, y], 'dpr': dpr,
+                  'dpr_declared': declared_dpr,
                   'frame': frame, 'in_viewport': in_viewport,
                   'frame_ref': frame_ref,
                   'element_at_point': at_point_before,
@@ -2007,13 +2075,19 @@ def _point_from_spec(ws, spec, msg_id=72):
         return None, 'empty spec'
     dpr = _dpr_now(ws)
     if s.lower().startswith('xy:'):
+        # the declaration only exists for coordinates; a CSS selector that
+        # happens to end in '@dpr=2' is left untouched
+        s, declared_dpr = _split_dpr_decl(s)
+        decl_err = _dpr_decl_error(declared_dpr, dpr)
+        if decl_err:
+            return None, decl_err
         try:
             parts = s[3:].split(',')
             px, py = float(parts[0]), float(parts[1])
         except (ValueError, IndexError):
             return None, 'invalid xy spec %r, expected "xy:X,Y"' % s
         return {'x': px / dpr, 'y': py / dpr, 'how': 'xy',
-                'input': s, 'dpr': dpr}, None
+                'input': s, 'dpr': dpr, 'dpr_declared': declared_dpr}, None
     if looks_like_handle(s):
         entry = resolve_handle(s)
         if 'error' in entry:
