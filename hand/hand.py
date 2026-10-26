@@ -586,20 +586,45 @@ class Browser:
                 raw["error"] = f"could not write screenshot: {type(e).__name__}: {e}"
         return self._record(_receipt("shot", raw, extra=extra))
 
-    def close(self, timeout=8.0) -> dict:
+    def close(self, timeout=8.0, force=False) -> dict:
         """Shut the CDP browser down and read back that it is gone.
 
         Same protocol as the MCP `cdp_close` receipt (verified only when the
         endpoint stops answering); kept here so the Python face has an explicit
         teardown instead of leaving a Chrome behind.
+
+        Refuses to close a browser this install did not spawn (0.13.7): the
+        spawn record written by ensure_chrome() is the only place "whose" is
+        ever stated. force=True overrides when the caller knows.
         """
         try:
             from hand.perception.cdp_core import list_pages, cdp_connect, cdp_call
-            from hand.perception.cdp_launcher import chrome_running
+            from hand.perception.cdp_launcher import (
+                chrome_running, owner_status, close_refusal, clear_owner)
             pages = list_pages()
         except Exception as e:
             return self._record(_receipt("close", error=f"{type(e).__name__}: {e}"))
+        status = owner_status()
+        if status.get("owner") != "mine" and not force:
+            return self._record(_receipt("close", close_refusal(status)))
         closed = 0
+        # Browser.close is a browser-level command. Dispatching it once per page
+        # fails when there are zero page targets — a freshly spawned headless
+        # shell answers /json/version and /json with [], so the per-page loop
+        # closes nothing and a healthy close is reported as "still alive".
+        # (Found by tests/test_owner.py test_3, 2026-10-26.)
+        try:
+            from hand.perception.cdp_launcher import endpoint_info
+            info = endpoint_info() or {}
+            if info.get("webSocketDebuggerUrl"):
+                ws = cdp_connect(info["webSocketDebuggerUrl"])
+                try:
+                    cdp_call(ws, "Browser.close", {}, msg_id=1, timeout=5)
+                    closed += 1
+                finally:
+                    ws.close()
+        except Exception:
+            pass
         for page in pages:
             ws = None
             try:
@@ -626,6 +651,7 @@ class Browser:
         if gone:
             self.opened = False
             self.last_see = None
+            clear_owner()
         return self._record(_receipt("close", raw, extra={"pages": len(pages),
                                                           "closed": closed,
                                                           "endpoint_gone": gone}))
@@ -692,8 +718,8 @@ def shot(path=None, with_data=False):
     return browser().shot(path=path, with_data=with_data)
 
 
-def close(timeout=8.0):
-    return browser().close(timeout=timeout)
+def close(timeout=8.0, force=False):
+    return browser().close(timeout=timeout, force=force)
 
 
 def handles():

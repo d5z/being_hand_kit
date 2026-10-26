@@ -214,20 +214,43 @@ def cdp_open(url: str) -> dict:
     _bump()
     return route_open(url)
 @mcp.tool()
-def cdp_close() -> dict:
+def cdp_close(force: bool = False) -> dict:
     """Close Chrome and verify it is gone.
 
     Browser.close needs no domain enable; issuing `Browser.enable` first raised
     (no such method) and the close was silently skipped — a fake-ok found by the
     L6 crash tests. The receipt is verified only when GET /json/version stops
-    answering after the close."""
+    answering after the close.
+
+    Refuses (0.13.7) to close a browser this install did not spawn: the spawn
+    record written at launch is the only place "whose" is ever stated. On
+    2026-10-26 a teardown here took down a 166-day browser someone else started,
+    because the receipt could only say "the endpoint stopped answering"."""
     _bump()
     import time as _t
-    from hand.perception.cdp_launcher import chrome_running
+    from hand.perception.cdp_launcher import (
+        chrome_running, owner_status, close_refusal, clear_owner)
     try:
         from hand.perception.cdp_core import list_pages, cdp_connect, cdp_call
         pages = list_pages()
+        status = owner_status()
+        if status.get("owner") != "mine" and not force:
+            return close_refusal(status)
         closed = 0
+        # Browser-level first: a fresh headless shell has zero page targets, and
+        # the per-page loop would then close nothing (found by test_owner.py).
+        try:
+            from hand.perception.cdp_launcher import endpoint_info
+            info = endpoint_info() or {}
+            if info.get("webSocketDebuggerUrl"):
+                ws = cdp_connect(info["webSocketDebuggerUrl"])
+                try:
+                    cdp_call(ws, "Browser.close", {}, msg_id=1, timeout=5)
+                    closed += 1
+                finally:
+                    ws.close()
+        except Exception:
+            pass
         for page in pages:
             ws = None
             try:
@@ -252,6 +275,8 @@ def cdp_close() -> dict:
                             "read_back": "GET /json/version after Browser.close"}}
         if not gone:
             out["evidence"]["reason"] = "endpoint still alive after Browser.close"
+        if gone:
+            clear_owner()
         return out
     except Exception as e:
         return {"closed": "partial", "error": str(e), "verified": False,

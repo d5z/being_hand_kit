@@ -243,6 +243,177 @@ def _chrome_flags() -> list:
     return flags
 
 
+# ── Ownership of the browser on the debug port ──────────────────────────────
+# 2026-10-26: "I am connected to it" is not "I started it". A close that only
+# talks to whatever answers on :9222 will happily take down a browser somebody
+# else started (a 166-day orphan on this machine, killed by a teardown that
+# believed it was closing its own). The property "whose is this" cannot be read
+# back off the process table afterwards — ppid is 1 for everything that outlived
+# its parent — so it has to be written down at the moment of the spawn.
+#
+# The record is written by ensure_chrome() when *we* launch, and read by close
+# before it dispatches Browser.close. A close with no record, or with a record
+# whose pid/start-time no longer describes a live process, refuses to kill and
+# says so in the receipt instead of guessing.
+
+OWNER_FILE = os.path.join(os.path.expanduser("~"), ".hand-cdp-owner.json")
+
+
+def _owner_file():
+    """HAND_CDP_OWNER_FILE lets a test keep its own record (same reason
+    HAND_CDP_STATE_FILE exists: a hermetic test must not answer to the dev
+    machine's real spawn history)."""
+    return os.environ.get("HAND_CDP_OWNER_FILE") or OWNER_FILE
+
+
+def _proc_start_ticks(pid):
+    """Process start time in clock ticks since boot (Linux), else None.
+
+    pid alone is recyclable; pid + start time is not. macOS has no /proc, so
+    there the identity degrades to pid-only and the record says so."""
+    try:
+        with open(f"/proc/{int(pid)}/stat", encoding="utf-8") as f:
+            raw = f.read()
+        # comm may contain spaces/parens: split after the last ')'
+        return int(raw.rsplit(")", 1)[1].split()[19])
+    except Exception:
+        return None
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _proc_cmdline(pid):
+    """argv of a live process, or None when it cannot be read.
+
+    Linux: /proc/<pid>/cmdline. Elsewhere: ps. None means "no evidence either
+    way" — never "it isn't ours"."""
+    try:
+        with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
+            raw = f.read()
+        parts = [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
+        if parts:
+            return parts
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))],
+                             capture_output=True, text=True, timeout=5)
+        line = (out.stdout or "").strip()
+        return line.split() if line else None
+    except Exception:
+        return None
+
+
+def record_owner(proc, binary=None):
+    """Write the spawn record: who started the browser on this port, and when.
+
+    Deliberately a separate file from the session-page state: losing the page
+    record must not lose the ownership fact.
+
+    Scope: one record per *machine*, not per install — two hand installs on the
+    same box both spawn onto :9222, so "mine" means "a hand on this machine
+    spawned it and its process is still the one serving the port". Finer
+    attribution would need a per-install file and buys little: either way the
+    kill decision is "not a stranger"."""
+    try:
+        prof = profile_dir()
+    except Exception:
+        prof = None
+    rec = {
+        "pid": getattr(proc, "pid", None),
+        "start_ticks": _proc_start_ticks(getattr(proc, "pid", None)),
+        "cwd": os.getcwd(),
+        "binary": binary,
+        "profile": prof,
+        "port": CDP_PORT,
+        "spawned_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    try:
+        with open(_owner_file(), "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+    except Exception:
+        pass
+    return rec
+
+
+def read_owner():
+    try:
+        with open(_owner_file(), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def clear_owner():
+    try:
+        os.unlink(_owner_file())
+    except Exception:
+        pass
+
+
+def owner_status():
+    """Who owns the browser the endpoint is answering for?
+
+    'mine'      this install spawned it and the process still matches
+    'stranger'  a record exists but its process is gone or is a different one
+                (pid recycled, or the browser we started has died)
+    'unknown'   no record at all — we never recorded a spawn here
+    """
+    rec = read_owner()
+    if not rec:
+        return {"owner": "unknown", "record": None,
+                "reason": "no spawn record"}
+    pid = rec.get("pid")
+    alive = _pid_alive(pid) if pid else False
+    if not alive:
+        return {"owner": "stranger", "record": rec, "pid_alive": False,
+                "reason": "recorded process is not alive"}
+    now_ticks = _proc_start_ticks(pid)
+    recorded = rec.get("start_ticks")
+    if recorded is not None and now_ticks is not None and now_ticks != recorded:
+        return {"owner": "stranger", "record": rec, "pid_alive": True,
+                "start_ticks_now": now_ticks,
+                "reason": "pid was recycled (start time differs)"}
+    # A live pid with matching start time still has to be a browser *serving
+    # this port* — otherwise "a process we started" would be enough to justify
+    # killing whatever answers on :9222, which is the mistake this module exists
+    # to prevent. Unreadable argv is no evidence either way (macOS other-user
+    # processes): say so instead of pretending it was checked.
+    cmd = _proc_cmdline(pid)
+    flag = f"--remote-debugging-port={CDP_PORT}"
+    if cmd is not None and not any(flag in a for a in cmd):
+        return {"owner": "stranger", "record": rec, "pid_alive": True,
+                "cmdline_checked": True,
+                "reason": f"pid {pid} is alive but is not serving {flag}"}
+    return {"owner": "mine", "record": rec, "pid_alive": True,
+            "start_ticks_now": now_ticks,
+            "cmdline_checked": cmd is not None}
+
+
+def close_refusal(status):
+    """The receipt a close returns when it declines to kill someone else's browser."""
+    return {
+        "closed": "refused",
+        "endpoint_gone": False,
+        "verified": False,
+        "owner": status.get("owner"),
+        "evidence": {
+            "verified": False,
+            "refused": True,
+            "owner": status,
+            "reason": ("the endpoint on this port is not a browser this install "
+                       "spawned; refusing to close it. Pass force=true only if "
+                       "you know whose it is."),
+        },
+    }
+
+
 def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
     """
     Guarantee a CDP endpoint on localhost:9222.
@@ -306,6 +477,10 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
             proc.cdp_flags = flags
             proc.cdp_profile = {"dir": profile_dir(), "mode": profile_mode(),
                                 "headless": headless(), "binary": chrome}
+            # Ownership is written at birth, not inferred later (0.13.7): the
+            # receipt for a later close can only say "mine" if something said
+            # so at the moment of the spawn.
+            proc.cdp_owner = record_owner(proc, chrome)
             # 0.13: a fresh browser instance invalidates the recorded session
             # page — target ids belong to the old process. Clearing the record
             # is what keeps the next resolve on the "no session page yet" path
@@ -325,6 +500,9 @@ def ensure_chrome(url: str = "about:blank") -> subprocess.Popen | None:
         proc.kill()
     except Exception as e:
         kill_error = f"{type(e).__name__}: {e}"
+    # A record pointing at a process that never answered would make the next
+    # close report "stranger" for our own failure; drop it here.
+    clear_owner()
 
     msg = (
         f"Chrome spawned but CDP endpoint never became reachable at {CDP_HOST} "
