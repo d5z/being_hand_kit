@@ -130,9 +130,18 @@ def _manifest_version(base=None):
     import json, pathlib
     here = pathlib.Path(base) if base else pathlib.Path(__file__).resolve().parent
     try:
-        return json.loads((here / "manifest.json").read_text()).get("version", "unknown")
-    except Exception:
+        data = json.loads((here / "manifest.json").read_text())
+    except FileNotFoundError:
+        # A source checkout has no manifest. That is "not applicable",
+        # not "unknown" -- see _startup_version_notice.
         return "absent"
+    except Exception:
+        # Present but unreadable / not JSON. Different fact, different word:
+        # collapsed into "absent" on 2026-10-26 until a broken manifest
+        # reported the same reading as no manifest at all.
+        return "unknown"
+    v = data.get("version") if isinstance(data, dict) else None
+    return v if isinstance(v, str) and v else "unknown"
 
 
 def _startup_version_notice(base=None):

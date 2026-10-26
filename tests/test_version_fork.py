@@ -56,10 +56,33 @@ class VersionFork(unittest.TestCase):
             self.assertEqual(_load()._manifest_version(base=d), "absent")
 
     def test_unreadable_manifest_does_not_raise(self):
+        """Present but unreadable is 'unknown', not 'absent'.
+
+        Collapsed into one word until 2026-10-26: a broken manifest and no
+        manifest reported the same reading, so "this kit declares nothing"
+        and "this kit declares something I cannot read" were indistinguishable
+        — the same shape as everything else that broke today.
+        """
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "manifest.json").write_text("{not json")
+            self.assertEqual(_load()._manifest_version(base=d), "unknown")
+
+    def test_manifest_without_version_key_is_unknown(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "manifest.json").write_text('{"name": "hand"}')
+            self.assertEqual(_load()._manifest_version(base=d), "unknown")
+
+    def test_absent_and_unknown_stay_apart(self):
+        """Three states must stay three words: absent / unknown / a version."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_load()._manifest_version(base=d), "absent")
+            (pathlib.Path(d) / "manifest.json").write_text("{not json")
+            self.assertEqual(_load()._manifest_version(base=d), "unknown")
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": "9.9.9"}')
+            self.assertEqual(_load()._manifest_version(base=d), "9.9.9")
 
     def test_repo_manifest_matches_package_literal(self):
         """Today the two agree — by hand, every bump. This is the check, not the mechanism."""
