@@ -192,3 +192,23 @@ doesn't auto-recover after timeout death. Tool registry needs Portal-side fix.
 **Known:** 两个 repo 均无 remote。开源时再决定是否用 submodule 关联。
 
 **Next:** 推 GitHub 开源（泽平定）。Grove publish 完整 bundle 上传通道仍卡在 http body 大小限制。
+
+---
+
+## 2026-10-26 — 坐标的「出生 dpr」可声明，不符即拒（0.13.7 第四刀）
+
+**Decision:** `xy:X,Y@dpr=<n>` — 调用方把自己计算 physical 坐标时用的 `devicePixelRatio` 一并交出来。派发前读运行时的 dpr，不符则**在派发前拒绝**，回执同时印两个数。不声明 = 保持今日行为（向后兼容）。拖拽路径（`_point_from_spec`）加同一道闸。
+
+**Why:** 一个 physical 坐标携带着它被算出来时的 dpr，但值本身不携带。hand 在派发时现读 dpr 并除它——算术正确，配对错误。在 dpr=2 下算出、扔到 dpr=1 的页面上，落点是意图位置的一半，回执照样 `result: ok`。回执只印一个 dpr，因此内部永远自洽、因而永远发现不了：**自洽即失明**。
+
+**Changes:**
+- `hand/action/cdp_act.py`：`_split_dpr_decl` / `_dpr_decl_error`；xy 分支与拖拽点解析各接一道
+- 运行时 dpr 读不到 → **不放过**（声明存在的意义就是防止静默错位，猜是唯一不能做的事）
+- `tests/test_dpr_decl.py`（17 条，注册进 run_tests.MODULES）：拒绝路径走真实 `cdp_click_do` 路由器、CDP 面 mock，并断言 `_click_at` 从未被调用——「拒绝了却还是点了」正是这一刀要关的 bug
+- `xy:412,188@dpr=2@expect=#save` 两种后缀任一顺序都接受
+
+**Test result:** 733/733 OK（26.0s，716 + 17）。真页实测：dpr=9 声明 → 拒绝且未派发；声明等于运行时 → 正常派发。
+
+**Known:** 值→出处这一格只在「调用方主动声明」时才被填上；不声明的调用仍然只得到自洽的读数。要让这一格无逃逸，得让 `cdp_see` 的坐标本身带上出生 dpr（下一步）。
+
+**Next:** 未推、未打包、未部署（等一句话）。`cdp_see` 坐标自带 dpr 标签；非整数档位（1.25/1.5/2.625）与跨档混用实测。
