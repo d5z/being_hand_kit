@@ -212,3 +212,40 @@ doesn't auto-recover after timeout death. Tool registry needs Portal-side fix.
 **Known:** 值→出处这一格只在「调用方主动声明」时才被填上；不声明的调用仍然只得到自洽的读数。要让这一格无逃逸，得让 `cdp_see` 的坐标本身带上出生 dpr（下一步）。
 
 **Next:** 未推、未打包、未部署（等一句话）。`cdp_see` 坐标自带 dpr 标签；非整数档位（1.25/1.5/2.625）与跨档混用实测。
+
+---
+
+## 2026-10-26 — 所有权写在出生那一刻（0.13.7 第六腿）
+
+**问题**：`close` 只跟 :9222 上答话的那个浏览器说话。今晚它关掉了别人 166 天前起的
+进程，回执写「端点没了」——真话，但少了「谁的」这一格。而这格事后读不回来：
+凡是活过父进程的，ppid 都是 1。
+
+**改法**：所有权在 spawn 那一刻写进 `~/.hand-cdp-owner.json`
+（`HAND_CDP_OWNER_FILE` 可覆盖，与状态文件同法）：
+
+```
+{pid, start_ticks, cwd, binary, profile, port, spawned_at}
+```
+
+`owner_status()` 三档：
+
+| 判定 | 条件 |
+|---|---|
+| `mine` | 记录里那个 pid 活着、start_ticks 一致，**且 argv 里真带 `--remote-debugging-port=<port>`** |
+| `stranger` | pid 不在 / start_ticks 变了（pid 被复用）/ 活着但不是那个端口上的浏览器 |
+| `unknown` | 没有记录 |
+
+第三格是关键：`mine` 不能只等于「我起过一个进程」，得等于「这个端口上那个浏览器就是我起的」。
+argv 读不到（别的用户的进程）记 `cmdline_checked: false`，不冒充查过。
+
+**close 两处（`hand.close` / kit `cdp_close`）**：非 `mine` 一律拒，回执
+`verified:false` + `evidence.owner` 全量记录；`force=True` 才放行。
+
+**顺带修掉一个真 bug**：`Browser.close` 原来按 *page* 逐个派发。新起的 headless shell
+`/json` 是 `[]`，一个 page 都没有 ⇒ 什么都没关，回执报「端点还活着」。
+改成先走 browser 级 ws（`/json/version` 的 webSocketDebuggerUrl），page 循环降为兜底。
+
+**验证**：`tests/test_owner.py` 11 条（三档 + 拒绝回执形状 + 真路径：spawn → 篡改记录 →
+close 必须拒且浏览器仍在跑 → 恢复记录后 close 通过并清记录）。全量 749 tests OK / 30.7s。
+本地 commit `05ceac3`，仍未推、未打包，活体仍 0.13.5。
