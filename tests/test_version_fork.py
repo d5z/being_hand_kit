@@ -96,14 +96,24 @@ class VersionFork(unittest.TestCase):
 
     def test_fork_cause_separates_disk_movement_from_long_standing(self):
         """The two separable causes of a fork must not wear one word."""
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            (pathlib.Path(d) / "manifest.json").write_text('{"version": "0.0.1"}')
-            m = _load()
+        m = _load()
+        start = m._MANIFEST_AT_START
+        try:
+            m._MANIFEST_AT_START = ("ok", None, "0.0.1")
             self.assertEqual(m._fork_cause("0.0.1"), "long_standing")
             self.assertEqual(m._fork_cause("0.0.2"), "changed_since_start")
+            # no readable manifest at start -> we genuinely cannot say
             m._MANIFEST_AT_START = ("absent", None, None)
             self.assertEqual(m._fork_cause("0.0.2"), "unknown")
+        finally:
+            m._MANIFEST_AT_START = start
+
+    def test_start_reading_is_captured_at_import_not_at_call(self):
+        """Without an import-time capture the two causes are indistinguishable."""
+        m = _load()
+        self.assertIsInstance(m._MANIFEST_AT_START, tuple)
+        self.assertEqual(len(m._MANIFEST_AT_START), 3)
+        self.assertEqual(m._MANIFEST_AT_START[0], m._manifest_state()[0])
 
     def test_absent_and_unknown_stay_apart(self):
         """Four states must stay four words: absent / unreadable / no_version_key / a version."""
