@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys, os, json, time
+import pathlib
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # Support two layouts:
 #   dev:    <root>/kit/mcp_server.py  -> hand at <root>/hand  (../hand)
