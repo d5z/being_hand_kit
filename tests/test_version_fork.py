@@ -20,6 +20,7 @@ green with an unchanged count is the signature of "absent", not "passing".
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "kit"))
@@ -77,6 +78,29 @@ class VersionFork(unittest.TestCase):
         head = "## [" + body.split("## [")[1]
         self.assertIn(_load()._version(), head,
                       "bump CHANGELOG.md in the same commit as the two version literals")
+
+    # ── the edge that exists outside the repo ──────────────────────────
+    # A Grove install has no tests/ directory (Neuromancer, 2026-10-26).
+    # Everything above only runs in a checkout; the startup notice is the
+    # only fork check that survives into the artifact users actually run.
+
+    def test_startup_notice_is_silent_when_versions_agree(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "manifest.json").write_text(
+                json.dumps({"version": _load()._version()}))
+            self.assertIsNone(_load()._startup_version_notice(base=d))
+
+    def test_startup_notice_names_the_fork(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "manifest.json").write_text(json.dumps({"version": "9.9.9"}))
+            notice = _load()._startup_version_notice(base=d)
+        self.assertIn("version fork", notice)
+        self.assertIn("9.9.9", notice)
+        self.assertIn(_load()._version(), notice)
+
+    def test_startup_notice_absent_manifest_is_not_a_fork(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(_load()._startup_version_notice(base=d))
 
 
 if __name__ == "__main__":

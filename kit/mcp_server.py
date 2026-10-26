@@ -135,6 +135,25 @@ def _manifest_version(base=None):
         return "absent"
 
 
+def _startup_version_notice(base=None):
+    """One line, on stderr, only when the two versions disagree.
+
+    Why here and not in a test: the installed kit ships without `tests/`
+    (verified by Neuromancer on a Grove install, 2026-10-26), so every
+    assertion in the repo is invisible on a user's machine. This runs in
+    the artifact that actually gets installed, on the only event every
+    install is guaranteed to have — the server starting.
+
+    stderr, never stdout: stdio MCP uses stdout for JSON-RPC.
+    """
+    pkg_v = _version()
+    man_v = _manifest_version(base)
+    if man_v in ("absent", "unknown") or man_v == pkg_v:
+        return None
+    return (f"[hand] version fork: package={pkg_v} manifest={man_v} — "
+            "what this kit is now and what it is taken to be disagree")
+
+
 
 @mcp.tool()
 def cdp_open(url: str) -> dict:
@@ -405,4 +424,7 @@ def health() -> dict:
         }
     return out
 if __name__ == "__main__":
+    _notice = _startup_version_notice()
+    if _notice:
+        print(_notice, file=sys.stderr)
     mcp.run()
