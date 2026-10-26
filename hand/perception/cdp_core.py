@@ -102,10 +102,32 @@ def _resolve_session_page(pages):
             if (p.get('url') or '').startswith(url[:120]): return i, p
     if not pid and not url and isinstance(idx, int) and 0 <= idx < len(pages):
         return idx, pages[idx]             # legacy record: index is all we have
+    # The recorded page is gone. With MORE than one page open, guessing would be
+    # exactly the silent-wrong-page failure this function exists to prevent. But
+    # with exactly ONE page there is nothing to be ambiguous about, and the old
+    # behaviour was a dead end: every call raised, while the message pointed at
+    # recoveries ("pass page_sel", "run one see/click") that need this very
+    # function to succeed first. Measured 2026-10-26: a record left behind by a
+    # page that had been closed blacked out the whole tool surface (health green,
+    # every cdp_* raising) until the state file was edited by hand.
+    if len(pages) == 1:
+        healed = dict(st)
+        healed.update({'idx': 0, 'id': pages[0].get('id'),
+                       'url': (pages[0].get('url') or '')[:300],
+                       'healed_from': {'id': pid, 'url': (url or '')[:300]}})
+        try:
+            os.makedirs(tempfile.gettempdir(), exist_ok=True)
+            with open(_state_file(), 'w', encoding="utf-8") as f:
+                f.write(json.dumps(healed))
+        except Exception:
+            pass
+        return 0, pages[0]
     raise RuntimeError(
-        "Session page is gone (recorded id=%s url=%s); %d page(s) open now. "
-        "Pass an explicit page_sel, or run one see/click to set a new session page."
-        % (pid or '-', (url or '-')[:80], len(pages)))
+        "Session page is gone (recorded id=%s url=%s); %d page(s) open now, so "
+        "hand will not guess which one you meant. Clear the session record "
+        "(%d page(s) left it ambiguous) to start a fresh session; with a single "
+        "open page this heals itself."
+        % (pid or '-', (url or '-')[:80], len(pages), len(pages)))
 def resolve_page(selector, pages):
     if not pages: raise RuntimeError('No open pages')
     if selector is None or selector == 'first':

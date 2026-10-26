@@ -11,6 +11,12 @@ Three behaviours are locked here:
   1. a recorded page is found by id even after the list has been reordered
   2. a recorded page that is gone RAISES — it never falls back to pages[0]
   3. a record written by an older build (bare index) is still usable
+
+A fourth followed the 2026-10-26 blackout:
+  4. if the record is stale but exactly ONE page is open, it heals in place
+     (and keeps `healed_from`), because with a single page nothing can be
+     silently substituted — while raising there was a dead end: every cdp_*
+     call failed and the suggested recoveries needed the same call to work.
 """
 import json
 import os
@@ -85,6 +91,30 @@ class TestSessionPageIdentity(unittest.TestCase):
         self.assertEqual(st["id"], "b")
         self.assertEqual(st["idx"], 1)
         self.assertTrue(st["url"].startswith("https://example.test/b"))
+
+    # ── 0.13.8: a stale record with exactly one page open heals instead of
+    #    blacking out. Measured 2026-10-26: record named a page that had been
+    #    closed, health stayed green, and EVERY cdp_* call raised — the message
+    #    pointed at recoveries that need this same function to succeed first.
+    def test_stale_record_heals_when_exactly_one_page_is_open(self):
+        self._write_raw({"idx": 0, "id": "gone", "url": "https://gone.test/"})
+        only = _page("only", "https://example.test/only")
+        idx, page = core.resolve_page(None, [only])
+        self.assertEqual((idx, page["id"]), (0, "only"))
+        st = json.loads(open(self.path, encoding="utf-8").read())
+        self.assertEqual(st["id"], "only")                     # record healed
+        self.assertIn("example.test/only", st["url"])
+        self.assertEqual(st["healed_from"]["id"], "gone")      # keeps the trace
+        self.assertTrue(st["healed_from"]["url"].startswith("https://gone.test"))
+
+    def test_healed_record_survives_a_second_call(self):
+        self._write_raw({"idx": 0, "id": "gone", "url": "https://gone.test/"})
+        core.resolve_page(None, [_page("only")])
+        # Second call must read the healed record, not heal again.
+        idx, page = core.resolve_page(None, [_page("only")])
+        self.assertEqual((idx, page["id"]), (0, "only"))
+        st = json.loads(open(self.path, encoding="utf-8").read())
+        self.assertEqual(st["healed_from"]["id"], "gone")
 
 
 if __name__ == "__main__":
