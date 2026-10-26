@@ -69,6 +69,15 @@ class VersionFork(unittest.TestCase):
                          _load()._version(),
                          "bump hand/__init__.py and kit/manifest.json in the same commit")
 
+    def test_changelog_head_is_this_version(self):
+        """Third written source (Neuromancer, 2026-10-26): the changelog's first
+        section names the version too. Comments are not checkable; this is."""
+        root = pathlib.Path(__file__).resolve().parent.parent
+        body = (root / "CHANGELOG.md").read_text()
+        head = "## [" + body.split("## [")[1]
+        self.assertIn(_load()._version(), head,
+                      "bump CHANGELOG.md in the same commit as the two version literals")
+
 
 if __name__ == "__main__":
     unittest.main()
