@@ -1178,21 +1178,50 @@ def cdp_click(selector, page_sel=None):
             info = _element_info(ws, selector)
         x, y = info['x'], info['y']
         dpr = _get_dpr(ws)
+        # 0.13.7 — a click must reach the page's handler exactly once.
+        #
+        # Before this, the selector branch fired the handler up to THREE times:
+        # real mouse (trusted), `el.click()` (untrusted), then `el.onclick()`
+        # from _js_submit — a direct handler call that dispatches **no click
+        # event at all**. Measured on a page with an inline onclick:
+        #   window.n = 3   but   document-level click listeners saw 2
+        # So a page's own analytics/listeners cannot even see the third one;
+        # an "add to cart" ran three times while reporting one verified click.
+        #
+        # The escalations were meant as fallbacks for a click that lands but is
+        # ignored. They ran unconditionally after a click that had already
+        # succeeded — pre-emptive redundancy, not fallback. Now: dispatch the
+        # real click, *ask the page* whether it landed, and escalate at most
+        # once, only on evidence of nothing landing.
+        probe = _install_click_probe(ws, selector, msg_id=5)
         _click_at(ws, x, y, dpr)
-        _js_click(ws, selector, msg_id=10)
-        # 输入元素（input/textarea）只聚焦不提交：_js_focus_enter 触发 Enter 键、
-        # _js_submit 触发 form.submit()，对搜索框这类输入框是破坏性的（提交空查询、
-        # 清空焦点）。只有动作元素（button/a）才需要这两步真正触发动作。
+        seen = _read_click_probe(ws, msg_id=6)
+        escalation = _click_escalation(seen['trusted'], seen['untrusted'])
+        if escalation == 'js_click':
+            _js_click(ws, selector, msg_id=10)
+            seen = _read_click_probe(ws, msg_id=11)
+            if seen['trusted'] == 0 and seen['untrusted'] == 0 and seen['has_form']:
+                escalation = 'request_submit'
+                _js_request_submit(ws, selector, msg_id=12)
+        _clear_click_probe(ws, msg_id=13)
         tag = (info.get('tag') or '').upper()
         if tag not in ('INPUT', 'TEXTAREA'):
+            # Kept for pages that submit on Enter, but never as a click
+            # substitute: it dispatches keydown/keyup, not a click.
             _js_focus_enter(ws, selector, msg_id=15)
-            _js_submit(ws, selector, msg_id=20)
 
         _write_last(idx)
         ev = _element_evidence(info)
         ev['verified'] = True
         ev['selector'] = selector
         ev['read_back'] = 'document.querySelector hit + getBoundingClientRect'
+        ev['dispatch'] = {
+            'trusted_clicks': seen['trusted'],
+            'untrusted_clicks': seen['untrusted'],
+            'probe': 'capture-phase listener installed before dispatch, removed after',
+            'escalation': escalation,
+            'dispatches': 1 + (1 if escalation != 'none' else 0),
+        }
         return {'method': 'cdp_click', 'selector': selector, 'page_index': idx,
                 'result': 'ok', 'tiers': '4-tier',
                 'verified': True, 'evidence': ev}
@@ -1286,6 +1315,74 @@ def cdp_type(selector, text, page_sel=None, fast=False):
                 'verified': True, 'evidence': ev}
     finally:
         ws.close()
+
+def _js_request_submit(ws, selector, msg_id):
+    """Submit the owning form the way the browser does it (fires `submit`)."""
+    expr = ('(function(){var el=document.querySelector(' + json.dumps(selector) + ');'
+            'if(!el||!el.form)return JSON.stringify({error:"no form"});'
+            'if(el.form.requestSubmit)el.form.requestSubmit();else el.form.submit();'
+            'return JSON.stringify({result:"request_submit ok"});'
+            '})()')
+    cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+
+
+def _install_click_probe(ws, selector, msg_id):
+    """Install a capture-phase click listener *before* dispatching the mouse.
+
+    The instrument has to be in place before the event, or it records the
+    absence of something that already happened (the same mistake as listening
+    for a keydown after the key was pressed — `[]` is then the only possible
+    output and means nothing).
+    """
+    expr = ('(function(){var el=document.querySelector(' + json.dumps(selector) + ');'
+            'if(!el)return JSON.stringify({error:"element not found"});'
+            'window.__handProbe={el:el,trusted:0,untrusted:0,has_form:!!el.form};'
+            'window.__handProbeH=function(e){var p=window.__handProbe;'
+            'if(!p||!p.el)return;'
+            'if(e.target===p.el||(p.el.contains&&p.el.contains(e.target))){'
+            'if(e.isTrusted)p.trusted++;else p.untrusted++;}};'
+            'document.addEventListener("click",window.__handProbeH,true);'
+            'return JSON.stringify({result:"probe installed"});'
+            '})()')
+    cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+
+
+def _read_click_probe(ws, msg_id):
+    """Count what actually reached the element (trusted real-mouse vs JS click)."""
+    expr = ('(function(){var p=window.__handProbe||{};'
+            'return JSON.stringify({trusted:p.trusted||0,untrusted:p.untrusted||0,'
+            'has_form:!!p.has_form});})()')
+    raw = cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+    try:
+        val = raw['result'].get('value') or '{}'
+        data = json.loads(val)
+    except Exception:
+        data = {}
+    return {'trusted': int(data.get('trusted') or 0),
+            'untrusted': int(data.get('untrusted') or 0),
+            'has_form': bool(data.get('has_form'))}
+
+
+def _clear_click_probe(ws, msg_id):
+    expr = ('(function(){try{document.removeEventListener("click",window.__handProbeH,true);}'
+            'catch(e){}delete window.__handProbeH;delete window.__handProbe;'
+            'return JSON.stringify({result:"probe removed"});})()')
+    cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+
+
+def _click_escalation(trusted, untrusted):
+    """Escalate only on evidence that the real mouse click did not land.
+
+    A trusted click landing on the element means the page's own handler ran —
+    doing anything else on top of it is a second execution of the same user
+    intent, which is exactly the bug this replaces.
+    """
+    if trusted > 0:
+        return 'none'
+    if untrusted > 0:
+        return 'none'          # a JS click already landed; don't stack another
+    return 'js_click'
+
 
 def _js_click(ws, selector, msg_id):
     expr = ('(function(){var el=document.querySelector(' + json.dumps(selector) + ');'
