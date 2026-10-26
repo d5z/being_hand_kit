@@ -111,8 +111,8 @@ def _version():
     except Exception:
         return "unknown"
 
-def _manifest_version(base=None):
-    """What the installer / router believes this kit is.
+def _manifest_state(base=None):
+    """What the installer / router believes this kit is — as (state, detail, version).
 
     The package literal answers "what am I now"; the manifest answers
     "what am I taken to be". Nothing keeps the two equal (a bump that
@@ -120,28 +120,71 @@ def _manifest_version(base=None):
     green), so health names both and flags the fork instead of picking
     one and staying silent.
 
+    Why four states and not "a version or absent": they call for different
+    repairs — absent -> the kit is being run from a source checkout, so
+    there is nothing to fix; unreadable -> permissions or a corrupt file;
+    no_version_key -> the manifest itself is wrong; ok -> compare.
+
+    Why a state field that is always present, with the value only inside
+    `ok`: a key that is sometimes missing cannot be told apart from an old
+    build that never had the feature. 2026-10-26, twice in one day: first
+    a broken manifest reported "absent" (same word as none at all), then
+    "field missing" was asked to carry "no manifest" and "old version".
+
     Only a *sibling* manifest counts. Both real layouts put the manifest
     beside the server (deployed kit: ./manifest.json; repo: kit/ beside
     kit/mcp_server.py), so walking up the tree buys nothing and costs
     correctness: 2026-10-26 a stray /tmp/manifest.json ("hand 6.9.0",
     left by a publish fixture) was one directory above a temp probe and
-    would have been reported as this kit's installed version.
+    would have been reported as the installed version. It exists to catch
+    a broken *scene*, not a normal install.
     """
-    import json, pathlib
-    here = pathlib.Path(base) if base else pathlib.Path(__file__).resolve().parent
+    here = pathlib.Path(base) if base is not None else pathlib.Path(__file__).resolve().parent
+    path = here / "manifest.json"
     try:
-        data = json.loads((here / "manifest.json").read_text())
+        raw = path.read_text()
     except FileNotFoundError:
-        # A source checkout has no manifest. That is "not applicable",
-        # not "unknown" -- see _startup_version_notice.
-        return "absent"
+        return ("absent", None, None)
     except Exception:
-        # Present but unreadable / not JSON. Different fact, different word:
-        # collapsed into "absent" on 2026-10-26 until a broken manifest
-        # reported the same reading as no manifest at all.
+        return ("unreadable", "open_failed", None)
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return ("unreadable", "invalid_json", None)
+    if not isinstance(data, dict):
+        return ("no_version_key", "not_an_object", None)
+    if "version" not in data:
+        return ("no_version_key", "key_missing", None)
+    v = data["version"]
+    if v is None:
+        return ("no_version_key", "version_is_null", None)
+    if not isinstance(v, str):
+        return ("no_version_key", "version_not_str", None)
+    if not v.strip():
+        # "" and "   " are one state on purpose: same repair. Merging two
+        # cases that lead to the same action is right; merging two that
+        # lead to different actions is how today went wrong.
+        return ("no_version_key", "version_is_empty", None)
+    return ("ok", None, v)
+
+
+def _manifest_version(base=None):
+    """Backward-compatible shorthand: the version when we have one, else the state word."""
+    state, _detail, ver = _manifest_state(base)
+    return ver if state == "ok" else state
+
+
+# Captured at import time, next to `hand_version`. The pair is what lets a
+# fork say *when* the disagreement started; without it "disk changed" and
+# "has been wrong since launch" wear the same word.
+_MANIFEST_AT_START = _manifest_state()
+
+
+def _fork_cause(man_now):
+    state_at_start, _d, ver_at_start = _MANIFEST_AT_START
+    if state_at_start != "ok":
         return "unknown"
-    v = data.get("version") if isinstance(data, dict) else None
-    return v if isinstance(v, str) and v else "unknown"
+    return "long_standing" if ver_at_start == man_now else "changed_since_start"
 
 
 def _startup_version_notice(base=None):
@@ -156,8 +199,8 @@ def _startup_version_notice(base=None):
     stderr, never stdout: stdio MCP uses stdout for JSON-RPC.
     """
     pkg_v = _version()
-    man_v = _manifest_version(base)
-    if man_v in ("absent", "unknown") or man_v == pkg_v:
+    state, _detail, man_v = _manifest_state(base)
+    if state != "ok" or man_v == pkg_v:
         return None
     return (f"[hand] version fork: package={pkg_v} manifest={man_v} — "
             "what this kit is now and what it is taken to be disagree")
@@ -423,13 +466,27 @@ def health() -> dict:
         pages = list_pages()
         chrome_state = f"connected ({len(pages)} pages)" if pages else "no pages"
     except: chrome_state = "not reachable"
-    pkg_v, man_v = _version(), _manifest_version()
+    pkg_v = _version()
+    mv_state, mv_detail, man_v = _manifest_state()
     out = {"status": "alive", "uptime_seconds": int(time.time() - _started_at), "calls": _call_count,
-           "chrome": chrome_state, "hand_version": pkg_v, "manifest_version": man_v}
-    if man_v not in ("absent", "unknown") and man_v != pkg_v:
+           "chrome": chrome_state, "hand_version": pkg_v,
+           "manifest_version_state": mv_state}
+    if mv_detail is not None:
+        out["manifest_version_detail"] = mv_detail
+    if mv_state == "ok":
+        out["manifest_version"] = man_v
+    if mv_state == "ok" and man_v != pkg_v:
         out["version_fork"] = {
             "package": pkg_v, "manifest": man_v,
             "detail": "package literal and manifest disagree: 'what I am now' is not 'what I am taken to be'",
+            # `hand_version` is fixed at import; the manifest is re-read every
+            # call. So a fork has three causes and only two are separable here:
+            #   long_standing   — the manifest said this when we started too
+            #   changed_since_start — the disk moved under a running process
+            #   unknown         — we had no readable manifest at start
+            # The third, "you are reading a different copy than you think",
+            # cannot be answered from inside the process at all.
+            "cause": _fork_cause(man_v),
         }
     return out
 if __name__ == "__main__":

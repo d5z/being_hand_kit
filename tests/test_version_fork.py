@@ -56,7 +56,7 @@ class VersionFork(unittest.TestCase):
             self.assertEqual(_load()._manifest_version(base=d), "absent")
 
     def test_unreadable_manifest_does_not_raise(self):
-        """Present but unreadable is 'unknown', not 'absent'.
+        """Present but unreadable is its own state, not 'absent'.
 
         Collapsed into one word until 2026-10-26: a broken manifest and no
         manifest reported the same reading, so "this kit declares nothing"
@@ -66,21 +66,52 @@ class VersionFork(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "manifest.json").write_text("{not json")
-            self.assertEqual(_load()._manifest_version(base=d), "unknown")
+            self.assertEqual(_load()._manifest_state(base=d), ("unreadable", "invalid_json", None))
+            self.assertEqual(_load()._manifest_version(base=d), "unreadable")
 
-    def test_manifest_without_version_key_is_unknown(self):
+    def test_manifest_without_version_key_is_its_own_state(self):
+        """unreadable and no_version_key call for different repairs, so: different words."""
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "manifest.json").write_text('{"name": "hand"}')
-            self.assertEqual(_load()._manifest_version(base=d), "unknown")
+            self.assertEqual(_load()._manifest_state(base=d), ("no_version_key", "key_missing", None))
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": null}')
+            self.assertEqual(_load()._manifest_state(base=d), ("no_version_key", "version_is_null", None))
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": 13}')
+            self.assertEqual(_load()._manifest_state(base=d), ("no_version_key", "version_not_str", None))
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": "   "}')
+            self.assertEqual(_load()._manifest_state(base=d), ("no_version_key", "version_is_empty", None))
+
+    def test_two_cases_merge_only_when_the_repair_is_the_same(self):
+        """'' and '   ' are one state on purpose; '' and a missing key are not."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": ""}')
+            a = _load()._manifest_state(base=d)
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": "   "}')
+            b = _load()._manifest_state(base=d)
+            self.assertEqual(a, b)
+            (pathlib.Path(d) / "manifest.json").write_text('{"name": "hand"}')
+            self.assertNotEqual(a, _load()._manifest_state(base=d))
+
+    def test_fork_cause_separates_disk_movement_from_long_standing(self):
+        """The two separable causes of a fork must not wear one word."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "manifest.json").write_text('{"version": "0.0.1"}')
+            m = _load()
+            self.assertEqual(m._fork_cause("0.0.1"), "long_standing")
+            self.assertEqual(m._fork_cause("0.0.2"), "changed_since_start")
+            m._MANIFEST_AT_START = ("absent", None, None)
+            self.assertEqual(m._fork_cause("0.0.2"), "unknown")
 
     def test_absent_and_unknown_stay_apart(self):
-        """Three states must stay three words: absent / unknown / a version."""
+        """Four states must stay four words: absent / unreadable / no_version_key / a version."""
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_load()._manifest_version(base=d), "absent")
             (pathlib.Path(d) / "manifest.json").write_text("{not json")
-            self.assertEqual(_load()._manifest_version(base=d), "unknown")
+            self.assertEqual(_load()._manifest_version(base=d), "unreadable")
             (pathlib.Path(d) / "manifest.json").write_text('{"version": "9.9.9"}')
             self.assertEqual(_load()._manifest_version(base=d), "9.9.9")
 
