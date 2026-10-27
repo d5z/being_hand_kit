@@ -640,8 +640,21 @@ class Browser:
                 }, extra={"closed": "already_gone", "endpoint_gone": True}))
             return self._record(_receipt("close", error=f"{type(e).__name__}: {e}"))
         status = owner_status()
-        if status.get("owner") != "mine" and not force:
-            return self._record(_receipt("close", close_refusal(status)))
+        force_note = None
+        if status.get("owner") != "mine":
+            if not force:
+                return self._record(_receipt("close", close_refusal(status)))
+            # 0.13.8: force is not a bypass, it is a request for a second
+            # opinion. The record is missing or disagrees; ask the listener
+            # whether it carries this install's isolated profile. If it does
+            # not, force only proves "there is someone on this port" — and that
+            # is not a reason to close their browser.
+            from hand.perception.cdp_launcher import force_witness
+            force_note = force_witness()
+            if force_note.get("witness") != "profile":
+                return self._record(_receipt(
+                    "close", close_refusal(status, witness=force_note,
+                                           forced=True)))
         closed = 0
         # Browser.close is a browser-level command. Dispatching it once per page
         # fails when there are zero page targets — a freshly spawned headless
@@ -681,6 +694,12 @@ class Browser:
         raw = {"method": None, "verified": gone,
                "evidence": {"verified": gone, "endpoint_gone": gone,
                             "read_back": "GET /json/version after Browser.close"}}
+        if force_note:
+            # Say which witness let a force through. A force that succeeds
+            # without stating its basis is indistinguishable, in the receipt,
+            # from a force that simply went ahead.
+            raw["evidence"]["forced"] = True
+            raw["evidence"]["force_witness"] = force_note
         if not gone:
             raw["evidence"]["reason"] = "endpoint still alive after Browser.close"
         if gone:

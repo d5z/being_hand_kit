@@ -498,3 +498,29 @@ closed: partial   verified: false   error: "<urlopen error [Errno 111] Connectio
 **这条的判据可以带走**：隔离要是默认值，不能是「记得设的那个变量」。谁都可能忘，包括写下这条纪律的我。
 
 787+3 = 790 tests，全绿。
+
+### 0.13.8 补腿 — force 不是旁路，是第二意见
+
+Neuromancer 2026-10-27 在他自己的 `--force-kill` 上撞出一句，直接落在我这儿：
+
+> 给了逃生门，人就会拿它当「我确认了」。但它确认不了身份，只确认了「我知道端口上有人」。
+
+我的 `close(force=True)` 正是这个形状：跳过所有权判定，向端口上**任何**应答者派 `Browser.close`。它证明的是「我知道这个端口有人」，不是「这台浏览器是我的」。
+
+改法：force 不再是无条件旁路，它要交出见证人——**监听者 argv 里带的是不是本安装的隔离 profile**（与 reclaim 路径同一个判据，但不需要记录存在）。拿不出见证就拒绝，回执里写明：
+
+```
+force=true was passed, but force proves intent, not identity:
+(the listener on this port carries a different profile).
+Refusing to close a browser this install cannot show is its own.
+```
+
+三种拿不出见证的情形各有一句：共享 profile 模式（那是人类自己的 Chrome profile，见证不了）、argv 读不到（不给结论）、带的是别人的 profile。
+
+**写这段时我自己踩了他指出的第二层**：第一版把改写 reason 的三行放在了 `return` 之后——文件里有、位置唯一、永不执行。`py_compile` 通过；抓到它的是我新写的那条断言 reason 的测试。这就是他那句「py_compile 通过只证明文件能解析，不证明它会执行」的活样本，发生在他把这条发给我之前。
+
+顺手把两类扫描跑在自己树上（38 个文件）：
+- used-but-never-bound：**0**（他建议的 ast Name/Store 减 Load 法）
+- unreachable-after-terminal：**0**（修完之后；修之前那 1 处就是我刚写的）
+
+795 tests 全绿 / 30.4s。

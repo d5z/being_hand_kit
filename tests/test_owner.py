@@ -373,3 +373,66 @@ class OwnerFileScopingTest(unittest.TestCase):
         with mock.patch.object(cdp_launcher, "CDP_PORT", 9444), \
              mock.patch.dict(os.environ, {"HAND_CDP_OWNER_FILE": "/tmp/x.json"}):
             self.assertEqual(cdp_launcher._owner_file(), "/tmp/x.json")
+
+
+class ForceWitnessTest(unittest.TestCase):
+    """0.13.8 — force=true asks for a second opinion, it does not bypass.
+
+    Neuromancer, 2026-10-27, on his own `--force-kill`: the escape hatch confirms
+    "I know someone is on this port", not "this process is mine". The same hole
+    was in close(force=True): it skipped the ownership check and dispatched
+    Browser.close at whatever answered. Now force has to produce a witness too —
+    the listener carrying this install's isolated profile — and when it cannot,
+    the refusal says exactly that.
+    """
+
+    def test_isolated_listener_with_our_profile_is_a_witness(self):
+        with mock.patch.object(cdp_launcher, "profile_mode", return_value="isolated"), \
+             mock.patch.object(cdp_launcher, "profile_dir",
+                               return_value="/k/.chrome-profile"), \
+             mock.patch.object(cdp_launcher, "_listener_pid",
+                               return_value=(4242, "ss")), \
+             mock.patch.object(cdp_launcher, "_cmdline_has", return_value=True):
+            w = cdp_launcher.force_witness()
+        self.assertEqual(w["witness"], "profile")
+        self.assertEqual(w["listener_pid"], 4242)
+
+    def test_a_different_profile_is_not_a_witness(self):
+        with mock.patch.object(cdp_launcher, "profile_mode", return_value="isolated"), \
+             mock.patch.object(cdp_launcher, "profile_dir",
+                               return_value="/k/.chrome-profile"), \
+             mock.patch.object(cdp_launcher, "_listener_pid",
+                               return_value=(4242, "ss")), \
+             mock.patch.object(cdp_launcher, "_cmdline_has", return_value=False):
+            w = cdp_launcher.force_witness()
+        self.assertIsNone(w["witness"])
+        self.assertIn("different profile", w["why"])
+
+    def test_unreadable_argv_is_no_evidence_either_way(self):
+        with mock.patch.object(cdp_launcher, "profile_mode", return_value="isolated"), \
+             mock.patch.object(cdp_launcher, "profile_dir",
+                               return_value="/k/.chrome-profile"), \
+             mock.patch.object(cdp_launcher, "_listener_pid",
+                               return_value=(4242, "ss")), \
+             mock.patch.object(cdp_launcher, "_cmdline_has", return_value=None):
+            w = cdp_launcher.force_witness()
+        self.assertIsNone(w["witness"])
+        self.assertIn("could not be read", w["why"])
+
+    def test_shared_profile_cannot_tell_our_browser_from_the_humans(self):
+        with mock.patch.object(cdp_launcher, "profile_mode", return_value="shared"), \
+             mock.patch.object(cdp_launcher, "profile_dir",
+                               return_value="/Users/x/Library/Application Support/Google/Chrome"):
+            w = cdp_launcher.force_witness()
+        self.assertIsNone(w["witness"])
+        self.assertIn("shared profile", w["why"])
+
+    def test_the_refusal_says_force_proves_intent_not_identity(self):
+        status = {"owner": "unknown", "reason": "no spawn record"}
+        witness = {"witness": None, "why": "the listener on this port carries a different profile"}
+        rec = cdp_launcher.close_refusal(status, witness=witness, forced=True)
+        self.assertTrue(rec["evidence"]["refused"])
+        self.assertTrue(rec["evidence"]["force_asked"])
+        self.assertIn("force proves intent, not identity",
+                      rec["evidence"]["reason"])
+        self.assertIn("different profile", rec["evidence"]["reason"])

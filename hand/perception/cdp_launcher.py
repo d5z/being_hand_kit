@@ -569,8 +569,68 @@ def owner_status():
             "cmdline_checked": cmd is not None}
 
 
-def close_refusal(status):
-    """The receipt a close returns when it declines to kill someone else's browser."""
+def force_witness():
+    """Is the browser on this port carrying THIS install's profile?
+
+    The escape hatch (`force=true`) exists for the case where the spawn record
+    is missing but the browser really is ours. What it must not become is a
+    statement of intent standing in for a statement of identity: "I know
+    someone is on this port" is not "this browser is mine".
+
+    So force is not a blanket bypass. It gets its own witness, and the witness
+    is the same one the reclaim path already trusts — the listener's argv naming
+    the isolated profile this install owns. No record needed.
+
+    In shared-profile mode there is no witness to be had: the profile is the
+    human's own Chrome profile, so it would bless their browser just as happily.
+    That case says so rather than pretending.
+
+    (Neuromancer, 2026-10-27, on his own `--force-kill`: "给了逃生门，人就会拿它
+    当「我确认了」。但它确认不了身份，只确认了「我知道端口上有人」。")
+
+    Returns {"witness": "profile" | None, "why": str, ...}.
+    """
+    mode = profile_mode()
+    profile = profile_dir()
+    if mode != "isolated":
+        return {"witness": None, "profile": profile, "profile_mode": mode,
+                "why": ("shared profile mode: this path is the human's own "
+                        "Chrome profile, so carrying it does not tell our "
+                        "browser from theirs")}
+    pid, how = _listener_pid(timeout=CLAIM_TIMEOUT)
+    if not pid:
+        return {"witness": None, "profile": profile, "profile_mode": mode,
+                "why": "nothing is listening on this port"}
+    seen = _cmdline_has(pid, profile)
+    if seen is None:
+        return {"witness": None, "profile": profile, "profile_mode": mode,
+                "listener_pid": pid, "listener_via": how,
+                "why": "the listener's argv could not be read — no evidence "
+                       "either way"}
+    if not seen:
+        return {"witness": None, "profile": profile, "profile_mode": mode,
+                "listener_pid": pid, "listener_via": how,
+                "why": "the listener on this port carries a different profile"}
+    return {"witness": "profile", "profile": profile, "profile_mode": mode,
+            "listener_pid": pid, "listener_via": how,
+            "why": "the listener carries this install's isolated profile"}
+
+
+def close_refusal(status, witness=None, forced=False):
+    """The receipt a close returns when it declines to kill someone else's browser.
+
+    0.13.8: a refused *forced* close gets its own sentence. The plain refusal
+    would leave the caller guessing why the escape hatch did not open — and the
+    answer is the point: force proves intent, not identity.
+    """
+    reason = ("the endpoint on this port is not a browser this install "
+              "spawned; refusing to close it. Pass force=true only if "
+              "you know whose it is.")
+    if forced:
+        why = (witness or {}).get("why") or "no witness available"
+        reason = ("force=true was passed, but force proves intent, not "
+                  f"identity: ({why}). Refusing to close a browser this "
+                  "install cannot show is its own.")
     return {
         "closed": "refused",
         "endpoint_gone": False,
@@ -580,9 +640,9 @@ def close_refusal(status):
             "verified": False,
             "refused": True,
             "owner": status,
-            "reason": ("the endpoint on this port is not a browser this install "
-                       "spawned; refusing to close it. Pass force=true only if "
-                       "you know whose it is."),
+            "reason": reason,
+            "force_asked": bool(forced),
+            "force_witness": witness,
         },
     }
 
