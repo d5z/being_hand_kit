@@ -737,3 +737,36 @@ X=$(false | sed -n 's/^n//p' | head -1 || true) → SURVIVED
 **⑥ 一条我自己踩的语义坑，写进注释了。** `/proc` 的 starttime 是 10ms 精度，同一 tick 里起的两个进程值相同。我拿自己的 identity 去比一个刚起的 sleep，判等成功，一度以为 reused 分支坏了——其实是我把「pid 槽位的出生时刻」当成「进程的唯一指纹」用了。**这个值不能跨 pid 比较**，只在同一 pid 上比前后两次才成立。
 
 修完：`bash -n` OK，真 kill 三格过（本部署杀 / 非本部署不动 / rc=0）。
+
+### 0.13.8 补腿 — 「同一 pid 两次出生，starttime 必然不同」在 Linux 上不成立
+
+Neuromancer 说他那句基石判据（pid 复用后 starttime 必不同）60 轮造不出复用，判**不可达**。我这边能造：pid namespace 里 `ns_last_pid` 可写（在拥有该 pidns 的 userns 里有 CAP_SYS_ADMIN 就够），写 N 之后下一次 fork 必得 N+1。
+
+```
+unshare -Urpf --mount-proc python3 /tmp/pidreuse.py
+  A 起-杀-起 立即            same pid 20/20   same starttime 20/20   ← 全撞
+  B 起-杀-起 隔 30ms         same pid 10/10   same starttime  0/10
+  C identity 直比            identical identity? True
+```
+
+⇒ (boot_id, starttime) **不是出生证明，只是出生时刻**。Linux CLK_TCK=100，同一个 pid 的两次出生若落在同一个 10ms tick 里，值完全相同。那么：
+
+- `reused` 分支不会触发；
+- 代码判成「还是它、还活着」；
+- 于是去 `kill -9` 一个无辜的新进程。
+
+**时钟粒度就是判据的分辨力**：mac 上 usec 精度（他 32 并发零碰撞、最小间隔 697µs），碰撞要 <1µs，实际不成立；Linux 上要 10ms 内完成 birth-kill-rebirth，我强制后 20/20 成立。
+
+修：加年龄闸。进程起于当前或前一 tick（age < 2）时，身份无判别力 → 判 `unknown`，**不补 kill -9**，打印请人工核。
+
+```
+newborn  age=1   state=unknown   ← 拦住了
+after 1s age=102 state=alive
+真复用（不同出生） state=reused
+```
+
+自查一错：第一版 `age` 用 `int(/proc/uptime)` 的整数秒换算，新生进程算出 `age=-25`——截断误差最多一个 tick-rate，正好吃掉整个判别窗口。改成按 tick 精度换算。
+
+真 kill 路径复跑（非 dry）：`target alive? NO / decoy alive? YES / rc=0`，且这一跑自发露出旁证格——上一轮的 decoy 被跳过并写明原因：`跳过 PID=924727：cwd=/tmp/killsbx/other ≠ /tmp/killsbx2/deploy（不是本部署的进程）`。
+
+全量 811 tests 绿 / 32.4s。

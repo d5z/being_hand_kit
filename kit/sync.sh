@@ -82,6 +82,14 @@ proc_identity() {
   [ -n "$ticks" ] && [ -n "$boot" ] && printf '%s:%s\n' "$boot" "$ticks"
 }
 
+proc_identity_ticks() {
+  pid=$1
+  st=$(cat "/proc/$pid/stat" 2>/dev/null) || return 0
+  after=${st##*)}
+  set -- $after
+  printf '%s\n' "${20}"
+}
+
 proc_cwd() {
   pid=$1
   if [ -e "/proc/$pid/cwd" ]; then
@@ -113,6 +121,24 @@ proc_ppid() {
 # 2026-10-27 Neuromancer 实测 macOS：`ps -o stat= -p <pid>` 对「已死」「不存在」「超范围」
 # 三者同形——rc=1、stdout 空、stderr 空。单靠 ps 分不开 gone 和 unreadable。
 # 而「判不了」既不许当 gone（会去清账），也不许当 alive（会拿验证不了的 pid 补 kill -9）。
+# 身份的分辨力等于时钟粒度。Linux starttime 是 10ms tick（CLK_TCK=100），
+# 所以「同一个 pid 的两次出生」可以落在同一个 tick 里，identity 完全相同——
+# 2026-10-27 在 pid namespace 里用 ns_last_pid 强制复用，量到：birth-kill-birth
+# 挤在一个 tick 内时 20/20 同值；故意隔 30ms 时 0/10 同值。
+# ⇒ reused 分支在那种条件下不会触发，而代码会判成「还是它，还活着」→ 去 kill -9 一个无辜的新进程。
+# 所以加一道年龄闸：进程太年轻（起于当前 tick 或前一 tick）时，身份无判别力，判 unknown，不动手。
+proc_age_ticks() {
+  pid=$1
+  st=$(proc_identity_ticks "$pid" 2>/dev/null || true)
+  [ -n "$st" ] || return 0
+  hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+  # 必须按 tick 精度换算：/proc/uptime 的整数秒截断会带进最多一个 tick-rate 的误差
+  # （我第一版就是这么错的，新生进程算出 age=-25）。
+  up=$(awk -v hz="$hz" '{printf "%d", $1*hz}' /proc/uptime 2>/dev/null || true)
+  [ -n "$up" ] || return 0
+  echo $(( up - st ))
+}
+
 proc_state() {
   pid=$1
   want=${2:-}
@@ -121,6 +147,14 @@ proc_state() {
     cur=$(proc_identity "$pid" 2>/dev/null || true)
     if [ -z "$cur" ]; then echo unknown; return 0; fi
     if [ -n "$want" ] && [ "$cur" != "$want" ]; then echo reused; return 0; fi
+    # 年龄闸：太年轻则身份无判别力（见 proc_age_ticks 注释）
+    if [ -n "$want" ]; then
+      age=$(proc_age_ticks "$pid" 2>/dev/null || true)
+      case "${age:-}" in
+        ''|*[!0-9]*) : ;;
+        *) [ "$age" -lt 2 ] && { echo unknown; return 0; } ;;
+      esac
+    fi
     echo alive; return 0
   fi
   # 没有 /proc 这条路由（macOS）：ps 只在 rc=0 且有状态时敢说 alive，其余一律 unknown。
@@ -204,7 +238,7 @@ step4_stop_old() {
         echo "  ✓ 旧进程已退出（PID 已被别的进程复用，未触碰）" ;;
       unknown)
         # 判不了就不许动手：不补 kill -9，也不宣称成功。
-        echo "  ? 状态读不到（ps 对已死/不存在/无权限同形）——不补 kill -9，请人工核 PID=$OLD_PID" ;;
+        echo "  ? 状态无法判别（读不到 / 或进程太年轻、同一 tick 内身份无判别力）——不补 kill -9，请人工核 PID=$OLD_PID" ;;
       *)
         # 还活着且身份未变（不是复用）：这才是该强杀的一格。
         echo "  ✗ 旧进程仍活跃（身份未变），强制 kill -9"
