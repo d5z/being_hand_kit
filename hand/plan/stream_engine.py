@@ -1,25 +1,16 @@
 """StreamingEngine - Tier 2: persistent opencode server + multi-turn planning."""
 
-import json, os, re, shutil, subprocess, time
+import json, re, subprocess, time
 from dataclasses import dataclass, field
 from typing import Optional
 from .parser import Step, STEP_KINDS
 from .tier2_prompts import HAND_PLANNER_STREAM_PROMPT
+# _OPENCODE_CANDIDATES 与 _find_opencode 曾逐字复制一份在这里（仅排版不同）。
+# 语义相同的副本会静默分叉：一份改了、另一份不会跟着改，而没有任何读数会叫。
+# 改为从 engine 导入——检查按名字守，导入按身份守。（2026-10-27）
+from .engine import _OPENCODE_CANDIDATES, _find_opencode
 
 _UNSET = object()
-
-_OPENCODE_CANDIDATES = [
-    "/home/alice/.local/bin/opencode",
-    "/usr/local/bin/opencode",
-    "/usr/bin/opencode",
-]
-
-def _find_opencode():
-    found = shutil.which("opencode")
-    if found: return found
-    for p in _OPENCODE_CANDIDATES:
-        if os.path.isfile(p) and os.access(p, os.X_OK): return p
-    return None
 
 _STEP_JSON_RE = re.compile(r'\{\s*"step"\s*:\s*"([a-z]+)"')
 
