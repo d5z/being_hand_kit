@@ -375,3 +375,31 @@ owner_status #3 owner=stranger（不认领）
 （死的 pid + 活的、带我们 profile 的监听者），不是等它自然发生。macOS 侧我只验了命令形态
 （`lsof -nP -iTCP:PORT -sTCP:LISTEN -t` 在同用户下返回 pid，`ss` 不存在），没验跑起来之后的
 认领——那要在真机上开一次浏览器。
+
+### 0.13.8 补腿 — text= 路径（Neuromancer 的第四处，我漏了）
+
+他复验时把 `_get_dpr(ws)` 的位置全 grep 了一遍，找出**四处**同型，我第一刀只改了两处（selector 点击、type 路径）。剩下这一处是我自己 grep 过却没读懂的：
+
+```
+text= 匹配的 JS 里  var dpr=window.devicePixelRatio||1;   ← 读一次，用来把 CSS 点乘成物理点
+回到 Python        dpr = _get_dpr(ws)                      ← 又读一次，_click_at 用它除回去
+```
+
+同一条链上两个独立的读数。页面在两次之间改口，点就偏一整个比例，回执照样 verified。
+改法与另外几处一致：Python 侧读一次（`_dpr_now`），把数字**烘进**表达式，点带着它回来。
+
+**活体（同一张撒谎的页：getter 第 1 次答 2、之后答 1；按钮中心 CSS(280,180)）**：
+
+```
+receipt  result=ok verified=True   click_point={"how":"center","x":280.0,"y":180.0}
+page says {"log":[{"x":280,"y":180,"target":"t","trusted":true,"reads_at_click":1}],"reads":1}
+```
+
+`reads_at_click=1` 是关键读数：点击那一刻，页面只被问过一次 dpr。旧形状这一格会是 `x=560`、零次真点击。
+
+顺带把 `xy @expect=<selector>` 那格的 `_element_info` 也传入本次已读的 dpr——它只用来取标签，但没必要在同一个调用里再读一次。
+
+**验证**：782 tests OK（781 → 782），新增 `TextPathSingleReadTest` 锁不变式（读一次、用同一个数除）。
+**同族未做**：text= 的回执里没有 `dispatch{...}` 块（selector 路径有），两条路径的回执字段不对齐——记下，未改。
+
+**教训（三次同族了）**：`grep` 找出所有 `_get_dpr(` 的调用点，不等于知道哪几个是「算坐标用 A、派发用 B」。要看每个调用点上坐标是**谁算的**。另：同一天我把「动本机文件必须写 place=alice」忘掉三次（一次真的落到 sw 机器上，cd 失败无后果；两次落在他机器上跑 sed 也失败）——纪律写在纸上和长在手上是两件事。

@@ -1469,6 +1469,13 @@ def cdp_click_do(action, app_name=None):
         ws = cdp_connect(page['webSocketDebuggerUrl'])
         try:
             _init_domains(ws, 'Runtime')
+            # 0.13.8 — one dpr, carried (Neuromancer, 2026-10-27): the JS used
+            # to read window.devicePixelRatio to *make* the physical point, and
+            # this module read it again to *divide* it back. Two independent
+            # reads of one quantity: when they diverge the dispatch point is off
+            # by the ratio and the receipt still says verified. Read once here
+            # and bake it into the expression.
+            dpr_py = _dpr_now(ws)
             q = json.dumps(text_val)  # produces "Learn more" — double-quoted
             # 0.9.4-P2 (spec docs/spec-0.9.4-p2-textmatch.md): `text()` matches
             # only *direct* text children, so an `<a><span>Title</span></a>` —
@@ -1531,7 +1538,7 @@ def cdp_click_do(action, app_name=None):
                 "el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});"
                 "function hits(x,y){var e=document.elementFromPoint(x,y);"
                 "return !!(e&&(e===el||el.contains(e)));}"
-                "var r=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;"
+                "var r=el.getBoundingClientRect();var dpr=" + repr(float(dpr_py)) + ";"
                 "if(r.width<=0||r.height<=0)"
                 "return JSON.stringify({error:'no clickable point (zero-size)',search:qRaw});"
                 "var rawText=''+hit.raw;"
@@ -1575,7 +1582,7 @@ def cdp_click_do(action, app_name=None):
                 return out
 
             x, y = info['x'], info['y']
-            dpr = _get_dpr(ws)
+            dpr = float(info.get('dpr') or dpr_py)
             _click_at(ws, x, y, dpr)
             _write_last(idx)
             ev = _element_evidence({'tag': info.get('tag'),
@@ -1671,7 +1678,7 @@ def cdp_click_do(action, app_name=None):
                             % expect_spec, action=action, expect=expect_spec)
                     expect_label = _handle_label(entry)
                 else:
-                    prox = _element_info(ws, expect_spec)
+                    prox = _element_info(ws, expect_spec, dpr=dpr)
                     if not prox or prox.get('error'):
                         return _receipt_fail(
                             'cdp_click',

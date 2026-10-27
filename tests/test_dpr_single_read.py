@@ -57,6 +57,46 @@ class ElementInfoDprContractTest(unittest.TestCase):
         self.assertEqual(out["x"], 560)          # whatever the page said
 
 
+class TextPathSingleReadTest(unittest.TestCase):
+    """Neuromancer's fourth site: the text= path read dpr inside the JS to make
+    the point and again from the driver to divide it."""
+
+    def test_text_path_reads_dpr_once_and_divides_by_that_number(self):
+        reads = []
+        dispatched = []
+
+        def dpr_now(ws):
+            reads.append(1)
+            return 2.0
+
+        def fake_call(ws, method, params, msg_id=None, **kw):
+            if method == "Runtime.evaluate":
+                expr = params.get("expression", "")
+                if "fold(" in expr:                      # the text matcher
+                    self.assertIn("var dpr=2.0;", expr)
+                    self.assertNotIn("window.devicePixelRatio", expr)
+                    return {"result": {"value": '{"x":560,"y":360,"how":"center",'
+                                                '"tag":"A","text":"Go"}'}}
+                return {"result": {"value": "{}"}}
+            if method == "Input.dispatchMouseEvent":
+                dispatched.append((params.get("x"), params.get("y")))
+            return {}
+
+        with mock.patch.object(mod, "_dpr_now", side_effect=dpr_now), \
+             mock.patch.object(mod, "cdp_call", side_effect=fake_call), \
+             mock.patch.object(mod, "list_pages", return_value=[]), \
+             mock.patch.object(mod, "resolve_page", return_value=(0, {"webSocketDebuggerUrl": "ws://x"})), \
+             mock.patch.object(mod, "cdp_connect", return_value=mock.MagicMock()), \
+             mock.patch.object(mod, "_init_domains"), \
+             mock.patch.object(mod, "_write_last"):
+            out = mod.cdp_click_do("text=Go")
+
+        self.assertEqual(len(reads), 1, "dpr must be read exactly once")
+        self.assertEqual(out.get("result"), "ok")
+        self.assertEqual(dispatched[0], (280.0, 180.0),
+                         "physical 560/360 divided by the SAME dpr that made it")
+
+
 class OneNumberBothWaysTest(unittest.TestCase):
     """The click path: the dpr multiplying the rect == the dpr dividing dispatch."""
 
