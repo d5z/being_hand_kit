@@ -134,6 +134,31 @@ class ServiceEvidenceTest(unittest.TestCase):
                  "sleep   14000 alice 1u   unix 0x4221         0t0      ->0x4222\n")
         self.assertEqual(self._ask(table), "stdio")
 
+    # ---- 混搭两方向（Neuromancer 2026-10-27 造的形；口径分歧就露在这两格里） ----
+    def test_unix_then_pipe_is_stdio(self):
+        """fd0=unix(0u), fd1=PIPE(1)：我这版落 stdio，PIPE-only 实现落 none。"""
+        table = ("COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+                 "sleep   19451  d5c    0u  unix 0x6f25               0t0      ->0x6f26\n"
+                 "sleep   19451  d5c    1    PIPE 0x98a7               0t0      ->0x98a8\n")
+        self.assertEqual(self._ask(table), "stdio")
+
+    def test_pipe_then_unix_is_stdio(self):
+        """fd0=PIPE, fd1=unix(1u)：反方向同样落 stdio。"""
+        table = ("COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+                 "sleep   19452  d5c    0    PIPE 0x98a7               0t0      ->0x98a8\n"
+                 "sleep   19452  d5c    1u  unix 0x6f25               0t0      ->0x6f26\n")
+        self.assertEqual(self._ask(table), "stdio")
+
+    def test_reg_then_pipe_is_none(self):
+        """他没造的那格：fd0=REG（重定向到文件）+ fd1=PIPE —— 只有一头被驱动，落 none。
+
+        REG/CHR 不是「有人在驱动我」的证据：`cmd > out 2>&1 | tee` 的左边就是这形状。
+        """
+        table = ("COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+                 "sleep   19453  d5c    0r   REG    8,1     1234     99 /tmp/out.log\n"
+                 "sleep   19453  d5c    1    PIPE 0x98a7      0t0      ->0x98a8\n")
+        self.assertEqual(self._ask(table), "none")
+
     def test_bare_fd_anchor(self):
         """回归点：$4 在 PIPE 行是裸 `0`/`1`。
 
