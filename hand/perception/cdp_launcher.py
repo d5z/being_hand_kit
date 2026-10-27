@@ -766,6 +766,20 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
 
     marker defaults to this install's profile dir (see profile_dir()).
     Returns a receipt: killed / skipped (argv lacked the marker) / unreadable.
+
+    2026-10-27, honest note on where the truth lives: **this function has no
+    production caller.** The killer that actually runs is kit/sync.sh, and it is
+    ahead of this file -- it already has the three-valued state
+    (alive/gone/reused/unknown) *and* the age gate: a process born in the current
+    or previous tick cannot be told apart from its predecessor, so it is judged
+    unknown and left alone. Two consequences, both cheap to honour:
+
+      * a change to the judgement here has to be mirrored in sync.sh, and the
+        other way round -- two implementations of one judgement drift silently,
+        and the deployed one is the shell one;
+      * don't harden this path "for production" before asking whether it should
+        be wired up or deleted. Hardening a road nobody walks reads like
+        progress and isn't.
     """
     marker = marker or profile_dir()
     try:
