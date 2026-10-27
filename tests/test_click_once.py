@@ -97,6 +97,36 @@ class ClickProbeContractTest(unittest.TestCase):
         # the direct handler call that made the third execution invisible
         self.assertNotIn("_js_submit(ws, selector", body)
 
+    def test_the_text_path_is_instrumented_the_same_way(self):
+        """0.13.8 — same action, same vocabulary.
+
+        The text= path used to dispatch and report with no probe at all, so its
+        receipt could not say how many times the click reached the element: the
+        two paths were not comparable and a triple-fire there would have been
+        invisible. This pins the order (probe BEFORE the dispatch, read after)
+        and the fields, in source, because the alternative is reading a receipt
+        from a live browser and hoping the composition never drifts.
+        """
+        with open(os.path.join(os.path.dirname(__file__), "..",
+                               "hand", "action", "cdp_act.py")) as fh:
+            src = fh.read()
+        start = src.index("def cdp_click_do(")
+        body = src[start:src.index("def cdp_type_do(", start)]
+        # the text= branch lives inside cdp_click_do; anchor on the instrument
+        # call itself, which appears nowhere else in this window
+        text_branch = body[body.index("_install_click_probe_ref"):]
+        i_probe = text_branch.index("_install_click_probe_ref")
+        i_click = text_branch.index("_click_at(")
+        i_read = text_branch.index("_read_click_probe")
+        self.assertLess(i_probe, i_click, "probe must be installed before dispatch")
+        self.assertLess(i_click, i_read, "the count must be read after the dispatch")
+        self.assertIn("_click_escalation(seen['trusted'], seen['untrusted'])",
+                      text_branch)
+        for field in ("'dispatch'", "'dpr'", "'dpr_reads'", "'dispatched'"):
+            self.assertIn(field, text_branch)
+        self.assertIn("'dispatches': 1 + (1 if escalation != 'none' else 0)",
+                      text_branch)
+
 
 if __name__ == "__main__":
     unittest.main()

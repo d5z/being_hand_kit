@@ -1398,6 +1398,36 @@ def _clear_click_probe(ws, msg_id):
     cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
 
 
+def _install_click_probe_ref(ws, msg_id):
+    """Install the capture-phase probe on `window.__handTextEl`.
+
+    Same instrument as `_install_click_probe`, for the path that locates its
+    element by label rather than by selector. Installed before the dispatch for
+    the same reason: a listener attached afterwards records an absence that is
+    an artefact of when it started listening.
+    """
+    expr = ('(function(){var el=window.__handTextEl;'
+            'if(!el)return JSON.stringify({error:"element not found"});'
+            'window.__handProbe={el:el,trusted:0,untrusted:0,has_form:!!el.form};'
+            'window.__handProbeH=function(e){var p=window.__handProbe;'
+            'if(!p||!p.el)return;'
+            'if(e.target===p.el||(p.el.contains&&p.el.contains(e.target))){'
+            'if(e.isTrusted)p.trusted++;else p.untrusted++;}};'
+            'document.addEventListener("click",window.__handProbeH,true);'
+            'return JSON.stringify({result:"probe installed"});'
+            '})()')
+    cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+
+
+def _js_click_ref(ws, msg_id):
+    """One JS click on the stashed node — the text= path's only escalation."""
+    expr = ('(function(){var el=window.__handTextEl;'
+            'if(!el)return JSON.stringify({error:"element not found"});'
+            'el.click();return JSON.stringify({result:"js_click ok"});'
+            '})()')
+    cdp_call(ws, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, msg_id=msg_id)
+
+
 def _click_escalation(trusted, untrusted):
     """Escalate only on evidence that the real mouse click did not land.
 
@@ -1536,6 +1566,11 @@ def cdp_click_do(action, app_name=None):
                 # "something covers it". Bring the node into view first, the
                 # way the handle path already does, then measure.
                 "el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});"
+                # 0.13.8: the text= path finds its target by label, so the
+                # probe cannot key off a CSS selector. Stash the node and let
+                # the probe read it — otherwise this path can never say how
+                # many times the click actually reached the element.
+                "try{window.__handTextEl=el;}catch(e){}"
                 "function hits(x,y){var e=document.elementFromPoint(x,y);"
                 "return !!(e&&(e===el||el.contains(e)));}"
                 "var r=el.getBoundingClientRect();var dpr=" + repr(float(dpr_py)) + ";"
@@ -1583,7 +1618,20 @@ def cdp_click_do(action, app_name=None):
 
             x, y = info['x'], info['y']
             dpr = float(info.get('dpr') or dpr_py)
+            # 0.13.8: this path used to dispatch and report, with no instrument
+            # and no way to say whether the click reached the element. Its
+            # receipt therefore had a different vocabulary from the selector
+            # path's for the same action (no dispatch{}, no dpr{}), so the two
+            # were not comparable — and a triple-fire, if it ever happened
+            # here, would have been invisible. Instrument it the same way.
+            _install_click_probe_ref(ws, msg_id=80)
             _click_at(ws, x, y, dpr)
+            seen = _read_click_probe(ws, msg_id=81)
+            escalation = _click_escalation(seen['trusted'], seen['untrusted'])
+            if escalation == 'js_click':
+                _js_click_ref(ws, msg_id=82)
+                seen = _read_click_probe(ws, msg_id=83)
+            _clear_click_probe(ws, msg_id=84)
             _write_last(idx)
             ev = _element_evidence({'tag': info.get('tag'),
                                     'text': info.get('text')})
@@ -1594,6 +1642,22 @@ def cdp_click_do(action, app_name=None):
                                  'x': round(x / dpr, 1), 'y': round(y / dpr, 1)}
             ev['read_back'] = ('Unicode-space-folded text hit + '
                                'elementFromPoint hit-chain verified')
+            ev['dispatch'] = {
+                'trusted_clicks': seen['trusted'],
+                'untrusted_clicks': seen['untrusted'],
+                'probe': ('capture-phase listener installed before dispatch, '
+                          'removed after'),
+                'escalation': escalation,
+                'dispatches': 1 + (1 if escalation != 'none' else 0),
+            }
+            ev['dpr'] = dpr
+            ev['dpr_reads'] = 1
+            ev['dispatched'] = {
+                'css': {'x': round(x / dpr if dpr else x, 2),
+                        'y': round(y / dpr if dpr else y, 2)},
+                'physical': {'x': round(x, 1), 'y': round(y, 1)},
+                'dpr_used': dpr,
+            }
             return {'method': 'cdp_click', 'text_match': text_val,
                     'tag': info.get('tag'), 'match': info.get('match'),
                     'page_index': idx, 'result': 'ok',

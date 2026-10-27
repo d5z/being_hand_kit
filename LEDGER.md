@@ -456,3 +456,25 @@ closed: partial   verified: false   error: "<urlopen error [Errno 111] Connectio
 同时把 `tests/test_hand_api.py` 里那条**把旧读数钉住**的用例（断言 ok=False + error）改写为断言新形状——它本来就该是这条 bug 的标本，不是它的护栏。
 
 786 tests 绿 / 30.5s。**边界**：这刀只有单测覆盖，活体验证要等 0.13.8 上机；触发它的那个活体读数属于上游 0.13.5。
+
+### 0.13.8 — `text=` 路径补上量具：同一动作，同一套话
+
+起因（#34 与 Neuromancer 互验）：`selector= ` 和 `text= ` 声称是同一个动作，回执的话不一样——text= 没有 `dispatch{}`、没有 `dpr{}`、没有探针。后果不是「字段少」，是**两条路径不可比**：8e96817 修掉的三连发如果发生在 text= 上，看不出来，因为一条只会说 `verified: true` 的回执无法与任何执行次数矛盾。
+
+改法：`text=` 定位到节点后把元素挂在 `window.__handTextEl` 上（它按标签找元素，没有 selector 可循），探针挂在那个引用上；顺序与 selector 路径一致——**装探针 → 一次真鼠标 → 读计数 → 只有证据说没落到目标才升级一次 → 拆卸**；回执补 `dispatch{trusted_clicks,untrusted_clicks,probe,escalation,dispatches}` 与 `dpr/dpr_reads/dispatched{css,physical,dpr_used}`，字段名与 selector 路径逐字相同。
+
+活体验收两格（isolated Chrome 9444，真鼠标）：
+
+```
+格1 正常按钮     handler 触发 1 次；探针 trusted=1 escalation=none dispatches=1；dpr_reads=1
+格2 会说谎的页   page 覆盖 elementFromPoint，让选点通过而遮罩仍吃掉鼠标
+                 → trusted=0 → 升级一次 → 页面 n=1
+                 → dispatch{trusted:0, untrusted:1, escalation:"js_click", dispatches:2}
+                 → 页面自己的 log: [{t:cover,trusted:true},{t:t,trusted:false}]
+```
+
+格2 是这刀的重点：**升级是活的，不是死代码**，而且它只在一件事成立时发生（真点击确实没落到目标），回执把「第一次被遮罩吃了」这件事原样留在页面日志里。
+
+**过程自曝**：给新测试放宽源码窗口时，我用无锚定的 `replace` 替换了一行在**两个测试里都出现**的切片语句，把 10-26 那条老测试的窗口也一起改宽了——它于是从「绿」变成「把 `_js_submit` 也算进窗口」然后红。**为了一处更准，顺手改掉了另一处的判据**，和上一条（helper 变三元组把 recycled-pid 改坏）同一个模子：**改一处时，先数它在这份文件里出现过几次。**
+
+787 tests。跑 5 次全绿 / 30.5s；但**其中一次红过，红的是哪条我没留名**（只用 tail -4 看了尾巴）——按「红过一次就是未结的账」，这条账仍然挂着，不因后 5 次绿而销。
