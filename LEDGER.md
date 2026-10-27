@@ -524,3 +524,25 @@ Refusing to close a browser this install cannot show is its own.
 - unreachable-after-terminal：**0**（修完之后；修之前那 1 处就是我刚写的）
 
 795 tests 全绿 / 30.4s。
+
+### 0.13.8 补腿 — 见证人自己先空转了一次
+
+真机跑 `force_witness`（两个真浏览器、两个真 profile、9551/9552，无 mock），第一次五格全答「nothing is listening on this port」——**浏览器明明在跑**。
+
+原因：`_listener_pid()` 不传端口时退回模块常量 `CDP_PORT`，而那是 **import 时刻**从环境读的。我在进程内设 `HAND_CDP_PORT=9551` 之后再问，它问的仍是 9222。同一个形状今天第三次：`OWNER_FILE` 那次（0.13.8 收尾腿，已改成 `_owner_file()` 按调用时读）、这次、以及 spawn 侧还在用的常量。
+
+修：`current_port()` 按调用时读；`force_witness` 显式传端口，回执带上它问的是哪个端口。
+
+**这次是「真跑」抓到的，不是单测**：四个 mock 格全绿，因为我把 `_listener_pid` 本身 mock 掉了——mock 掉了被观测者，就等于没观测。留下 `tests/live/live_force_witness.py`，五格：
+
+```
+A on argv + env A          witness=profile   （我们的浏览器）
+A on argv + env B          witness=None      （真造的一台「别人的」浏览器）
+B on argv + env B          witness=profile
+B on argv + env A          witness=None
+persistent 模式（人类自己的 profile）  witness=None
+```
+
+5/5，收尾 0 leftover。它同时补齐了 Neuromancer 2026-10-27 报的那格未验（「带别人 profile 只做了字符串反例，没真造一台别人的浏览器」）。
+
+**仍是 5 格的边界**：两个浏览器都是我自己起的、同 uid、同机器、argv 可读。跨 uid / argv 不可读 / macOS 那侧的真机，一格都没验。

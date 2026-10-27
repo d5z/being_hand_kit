@@ -569,6 +569,18 @@ def owner_status():
             "cmdline_checked": cmd is not None}
 
 
+def current_port() -> int:
+    """The CDP port as it is NOW.
+
+    `CDP_PORT` is frozen at import. Anything that reads the port at *call* time --
+    the spawn record file already does (see `_owner_file`) -- must not go back to
+    the constant, or it answers about a port nobody is listening on. Measured
+    2026-10-27: force_witness called after setting HAND_CDP_PORT in-process said
+    "nothing is listening" while two browsers were up.
+    """
+    return int(os.environ.get("HAND_CDP_PORT") or CDP_PORT)
+
+
 def force_witness():
     """Is the browser on this port carrying THIS install's profile?
 
@@ -594,24 +606,29 @@ def force_witness():
     profile = profile_dir()
     if mode != "isolated":
         return {"witness": None, "profile": profile, "profile_mode": mode,
-                "why": ("shared profile mode: this path is the human's own "
-                        "Chrome profile, so carrying it does not tell our "
+                "port": current_port(),
+                "why": (f"{mode} profile mode: the profile path is the human's "
+                        "own Chrome profile, so carrying it does not tell our "
                         "browser from theirs")}
-    pid, how = _listener_pid(timeout=CLAIM_TIMEOUT)
+    pid, how = _listener_pid(port=current_port(), timeout=CLAIM_TIMEOUT)
     if not pid:
         return {"witness": None, "profile": profile, "profile_mode": mode,
-                "why": "nothing is listening on this port"}
+                "port": current_port(),
+            "why": "nothing is listening on this port"}
     seen = _cmdline_has(pid, profile)
     if seen is None:
         return {"witness": None, "profile": profile, "profile_mode": mode,
                 "listener_pid": pid, "listener_via": how,
+                "port": current_port(),
                 "why": "the listener's argv could not be read — no evidence "
                        "either way"}
     if not seen:
         return {"witness": None, "profile": profile, "profile_mode": mode,
                 "listener_pid": pid, "listener_via": how,
+                "port": current_port(),
                 "why": "the listener on this port carries a different profile"}
     return {"witness": "profile", "profile": profile, "profile_mode": mode,
+            "port": current_port(),
             "listener_pid": pid, "listener_via": how,
             "why": "the listener carries this install's isolated profile"}
 

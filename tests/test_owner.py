@@ -419,13 +419,27 @@ class ForceWitnessTest(unittest.TestCase):
         self.assertIsNone(w["witness"])
         self.assertIn("could not be read", w["why"])
 
-    def test_shared_profile_cannot_tell_our_browser_from_the_humans(self):
-        with mock.patch.object(cdp_launcher, "profile_mode", return_value="shared"), \
+    def test_persistent_profile_cannot_tell_our_browser_from_the_humans(self):
+        with mock.patch.object(cdp_launcher, "profile_mode",
+                               return_value="persistent"), \
              mock.patch.object(cdp_launcher, "profile_dir",
                                return_value="/Users/x/Library/Application Support/Google/Chrome"):
             w = cdp_launcher.force_witness()
         self.assertIsNone(w["witness"])
-        self.assertIn("shared profile", w["why"])
+        self.assertIn("persistent profile mode", w["why"])
+        self.assertIn("human's own Chrome profile", w["why"])
+
+    def test_the_port_is_read_at_call_time_not_import_time(self):
+        """2026-10-27: CDP_PORT is frozen at import, so a call-time reader that
+        goes back to the constant answers about a port nobody is listening on.
+
+        Live样本：两个浏览器在 9551/9552 上跑着，force_witness 说「nothing is
+        listening」——它问的是 import 时刻的 9222。
+        """
+        with mock.patch.dict(os.environ, {"HAND_CDP_PORT": "9551"}):
+            self.assertEqual(cdp_launcher.current_port(), 9551)
+        with mock.patch.dict(os.environ, {"HAND_CDP_PORT": "9552"}):
+            self.assertEqual(cdp_launcher.current_port(), 9552)
 
     def test_the_refusal_says_force_proves_intent_not_identity(self):
         status = {"owner": "unknown", "reason": "no spawn record"}
