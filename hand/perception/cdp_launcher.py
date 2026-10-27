@@ -703,35 +703,57 @@ def _argv_of(pid):
     return ("ok", out.split())
 
 
-def _ancestor_pids(pid=None, depth=32):
-    """This process and everyone above it.
+def _read_ppid(pid):
+    """(ppid, error). Linux /proc first; ps as fallback; never invent a number."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            # field 4 = ppid; comm may contain spaces/parens -> split after ')'
+            return int(f.read().rsplit(")", 1)[1].split()[1]), None
+    except Exception as e1:
+        try:
+            r = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                return int(r.stdout.strip()), None
+            return 0, f"ps rc={r.returncode}"
+        except Exception as e2:
+            return 0, f"{type(e1).__name__}/{type(e2).__name__}"
 
-    2026-10-27b (Neuromancer's self-inflicted kill): excluding only os.getpid()
-    is not enough. When a script arrives through `sh -c "..."`, the whole script
-    text *is* the shell's argv -- so any token used to describe a target also
-    sits in an ancestor's command line. The match set and the killer overlap by
-    construction. Excluding the ancestor chain is what makes a cmdline-based
-    kill safe."""
-    out, cur = [], int(pid or os.getpid())
-    for _ in range(depth):
+
+def _ancestor_chain(pid=None, depth=32):
+    """This process and everyone above it, plus *how far up we actually got*.
+
+    0.13.8: the chain used to be returned as a bare list, so a walk that stopped
+    early (unreadable /proc entry, broken ps) looked exactly like a chain that
+    reached init. A short set and a complete set are two different facts: the
+    first means "some ancestor may not be in the exclusion set" -- the gate is
+    weaker, and the receipt has to say so instead of printing a clean count.
+    """
+    out, cur, why = [], int(pid if pid is not None else os.getpid()), None
+    while True:
         if cur <= 0:
             break
+        if len(out) >= depth:
+            why = f"depth limit {depth} reached"
+            break
         out.append(cur)
-        try:
-            with open(f"/proc/{cur}/stat", encoding="utf-8") as f:
-                # field 4 = ppid; comm may contain spaces/parens -> split after ')'
-                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
-        except Exception:
-            try:
-                r = subprocess.run(["ps", "-o", "ppid=", "-p", str(cur)],
-                                   capture_output=True, text=True, timeout=5)
-                ppid = int(r.stdout.strip() or 0) if r.returncode == 0 else 0
-            except Exception:
-                ppid = 0
+        ppid, err = _read_ppid(cur)
+        if err:
+            why = f"cannot read parent of {cur}: {err}"
+            break
         if ppid == cur:
+            why = f"pid {cur} reports itself as parent"
             break
         cur = ppid
-    return out
+    complete = why is None
+    return {"pids": out, "levels": len(out), "reached_init": complete,
+            "truncated_at": None if complete else cur,
+            "truncated_why": why}
+
+
+def _ancestor_pids(pid=None, depth=32):
+    """Back-compat: just the pids. Use _ancestor_chain() when completeness matters."""
+    return _ancestor_chain(pid, depth)["pids"]
 
 
 def kill_our_browsers(sig=9, marker=None, dry_run=False):
@@ -757,7 +779,10 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
     killed, skipped, unreadable, gone = [], [], [], []
     # self + ancestors: the `sh -c "..."` that carried this call has our words
     # in its argv, so it would otherwise be a candidate for its own kill.
-    mine = set(_ancestor_pids())
+    # 0.13.8: keep how far up we got -- an incomplete chain is a weakened gate,
+    # and a clean `excluded_count` would hide that.
+    chain = _ancestor_chain()
+    mine = set(chain["pids"])
     excluded = []
     for pid in pids:
         if pid in mine:
@@ -790,6 +815,11 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
             "gone": gone, "gone_count": len(gone),
             "excluded": excluded, "excluded_count": len(excluded),
             "excluded_why": "self or ancestor: its argv carries this call",
+            "ancestry": {"levels": chain["levels"],
+                         "reached_init": chain["reached_init"],
+                         "truncated_at": chain["truncated_at"],
+                         "truncated_why": chain["truncated_why"]},
+            "ancestry_complete": chain["reached_init"],
             "marker": marker}
 
 

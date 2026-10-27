@@ -88,6 +88,45 @@ class AncestorExclusionTest(unittest.TestCase):
         self.assertIn(1, chain)
         self.assertEqual(len(chain), len(set(chain)))
 
+    def test_chain_reports_when_it_stopped_early(self):
+        """A short chain and a complete chain are two different facts.
+
+        0.13.8 -- the walk used to return a bare list, so "I read four levels and
+        could not go further" looked identical to "I reached init". The receipt
+        then printed a clean excluded_count for a weakened gate. The walk has to
+        carry its own truncation: where it stopped, and why.
+        """
+        from hand.perception import cdp_launcher as L
+
+        full = L._ancestor_chain()
+        self.assertTrue(full["reached_init"])
+        self.assertIsNone(full["truncated_at"])
+        self.assertIsNone(full["truncated_why"])
+
+        short = L._ancestor_chain(depth=1)          # self only, parent never read
+        self.assertEqual(short["levels"], 1)
+        self.assertFalse(short["reached_init"])
+        self.assertEqual(short["truncated_at"], os.getppid())
+        self.assertIn("depth limit", short["truncated_why"])
+
+        orig = L._read_ppid
+        def broken(pid):
+            if pid == os.getppid():
+                return 0, "simulated EACCES"
+            return orig(pid)
+        L._read_ppid = broken
+        try:
+            r = L.kill_our_browsers(dry_run=True, marker="/nonexistent-marker-xyz-000")
+            degraded = L._ancestor_chain()
+        finally:
+            L._read_ppid = orig
+
+        self.assertFalse(degraded["reached_init"])
+        self.assertIn("simulated EACCES", degraded["truncated_why"])
+        self.assertIs(r["ancestry_complete"], False,
+                      "the receipt must say the gate was weak, not just print a count")
+        self.assertIn("simulated EACCES", r["ancestry"]["truncated_why"])
+
     def test_a_stranger_without_the_marker_is_still_skipped_not_killed(self):
         """Ancestor exclusion must not become 'kill everything that is not me'."""
         from hand.perception.cdp_launcher import kill_our_browsers
