@@ -166,13 +166,22 @@ class ServiceEvidenceTest(unittest.TestCase):
                                     "_", self.fn, argv], capture_output=True, text=True)
                 self.assertEqual(r.stdout, want)
 
-    # ---- 白名单要精确：python3.* 会把 python3-config 放进来 ----
+    # ---- 白名单要精确：尾通配 python3.* 的过宽实例是 python3.14-config ----
+    #
+    # ★ 证人只有一个（2026-10-27 Neuromancer 用真 bash case 跑出来的，我原来写错了）：
+    #   bash case 的 `python3.*` 里 `.` 是字面点、`*` 是通配 ⇒ python3-config【本来就不过】，
+    #   它不证明任何事——它是装饰。真证人 python3.14-config（旧写法过、新写法不过）。
+    #   下面 test_whitelist_has_exactly_one_witness 把这件事本身钉住：
+    #   谁把 witness 换成一个两版都不过的名字，那条测试会红。
+    #   （我 3709 那帖里就是这么写的——没跑，凭 glob 长什么样断的。）
     def test_runner_whitelist_exact(self):
         cases = {
             "python": "yes", "python3": "yes", "python3.14": "yes",
             "node": "yes", "nodejs": "yes",
-            # 尾通配时代会误放行的那一个
-            "python3-config": "no", "python3.14-config": "no",
+            # 尾通配时代会误放行的那一个（真证人）
+            "python3.14-config": "no",
+            # 非证人：旧写法下本来就不过，留着只为覆盖形状，不证明收紧有效
+            "python3-config": "no",
             # 编辑器 / 检视器 / Electron（Neuromancer 那台 desktop kit 的运行时；没验过就不放行）
             "tail": "no", "vim": "no", "electron": "no", "less": "no",
         }
@@ -181,6 +190,26 @@ class ServiceEvidenceTest(unittest.TestCase):
                 r = subprocess.run(["bash", "-c", '. "$1" >/dev/null 2>&1; proc_runner_ok "$2"',
                                     "_", self.fn, runner], capture_output=True, text=True)
                 self.assertEqual(r.stdout.strip(), want)
+
+    # ---- 收紧这一刀必须有一个真证人：旧写法说 yes、新写法说 no ----
+    def test_whitelist_has_exactly_one_witness(self):
+        import fnmatch
+        names = ["python", "python3", "python3.12", "python3.14",
+                 "python3-config", "python3.14-config",
+                 "node", "nodejs", "tail", "vim", "electron", "less"]
+        # 旧写法的语义 = bash case 的整串分支 = 每个 glob 都要试（只翻一个分支就是我第一版犯的错，
+        # 那版把 node/nodejs/python3 都判成「变化」，测试自己当场咬住了我）。不是 grep ERE。
+        OLD_GLOBS = ("python", "python3", "python3.*", "node", "nodejs")
+        old = {n: any(fnmatch.fnmatchcase(n, g) for g in OLD_GLOBS) for n in names}
+        differing = set()
+        for n in names:
+            r = subprocess.run(["bash", "-c", '. "$1" >/dev/null 2>&1; proc_runner_ok "$2"',
+                                "_", self.fn, n], capture_output=True, text=True)
+            new = r.stdout.strip() == "yes"
+            if old[n] != new:
+                differing.add(n)
+        self.assertEqual(differing, {"python3.14-config"},
+                         "收紧的证人集变了：要么白名单放松了，要么测试里那个证人被换成了装饰")
 
     # ---- 宽门：一条头被驱动就算「有人喂着」（半个 server）----
     def _ask_any(self, fd0, fd1):
