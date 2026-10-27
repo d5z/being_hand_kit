@@ -280,7 +280,10 @@ def _traverse(kept):
         meta.append(entry)
         for c in reversed(kids):
             stack.append((c, depth + 1, name))
-    return lines, meta
+    # roots = 深度 0 的起点节点数。回执里 root_role 一直是 ser["nodes"][0]["role"]，
+    # 那是「第一条被 emit 的行的 role」，不是「根的 role」——两者只有在恰好一个根时重合。
+    # 把这个分母带出去，读的人才能判 root_role 是不是一个事实。（2026-10-27）
+    return lines, meta, len(roots)
 
 
 def serialize(nodes, max_lines=DEFAULT_MAX_LINES, frame_nodeids=None):
@@ -299,7 +302,7 @@ def serialize(nodes, max_lines=DEFAULT_MAX_LINES, frame_nodeids=None):
     """
     raw = list(nodes or [])
     kept = filter_nodes(raw)
-    lines, meta = _traverse(kept)
+    lines, meta, root_count = _traverse(kept)
     frame_lines_without_handle = 0
     if frame_nodeids:
         frame_lines_without_handle = sum(
@@ -325,6 +328,7 @@ def serialize(nodes, max_lines=DEFAULT_MAX_LINES, frame_nodeids=None):
     ser = {
         "lines": lines,
         "nodes": meta,
+        "root_count": root_count,
         "truncated": truncated,
         "nodes_omitted": omitted,
         "text_truncated_count": text_truncated_count,
@@ -998,7 +1002,11 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
             "coords": coords,
             "coord": coord,
             "hint": hint,
+            # root_role 是「第一条 emit 行的 role」，root_count 是深度 0 节点数。
+            # 只有 root_count == 1 时 root_role 才是「根的 role」这个事实；
+            # 并列时它仍给（router 用它做「页面上有没有东西」的门），但事实在 root_count 里。
             "root_role": ser["nodes"][0]["role"] if ser["nodes"] else None,
+            "root_count": ser.get("root_count"),
             "node_count": len(ser["lines"]),
             "raw_node_count": ser["raw_node_count"],
             "curated_node_count": ser["kept_count"],

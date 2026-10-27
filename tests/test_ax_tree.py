@@ -22,6 +22,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import hand.perception.ax_tree as ax
 
 
+class RootCountTest(unittest.TestCase):
+    """root_role 是「第一条 emit 行的 role」，root_count 是深度 0 的起点数。
+
+    2026-10-27：回执里 root_role = nodes[0]["role"]，两个根时静默取第一个，
+    读起来像「这页的根是 X」这个判断——那是把集合压成元素。
+    判别轴：方括号左边是从枚举来（nodes[0]）而不是从切分来（parts[0]）。
+    """
+
+    def test_single_root_reports_one(self):
+        ser = ax.serialize([_n("1", "RootWebArea", "P"),
+                            _n("2", "link", "ok", parent="1")])
+        self.assertEqual(ser["root_count"], 1)
+
+    def test_two_roots_are_counted_not_hidden(self):
+        nodes = [_n("1", "RootWebArea", "A"), _n("2", "RootWebArea", "B")]
+        ser = ax.serialize(nodes)
+        self.assertEqual(ser["root_count"], 2)
+        # 回执仍给第一个（下游门要它），但分母现在一起给了：
+        self.assertEqual(ser["nodes"][0]["role"], "RootWebArea")
+
+
 # ── fixture builders ─────────────────────────────────────────────────
 
 def _n(node_id, role, name="", parent=None, backend_id=None, props=None, ignored=False):
