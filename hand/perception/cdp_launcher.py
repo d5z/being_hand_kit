@@ -833,10 +833,20 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
                              capture_output=True, text=True, timeout=10).stdout
         pids = [int(x) for x in out.split() if x.strip().isdigit()]
     except Exception as e:
-        return {"killed": [], "skipped": 0, "unreadable": 0,
+        # 2026-10-27: 这条早退原来回 {"skipped": 0, "unreadable": 0}——同名字段在别的分支是
+        # 列表，读回执的人（和程序）拿到的类型取决于哪条路走的。形状跟路走，是另一种说谎。
+        return {"killed": [], "killed_count": 0,
+                "dry_run": bool(dry_run),
+                "would_kill": [], "would_kill_count": 0,
+                "skipped": [], "skipped_count": 0,
+                "unreadable": [], "unreadable_count": 0,
+                "gone": [], "gone_count": 0,
+                "reused": [], "reused_count": 0,
+                "excluded": [], "excluded_count": 0,
+                "enumerated": False,
                 "why": f"could not enumerate candidates: {e}"}
 
-    killed, skipped, unreadable, gone, reused = [], [], [], [], []
+    killed, would_kill, skipped, unreadable, gone, reused = [], [], [], [], [], []
     identity_checked = identity_unavailable = 0
     # self + ancestors: the `sh -c "..."` that carried this call has our words
     # in its argv, so it would otherwise be a candidate for its own kill.
@@ -865,8 +875,8 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
             skipped.append(pid)
             continue
         if dry_run:
-            killed.append(pid)
-            continue
+            would_kill.append(pid)        # 2026-10-27: 预演不写进 killed —— 回执的键是动作的词，
+            continue                      # 内容是预测的事实时，明天读到它的人分不清浏览器死没死
         ticks_now = _proc_start_ticks(pid)
         if ticks_before is None or ticks_now is None:
             identity_unavailable += 1     # macOS: pid-only, and the receipt says so
@@ -883,6 +893,10 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
         except Exception:
             unreadable.append(pid)
     return {"killed": killed, "killed_count": len(killed),
+            "dry_run": bool(dry_run),
+            "would_kill": would_kill, "would_kill_count": len(would_kill),
+            "would_kill_why": ("dry_run: these carry the marker and would have been "
+                               "signalled; nothing was sent"),
             "skipped": skipped, "skipped_count": len(skipped),
             "skipped_why": "argv carries no marker of this install",
             "unreadable": unreadable, "unreadable_count": len(unreadable),
