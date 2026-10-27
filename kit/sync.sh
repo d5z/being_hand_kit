@@ -95,6 +95,38 @@ proc_identity_ticks() {
   printf '%s\n' "${20}"
 }
 
+# 服务证据（四值）：listening / stdio / none / unknown
+# 「或门」不能只有 LISTEN：macOS 侧 MCP 走 stdio，这辈子不监听任何端口
+#   （2026-10-27 Neuromancer 实测：lsof -a -p 10730 -iTCP 为空，ppid 直指 portal-service 本体）
+# ⇒ 只认端口的写法会把整台 stdio 部署判成 not —— 那是「本通道不适用」，不是阴性。
+# 判据：标准输入/输出是 pipe 或 socket（被父进程驱动）而不是 tty（人敲的）。
+proc_service_evidence() {
+  _pid=$1
+  _ls=$(proc_is_listening "$_pid")
+  [ "$_ls" = "listening" ] && { echo listening; return 0; }
+  if [ -d "/proc/$_pid/fd" ]; then
+    _hit=""
+    for _n in 0 1; do
+      _t=$(readlink "/proc/$_pid/fd/$_n" 2>/dev/null || true)
+      case "$_t" in pipe:*|socket:*) _hit="yes" ;; esac
+    done
+    if [ -n "$_hit" ]; then echo stdio; return 0; fi
+    [ "$_ls" = "unknown" ] && { echo unknown; return 0; }
+    echo none
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    _o=$(lsof -a -p "$_pid" -d 0,1 2>/dev/null | tail -n +2 || true)
+    case "$_o" in
+      *PIPE*|*FIFO*|*unix*|*sock*) echo stdio ;;
+      "") echo unknown ;;
+      *) echo none ;;
+    esac
+    return 0
+  fi
+  echo unknown
+}
+
 # 这个 pid 是否持有 LISTEN socket —— 服务证据（三值，不许把「判不了」写成「不是」）。
 # 2026-10-27 加：Portal 以 `python3 -` 起服务时 argv 里没有标记，只有 cwd 和「在监听」两格可用。
 proc_is_listening() {
@@ -255,14 +287,21 @@ step4_stop_old() {
       continue
     fi
     # cwd 命中还不够：一个路过的手敲解释器 cwd 也在 $DEPLOY。要么 argv 带标记，
-    # 要么它真的在监听（服务）——两者都没有的，不许当旧进程杀。
+    # 要么有服务证据（listening 端口 / stdio 管道）。
+    # 2026-10-27 反例（Neuromancer 递的）：只认 LISTEN 的或门会把整台 stdio 部署判成阴性。
     case "$ARGV" in
       *mcp_server*) : ;;
       *)
-        if ! proc_is_listening "$cand"; then
-          echo "  跳过 PID=$cand：cwd 命中但 argv 无标记、也不在监听（不是服务，不动手）"
-          continue
-        fi ;;
+        _ev=$(proc_service_evidence "$cand")
+        case "$_ev" in
+          listening|stdio) : ;;
+          unknown)
+            echo "  ? PID=$cand：cwd 命中、argv 无标记，服务证据判不了（不动手）"
+            continue ;;
+          *)
+            echo "  跳过 PID=$cand：cwd 命中但 argv 无标记、无服务证据（argv=$ARGV）"
+            continue ;;
+        esac ;;
     esac
     OLD_PID="$cand"; OLD_START=$(proc_identity "$cand"); break
   done
