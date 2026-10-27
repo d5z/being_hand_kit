@@ -36,6 +36,17 @@ T_NULL_NULL = """COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
 python3 13000 alice 0r   CHR    1,3     0t0      512 /dev/null
 python3 13000 alice 1w   CHR    1,3     0t0      512 /dev/null
 """
+# socketpair 驱动的 stdio（macOS 26.4.1 实测形状，2026-10-27 Neuromancer 造）：
+# $4=0u/1u、$5=unix/unix。这正是「-Fn 的 n 行与 PIPE 同构」的那一形。
+T_SOCK_SOCK = """COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+sleep   16152  d5c    0u  unix 0x4221590212a2d867      0t0      ->0xd40de06d9e2c58ba
+sleep   16152  d5c    1u  unix 0x4221590212a2d867      0t0      ->0xd40de06d9e2c58ba
+"""
+# socket 的半个形状：stdin 被 socketpair 驱动，stdout 给 /dev/null
+T_SOCK_NULL = """COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+sleep   16153  d5c    0u  unix 0x4221590212a2d867      0t0      ->0xd40de06d9e2c58ba
+sleep   16153  d5c    1w   CHR    3,2               0t0      512 /dev/null
+"""
 
 
 def _fn_source():
@@ -101,6 +112,27 @@ class ServiceEvidenceTest(unittest.TestCase):
     def test_missing_pid_is_unknown_not_none(self):
         """rc≠0 ⇒ unknown。旧写法 `lsof | tail -n +2` 会把不存在的 pid 读成 none。"""
         self.assertEqual(self._ask(rc=1), "unknown")
+
+    # ---- socket 形（2026-10-27 Neuromancer 造的形状；我这边补的格） ----
+    def test_socketpair_is_stdio(self):
+        """$5=unix/unix：socketpair 驱动的 stdio 仍是「两头被驱动」，判据落 stdio。
+
+        为什么收它：判据问的是「有人从两头驱动我」，不问传输介质。
+        拒它会把 socketpair 起的 server 判成 none —— 阴性误判让旧进程活着，
+        在停旧进程这条路上代价比误杀低，但仍然是错。
+        """
+        self.assertEqual(self._ask(T_SOCK_SOCK), "stdio")
+
+    def test_half_socket_is_none(self):
+        """socket 的半个形状（stdin 被驱动、stdout 给 /dev/null）必须落 none。"""
+        self.assertEqual(self._ask(T_SOCK_NULL), "none")
+
+    def test_mixed_pipe_unix_is_stdio(self):
+        """且门只看「两头都在被驱动集合里」，不要求两头同形（pipe|unix 混搭也算）。"""
+        table = ("COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+                 "sleep   14000 alice 0    PIPE 0x7f30        0t0      ->0x7f31\n"
+                 "sleep   14000 alice 1u   unix 0x4221         0t0      ->0x4222\n")
+        self.assertEqual(self._ask(table), "stdio")
 
     def test_bare_fd_anchor(self):
         """回归点：$4 在 PIPE 行是裸 `0`/`1`。
