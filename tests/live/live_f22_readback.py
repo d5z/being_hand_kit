@@ -8,6 +8,14 @@ cdp_open uses. Does not touch the developer's real Chrome profile.
 
 Do not import hand.* until HAND_* env is set: cdp_core / cdp_launcher
 bind CDP_HOST at import time.
+
+Readers: Alice · 人工活体探针，手动跑（起真 Chrome，几十秒到分钟级）。
+         不进 MODULES：它要真浏览器与真网络，进套件会把单测拖成集成测。
+         刷新时机：cdp_type 的回读契约改动之后重跑一次，红绿两半都要整段看，
+         不只看总数。
+         2026-10-28 08:0x 从 tests/f22_readback_test.py 移到这里并改名 ——
+         原名以 `_test.py` 结尾，任何 `test_*` runner 都看不见它，读起来像
+         「有人跑」，实际上零读者。
 """
 import json
 import os
