@@ -60,6 +60,34 @@ class RegistryDetectionTest(unittest.TestCase):
         self.assertEqual(run_tests.duplicate_registrations(
             modules=mods("test_a", "test_b")), [], "干净清单不许报重复")
 
+
+class OutOfScopeTest(unittest.TestCase):
+    """范围本身要有分辨力：`on disk` 说的是「tests/ 顶层」，不是「磁盘上所有」。
+
+    2026-10-27 第四笔（Neuromancer 的「『全部』是承重词」教我的）。
+    双向两格，缺一格就是恒真/恒假门：
+      已知坏格/反向：喂一个纯顶层清单 → out_of_scope 必须**空**（不许永远报非空）
+      已知好格：真仓库         → out_of_scope 必须**非空**，且与分母不相交
+    """
+
+    def test_flat_list_has_no_out_of_scope(self):
+        # 反向那一格：一个只有顶层文件的仓，范围外的数必须是 0。
+        # 少了这一格，「永远打印『范围外另有 N 个』」也能通过。
+        self.assertEqual(run_tests.out_of_scope(files=[]), [])
+
+    def test_subdir_files_are_reported_and_never_in_the_denominator(self):
+        self.assertEqual(
+            run_tests.out_of_scope(files=["production/test_a.py", "test_b.py"]),
+            ["production/test_a"])
+
+    def test_real_repo_has_out_of_scope_and_they_are_disjoint_from_denominator(self):
+        # 真仓这一格量的是「范围外确实有东西」+「它没混进分母」。
+        oos = run_tests.out_of_scope()
+        on_disk, _registered, _missing, _ghost = run_tests.registry_report()
+        self.assertTrue(oos, "真仓 tests/ 子目录里有 test_*.py（run_production.py L2–L6）")
+        self.assertEqual(set(oos) & set(on_disk), set(),
+                         "子目录文件混进分母 → missing 会把它们报成「未注册」的假警报")
+
     def test_real_repo_is_the_known_good_cell(self):
         # 唯一一条碰真仓库的：它证明上面三格之外，现实这一格也是好的。
         on_disk, registered, missing, ghost = run_tests.registry_report()

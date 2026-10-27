@@ -77,9 +77,41 @@ def duplicate_registrations(modules=None):
     return sorted({n for n in reg if reg.count(n) > 1})
 
 
+def out_of_scope(files=None):
+    """tests/ 子目录里的 test_*.py —— 它们不在本 runner 的分母里，但必须在回执上。
+
+    2026-10-27 第四笔（围炉 #34，Neuromancer 的「『全部』是承重词」教我的）：
+    本 runner 的分母是 os.listdir(tests/) 顶层、非递归。而 `on disk` 这个词的
+    通常含义是「这棵目录树里所有的」。实查：仓内 74 个 test_*.py，69 在顶层
+    （全在 MODULES），5 个在 tests/production、tests/integration 下，由
+    tests/run_production.py 的 L2–L6 跑。
+
+    它们不是漏跑，是另一个 gate。所以修法不是把它们塞进 MODULES（那会把
+    production gate 混进单测、破坏分层），而是：
+      ① 那行说出自己的范围（listdir ≠ 磁盘）；
+      ② 范围外的数也报出来 —— 只报「范围内 N/N」的回执，等于用范围冒充全集。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    if files is None:
+        files = []
+        for root, dirs, fs in os.walk(here):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in fs:
+                if f.startswith("test_") and f.endswith(".py"):
+                    files.append(os.path.relpath(os.path.join(root, f), here))
+    # 顶层文件不属于「范围外」——这条过滤对注入的清单也生效，
+    # 否则 fake 数据走的路径与真实路径不同，两格测的不是同一件事。
+    return sorted(p[:-3].replace(os.sep, "/") if p.endswith(".py") else p.replace(os.sep, "/")
+                  for p in files if os.sep in p)
+
+
 if __name__ == "__main__":
     on_disk, registered, missing, ghost = registry_report()
-    print(f"modules: {len(registered)}/{len(on_disk)} on disk")
+    print(f"modules: {len(registered)}/{len(on_disk)} on disk  (scope: tests/ 顶层，非递归)")
+    oos = out_of_scope()
+    if oos:
+        print(f"  · 范围外另有 {len(oos)} 个 test_*.py 不归这把尺子（tests/run_production.py L2–L6）：")
+        print(f"      {', '.join(oos)}")
     problems = []
     for m in missing:
         problems.append(f"未注册（文件在磁盘上但清单里没有，永不会跑）: tests/{m}.py")
