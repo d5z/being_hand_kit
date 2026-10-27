@@ -95,6 +95,24 @@ proc_identity_ticks() {
   printf '%s\n' "${20}"
 }
 
+# 这个 pid 是否持有 LISTEN socket —— 服务证据（三值，不许把「判不了」写成「不是」）。
+# 2026-10-27 加：Portal 以 `python3 -` 起服务时 argv 里没有标记，只有 cwd 和「在监听」两格可用。
+proc_is_listening() {
+  _pid=$1
+  if command -v ss >/dev/null 2>&1; then
+    _out=$(ss -ltnp 2>/dev/null || true)
+    [ -n "$_out" ] || { echo unknown; return 0; }
+    case "$_out" in *"pid=$_pid,"*) echo listening ;; *) echo not ;; esac
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    _out=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$_pid" 2>/dev/null | tail -n +2 || true)
+    case "$_out" in "") echo not ;; *) echo listening ;; esac
+    return 0
+  fi
+  echo unknown
+}
+
 proc_cwd() {
   pid=$1
   if [ -e "/proc/$pid/cwd" ]; then
@@ -179,13 +197,22 @@ proc_state() {
 # 结论：可移植性不在读 man，在**不把判据交给平台的默认值**——自己把链走一遍，两边都对。
 MINE=""
 _p=$$
+_depth=0
+_trunc=""
 for _ in $(seq 1 32); do
   [ -z "$_p" ] && break
   [ "$_p" = "0" ] && break
   MINE="$MINE $_p"
+  _depth=$((_depth + 1))
   [ "$_p" = "1" ] && break
   _p=$(proc_ppid "$_p")
 done
+# 门要报告它走到了哪里（2026-10-27 Neuromancer 83dcaed 的教训）：链长超过 32 层时
+# 剩下的祖先不受保护，这一格不许沉默——判不了就说判不了，不假装走完了。
+if [ -n "$_p" ] && [ "$_p" != "1" ] && [ "$_p" != "0" ]; then
+  _trunc="第 ${_depth} 层截断（上溯到 PID=$_p 没到 1）"
+  echo "  ⚠ 祖先链在${_trunc}：更上层的进程不在自杀保护内，argv 含 mcp_server.py 时会被当目标"
+fi
 
 
 # ═══ [4/5] 停旧进程 ═══
@@ -201,7 +228,11 @@ step4_stop_old() {
   OLD_START=""
   N_CAND=0
   N_MINE=0
-  CANDS=$(pgrep -f 'mcp_server\.py' || true)
+  # 候选 = 名字命中 ∪ 所有 python 进程（cwd 闸在后面收）
+  # 2026-10-27 实测我这台：真正在跑的 hand 服务是 `python3 -`（Portal 把脚本喂进 stdin），
+  # argv 里根本没有 mcp_server.py —— 名字判据完全看不见它，于是 step4 报「无运行中的进程」
+  # 并跳过停旧进程，rsync 覆盖之后旧进程继续以旧代码活在内存里。**沉默的「没有」比死代码更贵。**
+  CANDS=$( { pgrep -f 'mcp_server\.py' || true; pgrep -x python3 || true; } | sort -u )
   for cand in $CANDS; do
     N_CAND=$((N_CAND + 1))
     # 排除我自己和整条祖先链（2026-10-27 实测）：从一个 cwd=$DEPLOY 的外壳里跑本脚本，
@@ -223,6 +254,16 @@ step4_stop_old() {
       echo "  跳过 PID=$cand：cwd=$CWD ≠ $DEPLOY（不是本部署的进程）"
       continue
     fi
+    # cwd 命中还不够：一个路过的手敲解释器 cwd 也在 $DEPLOY。要么 argv 带标记，
+    # 要么它真的在监听（服务）——两者都没有的，不许当旧进程杀。
+    case "$ARGV" in
+      *mcp_server*) : ;;
+      *)
+        if ! proc_is_listening "$cand"; then
+          echo "  跳过 PID=$cand：cwd 命中但 argv 无标记、也不在监听（不是服务，不动手）"
+          continue
+        fi ;;
+    esac
     OLD_PID="$cand"; OLD_START=$(proc_identity "$cand"); break
   done
 
