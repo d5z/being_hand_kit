@@ -110,12 +110,19 @@ def _activate_evidence(target: str, error=None) -> dict:
     return {"level": "activate_issued", "detail": detail, "verified": False}
 
 
-def _browser_place(target: str, navigate_confirmed: bool, reason=None) -> Place:
+def _browser_place(target: str, navigate_confirmed: bool, reason=None,
+                   origin=None, owner=None) -> Place:
     """Browser Place + honest evidence level.
 
     navigate_confirmed=True  → level "navigate_confirmed" (path ①)
     otherwise                → level "endpoint_alive"     (path ② downgrade)
     `reason` says exactly which fact failed — the downgrade is never silent.
+
+    `origin` / `owner` answer a different question than `level` does: not *how
+    much* the open proved, but *whose* browser it proved it on. Nothing in this
+    receipt used to distinguish "the endpoint I just spawned" from "an endpoint
+    that was already answering", which is how an open can end up reading a page
+    someone else started 166 days ago without saying so.
     """
     if navigate_confirmed:
         evidence = {
@@ -128,6 +135,20 @@ def _browser_place(target: str, navigate_confirmed: bool, reason=None) -> Place:
         if reason:
             detail += f"；{reason}"
         evidence = {"level": "endpoint_alive", "detail": detail, "verified": False}
+    # Whose browser is on the other end — a fact about the reading, not a log
+    # line. `origin` = "spawned" | "attached"; `owner.state` = mine/stranger/
+    # unknown as the spawn record supports it. An attached open that lands on a
+    # stranger's browser is still allowed (two installs on one box legitimately
+    # share :9222) — but it can no longer be invisible.
+    if origin:
+        evidence["origin"] = origin
+    if isinstance(owner, dict):
+        evidence["owner"] = {
+            "state": owner.get("owner"),
+            "reason": owner.get("reason"),
+            "pid": (owner.get("record") or {}).get("pid"),
+            "cmdline_checked": owner.get("cmdline_checked"),
+        }
     try:
         from hand.perception.cdp_launcher import endpoint_info
         info = endpoint_info()
@@ -193,9 +214,21 @@ def open_place(target: str) -> Place:
     # ── URL → browser ───────────────────────────────────────────────
     if _is_navigable_url(target):
         # Guarantee a CDP endpoint. On headless Linux this spawns Chrome.
-        from hand.perception.cdp_launcher import ensure_chrome, chrome_running
-        if not chrome_running():
+        #
+        # "An endpoint answers" is not "my endpoint answers". The origin is a
+        # fact that has to be read *here*, at the reuse point, and carried into
+        # the receipt: on 2026-10-26 an open() silently attached to a browser
+        # another process had started 166 days earlier, every reading that
+        # followed was taken on a stranger's page, and nothing said so.
+        from hand.perception.cdp_launcher import (
+            ensure_chrome, chrome_running, owner_status)
+        origin = "attached" if chrome_running() else "spawned"
+        if origin == "spawned":
             ensure_chrome()
+        # Read the record *after* the spawn: it is written at birth, so a
+        # spawned open reads back "mine" while an attached open reads back only
+        # what the record actually supports (mine / stranger / unknown).
+        open_owner = owner_status()
 
         # Path ①: CDP navigate (reuse or create a tab), then *verify* it.
         nav_error = None
@@ -221,7 +254,8 @@ def open_place(target: str) -> Place:
                     confirmed, reason = _navigate_confirmed(target, ws, nav_error)
                 finally:
                     ws.close()
-                return _browser_place(target, confirmed, reason)
+                return _browser_place(target, confirmed, reason,
+                                  origin, open_owner)
         except Exception as e:
             # Path ② downgrade — never silent: the receipt must be able to say
             # "endpoint alive, navigation unproven" and name the exception.
@@ -231,7 +265,8 @@ def open_place(target: str) -> Place:
         # Otherwise this was a previous fake success that corrupted downstream
         # routing state (every later cdp_* call would fail confusingly).
         if chrome_running():
-            return _browser_place(target, False, nav_error)
+            return _browser_place(target, False, nav_error,
+                                  origin, open_owner)
         raise RuntimeError(
             f"cannot open {target}: no CDP endpoint and no browser binary — "
             "set $CHROME or install Chrome/Edge"
