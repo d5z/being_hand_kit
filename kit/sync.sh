@@ -170,6 +170,13 @@ proc_state() {
 }
 
 # 我自己的祖先链
+# 为什么不写成「[ "$_p" = "$$" ] && continue」：两平台默认语义相反，一行判不住两边。
+#   2026-10-27 实测 Linux procps-ng 3.3.17：man 只承诺 "never report itself"，
+#   祖先照报（从一个 argv 含 pattern 的 shell 里跑 pgrep，它自己和父 shell 都被列出）
+#   ⇒ 只判 $$ 的写法在这里是「活的但只防 1/N」。
+#   2026-10-27 Neuromancer 实测 macOS：pgrep 默认排除自己 + 全部祖先
+#   ⇒ 同一行在那边是死代码（他给它记了两小时功劳）。
+# 结论：可移植性不在读 man，在**不把判据交给平台的默认值**——自己把链走一遍，两边都对。
 MINE=""
 _p=$$
 for _ in $(seq 1 32); do
