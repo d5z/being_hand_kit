@@ -342,3 +342,34 @@ class MachineRecordIsolationTest(unittest.TestCase):
 
         self.assertEqual(os.path.exists(cdp_launcher.OWNER_FILE), before,
                          "a faked spawn wrote a spawn record for the real machine")
+
+
+class OwnerFileScopingTest(unittest.TestCase):
+    """0.13.8 — a second endpoint must not answer to the default endpoint's record.
+
+    Live sample, 2026-10-27: a live check on port 9444 called ensure_chrome and
+    wrote a record for a test browser into ~/.hand-cdp-owner.json — the same
+    file the real install on 9222 reads. For a moment the live install "owned"
+    a browser it had never spawned. That is the family "a test writes fake
+    ownership into real state" again, and the fix is to stop requiring a
+    remembered env var: scoping is the default, opting out is the input.
+    """
+
+    def test_default_port_keeps_the_historic_path(self):
+        with mock.patch.object(cdp_launcher, "CDP_PORT", 9222), \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HAND_CDP_OWNER_FILE", None)
+            self.assertEqual(cdp_launcher._owner_file(), cdp_launcher.OWNER_FILE)
+
+    def test_another_port_gets_its_own_record(self):
+        with mock.patch.object(cdp_launcher, "CDP_PORT", 9444), \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HAND_CDP_OWNER_FILE", None)
+            path = cdp_launcher._owner_file()
+        self.assertNotEqual(path, cdp_launcher.OWNER_FILE)
+        self.assertIn("9444", os.path.basename(path))
+
+    def test_an_explicit_path_still_wins(self):
+        with mock.patch.object(cdp_launcher, "CDP_PORT", 9444), \
+             mock.patch.dict(os.environ, {"HAND_CDP_OWNER_FILE": "/tmp/x.json"}):
+            self.assertEqual(cdp_launcher._owner_file(), "/tmp/x.json")

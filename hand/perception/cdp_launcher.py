@@ -261,10 +261,28 @@ OWNER_FILE = os.path.join(os.path.expanduser("~"), ".hand-cdp-owner.json")
 
 
 def _owner_file():
-    """HAND_CDP_OWNER_FILE lets a test keep its own record (same reason
+    """Where this endpoint's spawn record lives.
+
+    HAND_CDP_OWNER_FILE lets a test keep its own record (same reason
     HAND_CDP_STATE_FILE exists: a hermetic test must not answer to the dev
-    machine's real spawn history)."""
-    return os.environ.get("HAND_CDP_OWNER_FILE") or OWNER_FILE
+    machine's real spawn history).
+
+    0.13.8 — without that env var, the file is scoped to the port. Live sample
+    2026-10-27: a live check on an isolated port (9444) wrote a record for a
+    test browser into the same file the real install (9222) reads, so the live
+    install briefly "owned" a browser it had never spawned — a fresh instance
+    of the family "a test writes fake ownership into real state". Isolation had
+    to be remembered; now it is the default, and remembering is only needed to
+    opt out of it. The default port keeps the plain path so existing installs
+    find their record where they left it.
+    """
+    explicit = os.environ.get("HAND_CDP_OWNER_FILE")
+    if explicit:
+        return explicit
+    if CDP_PORT == 9222:
+        return OWNER_FILE
+    return os.path.join(os.path.expanduser("~"),
+                        f".hand-cdp-owner-{CDP_PORT}.json")
 
 
 def _proc_start_ticks(pid):
