@@ -152,6 +152,16 @@ proc_runner() {
   printf '%s' "$_a" | tr 'A-Z' 'a-z'
 }
 
+proc_runner_ok() {
+  # 白名单要精确：`python3.*` 这种尾通配会把 `python3-config`（配置脚本）也放进来。
+  # 名单来自 2026-10-27 Neuromancer 那台真机 11 个 kit 进程的 argv[0]：裸名 / 绝对路径 /
+  # venv / CPython re-exec 的 "Python" / 应用内嵌 node —— 全部靠 basename+小写归一后落在
+  # python|python3|python3.N|node|nodejs 之内，11/11 过。
+  # 不在名单里不等于「不是解释器」，只等于「我没验过它」——措辞不许越界。
+  printf '%s\n' "$1" | grep -Eq '^(python|python3|python3\.[0-9]+|node|nodejs)$' \
+    && echo yes || echo no
+}
+
 proc_listening_by_lsof() {
   _pid=$1
   _rc=0
@@ -369,12 +379,10 @@ step4_stop_old() {
     # 用户未保存的内容会被 kill 掉。分开它们的不是 argv 内容，是执行者：
     # 真 server 是解释器在跑代码，编辑器只是把那个文件名当参数。
     _run=$(proc_runner "$ARGV")
-    case "$_run" in
-      python|python3|python3.*|node|nodejs) : ;;
-      *)
-        echo "  跳过 PID=$cand：执行者是「$_run」，不是解释器（argv=$ARGV）"
-        continue ;;
-    esac
+    if [ "$(proc_runner_ok "$_run")" != "yes" ]; then
+      echo "  跳过 PID=$cand：执行者「$_run」不在解释器白名单（不是我不认它，是没验过它；若它真是某 kit 的运行时，请扩白名单）argv=$ARGV"
+      continue
+    fi
     # cwd 命中还不够：一个路过的手敲解释器 cwd 也在 $DEPLOY。要么 argv 带标记，
     # 要么有服务证据（listening 端口 / stdio 管道）。
     # 2026-10-27 反例（Neuromancer 递的）：只认 LISTEN 的或门会把整台 stdio 部署判成阴性。

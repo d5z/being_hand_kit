@@ -54,7 +54,7 @@ def _fn_source():
     """把要测的两个函数段切出来，不跑整脚本。"""
     text = SYNC.read_text(encoding="utf-8")
     out = []
-    for fn in ("proc_runner", "proc_stdio_any", "proc_listening_by_lsof",
+    for fn in ("proc_runner", "proc_runner_ok", "proc_stdio_any", "proc_listening_by_lsof",
                "proc_is_listening", "proc_service_evidence"):
         start = text.index("%s() {" % fn)
         end = text.index("\n}\n", start) + 3
@@ -165,6 +165,22 @@ class ServiceEvidenceTest(unittest.TestCase):
                 r = subprocess.run(["bash", "-c", '. "$1" >/dev/null 2>&1; proc_runner "$2"',
                                     "_", self.fn, argv], capture_output=True, text=True)
                 self.assertEqual(r.stdout, want)
+
+    # ---- 白名单要精确：python3.* 会把 python3-config 放进来 ----
+    def test_runner_whitelist_exact(self):
+        cases = {
+            "python": "yes", "python3": "yes", "python3.14": "yes",
+            "node": "yes", "nodejs": "yes",
+            # 尾通配时代会误放行的那一个
+            "python3-config": "no", "python3.14-config": "no",
+            # 编辑器 / 检视器 / Electron（Neuromancer 那台 desktop kit 的运行时；没验过就不放行）
+            "tail": "no", "vim": "no", "electron": "no", "less": "no",
+        }
+        for runner, want in cases.items():
+            with self.subTest(runner=runner):
+                r = subprocess.run(["bash", "-c", '. "$1" >/dev/null 2>&1; proc_runner_ok "$2"',
+                                    "_", self.fn, runner], capture_output=True, text=True)
+                self.assertEqual(r.stdout.strip(), want)
 
     # ---- 宽门：一条头被驱动就算「有人喂着」（半个 server）----
     def _ask_any(self, fd0, fd1):
