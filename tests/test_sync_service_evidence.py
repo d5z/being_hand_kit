@@ -55,11 +55,46 @@ def _fn_source():
     text = SYNC.read_text(encoding="utf-8")
     out = []
     for fn in ("proc_runner", "proc_runner_ok", "proc_stdio_any", "proc_listening_by_lsof",
-               "proc_is_listening", "proc_service_evidence", "proc_cwd"):
+               "proc_is_listening", "proc_service_evidence", "proc_cwd",
+               "proc_identity_gate"):
         start = text.index("%s() {" % fn)
         end = text.index("\n}\n", start) + 3
         out.append(text[start:end])
     return "\n".join(out)
+
+
+class IdentityGateTest(unittest.TestCase):
+    """动手门的身份门三值：一致 / 变了 / 判不了。
+
+    形状来自 2026-10-27 Neuromancer：他的门只判「出生时刻非空」，两侧没有可比对象
+    ⇒ 对「还是不是同一个进程」零分辨力。查我这侧同族不同形：**两侧都读不到时
+    `[ "" != "" ]` 为假 ⇒ 放行**，等于没有身份证据也过门。修法：空一律判不了。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = _fn_source()
+
+    def _gate(self, claimed, now):
+        code = '%s\nproc_identity_gate "%s" "%s"\n' % (self.src, claimed, now)
+        r = subprocess.run(["bash", "-c", code], capture_output=True, text=True)
+        return r.returncode
+
+    def test_equal_is_ok(self):
+        self.assertEqual(self._gate("b:123", "b:123"), 0)
+
+    def test_changed_is_refused(self):
+        self.assertEqual(self._gate("b:123", "b:456"), 1)
+
+    def test_both_empty_is_unknown_not_pass(self):
+        # 修之前：空 == 空 ⇒ 放行（没有身份证据也过门）
+        self.assertEqual(self._gate("", ""), 2)
+
+    def test_claimed_empty_is_unknown(self):
+        self.assertEqual(self._gate("", "b:123"), 2)
+
+    def test_now_empty_is_unknown(self):
+        self.assertEqual(self._gate("b:123", ""), 2)
 
 
 class ServiceEvidenceTest(unittest.TestCase):

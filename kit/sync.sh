@@ -287,6 +287,26 @@ proc_ppid() {
   ps -o ppid= -p "$pid" 2>/dev/null | awk '{print $1}'
 }
 
+# 动手门的身份门：认领时记下的身份 vs 动手前重读的身份。
+# 2026-10-27 Neuromancer 的判据（我这边也踩了同一族）：**门的分辨力 = 两个值的跨度
+# × 值的唯一性 × 空值被读成什么**，三项任一为 0，门整道废掉。
+#   跨度：一边认领时取、一边动手时取 ⇒ 才有「还是不是它」的分辨力；
+#         两侧都在动手那刻取 ⇒ 只答「它此刻存在」，名字叫「复核」但答的是别的问题。
+#   唯一性：starttime 是 10ms tick，同 tick 两次出生同值——见 proc_age_ticks。
+#   空值：**两侧都读不到时，`[ "" != "" ]` 为假 ⇒ 放行**，等于「没有身份证据也过门」。
+#         所以空一律判不了，不许进比较。
+# 返回：0 = 一致可动手；1 = 变了要拒绝；2 = 判不了（任一侧空）
+proc_identity_gate() {
+  _claimed=$1; _now=$2
+  if [ -z "$_claimed" ] || [ -z "$_now" ]; then
+    return 2
+  fi
+  if [ "$_claimed" = "$_now" ]; then
+    return 0
+  fi
+  return 1
+}
+
 # 三值判读：alive / gone / reused / unknown。
 # 2026-10-27 Neuromancer 实测 macOS：`ps -o stat= -p <pid>` 对「已死」「不存在」「超范围」
 # 三者同形——rc=1、stdout 空、stderr 空。单靠 ps 分不开 gone 和 unreadable。
@@ -477,12 +497,20 @@ step4_stop_old() {
       # 动手门前重读：判与 kill 之间可能换人（同 tick 复用 / cwd 被换）
       _now_start=$(proc_identity "$_p")
       _now_cwd=$(proc_cwd "$_p")
-      if [ "$_now_start" != "$_s" ]; then
+      proc_identity_gate "$_s" "$_now_start"
+      _idg=$?
+      if [ "$_idg" = "2" ]; then
+        echo "  ? 判不了 PID=$_p：身份读不到（认领=${_s:-空} 现在=${_now_start:-空}）——没有身份证据，不动手"
+        _n_unknown=$((_n_unknown + 1)); _l_unknown="$_l_unknown $_p"; continue
+      fi
+      if [ "$_idg" = "1" ]; then
         echo "  ✗ 拒绝 PID=$_p：动手前重读身份变了（$_s → ${_now_start:-读不到}）——不 kill"
         _n_refused=$((_n_refused + 1)); _l_refused="$_l_refused $_p"; continue
       fi
+      # 这道门比的是「此刻 cwd 是不是部署目录」——比的是**常量**，没有跨度，
+      # 所以它答不了「还是不是它」（那是上一道门的活）。别把它读成身份复核。
       if [ "$_now_cwd" != "$DEPLOY_REAL" ] && [ "$_now_cwd" != "$DEPLOY" ]; then
-        echo "  ✗ 拒绝 PID=$_p：动手前重读 cwd 变了（${_now_cwd:-读不到}）——不 kill"
+        echo "  ✗ 拒绝 PID=$_p：动手前 cwd 不在部署目录（${_now_cwd:-读不到}）——不 kill"
         _n_refused=$((_n_refused + 1)); _l_refused="$_l_refused $_p"; continue
       fi
       OLD_PID="$_p"; OLD_START="$_s"
