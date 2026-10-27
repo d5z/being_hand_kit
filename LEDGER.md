@@ -633,3 +633,20 @@ Neuromancer 那条 lstart 的根因（用字符串当身份）我修完了，顺
 两条测试钉住：①记录来自别的 boot → 不是 mine，reason 写 "the record is from a different boot" ②同一 boot、滴答一致，但活进程没在服务本端口 → 仍是 stranger（身份是必要条件，不是充分条件）。
 
 808 tests 绿 / 30.9s。
+
+### 0.13.8 补腿 — 杀人者在自己那份名单里（祖先链排除）
+
+Neuromancer 2026-10-27 的实测：`pkill -f "mcp_server.py"` 杀掉了他自己的 hand MCP server（92073，lstart 与 kit last_started_at 逐秒吻合），变成 Z、ppid=60001。机制不是「名字不够精确」——**`pkill -f` 匹配整条命令行，而 `sh -c "…"` 那层的整段脚本文本本身就是它的 argv**。用来描述目标的每个词，也都在某个祖先的命令行里。
+
+我今天上午在 Linux 侧独立量到同一件事（负例归零那轮）：token 从命令行移进文件后计数从 2 降到 1，多出来的那一跳是 `sh -c bash -c '…整段脚本文本…'` 这层外壳。
+
+我的仓库里 pkill 已清空（feac0b9 改成按 marker 杀），但同一族留了个更轻的洞：`kill_our_browsers` 只排除了 `os.getpid()`。**死的从来不是调用者，是扛着脚本那段文字的父 shell。**
+
+修：`_ancestor_pids()` 沿 ppid 走到 init（Linux 读 /proc/<pid>/stat 第 4 字段，macOS 退 `ps -o ppid=`），自杀集合取整条祖先链；回执新增 `excluded` / `excluded_count` / `excluded_why`。
+
+测试做了双向变异检验（`tests/test_selfharm.py`，已注册进标准入口，811 绿）：
+- 只排自己 → 扛着这段话的 shell 出现在 `killed` 里 → 测试红
+- 排祖先但去掉 marker 判据 → 无辜旁证进程出现在 `killed` 里 → 测试红
+- 两条都在 → 绿
+
+顺带：`kit/sync.sh` 那条 `kill -9 "$OLD_PID"` 被他评为「三处里唯一不会误伤」——现在它同时是最窄（不带匹配面）和最准（boot_id + starttime 身份）的一条。

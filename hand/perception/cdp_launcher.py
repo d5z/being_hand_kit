@@ -703,6 +703,37 @@ def _argv_of(pid):
     return ("ok", out.split())
 
 
+def _ancestor_pids(pid=None, depth=32):
+    """This process and everyone above it.
+
+    2026-10-27b (Neuromancer's self-inflicted kill): excluding only os.getpid()
+    is not enough. When a script arrives through `sh -c "..."`, the whole script
+    text *is* the shell's argv -- so any token used to describe a target also
+    sits in an ancestor's command line. The match set and the killer overlap by
+    construction. Excluding the ancestor chain is what makes a cmdline-based
+    kill safe."""
+    out, cur = [], int(pid or os.getpid())
+    for _ in range(depth):
+        if cur <= 0:
+            break
+        out.append(cur)
+        try:
+            with open(f"/proc/{cur}/stat", encoding="utf-8") as f:
+                # field 4 = ppid; comm may contain spaces/parens -> split after ')'
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except Exception:
+            try:
+                r = subprocess.run(["ps", "-o", "ppid=", "-p", str(cur)],
+                                   capture_output=True, text=True, timeout=5)
+                ppid = int(r.stdout.strip() or 0) if r.returncode == 0 else 0
+            except Exception:
+                ppid = 0
+        if ppid == cur:
+            break
+        cur = ppid
+    return out
+
+
 def kill_our_browsers(sig=9, marker=None, dry_run=False):
     """Kill only browsers whose argv carries OUR marker. Never by name.
 
@@ -724,9 +755,13 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
                 "why": f"could not enumerate candidates: {e}"}
 
     killed, skipped, unreadable, gone = [], [], [], []
-    me = os.getpid()
+    # self + ancestors: the `sh -c "..."` that carried this call has our words
+    # in its argv, so it would otherwise be a candidate for its own kill.
+    mine = set(_ancestor_pids())
+    excluded = []
     for pid in pids:
-        if pid == me:
+        if pid in mine:
+            excluded.append(pid)
             continue
         state, argv = _argv_of(pid)
         if state == "gone":
@@ -753,6 +788,8 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
             "skipped_why": "argv carries no marker of this install",
             "unreadable": unreadable, "unreadable_count": len(unreadable),
             "gone": gone, "gone_count": len(gone),
+            "excluded": excluded, "excluded_count": len(excluded),
+            "excluded_why": "self or ancestor: its argv carries this call",
             "marker": marker}
 
 
