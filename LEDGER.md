@@ -670,3 +670,36 @@ Neuromancer 2026-10-27 在 macOS 上原样跑 `sync.sh` 的 [4/5]：`pgrep -f 'p
 ```
 
 **事故（同日）**：我在给 sync.sh 加 `--check` 之前就跑了 `./kit/sync.sh --check` —— 那次补丁抛了 ValueError 没落盘，`--check` 在文件里根本不存在，于是脚本完整跑了一遍：文件同步 + kill 掉活体 server。教训与「写了≠跑过」同族：**我信任的是我即将加上的那个 flag，而不是文件里真的有什么。** 副作用是真的（部署目录已被同步成本地链、活体重启为 0.13.7），如实记账。
+
+### 0.13.8 补腿 — sync.sh 里的绝对路径，和 rsync --delete 那道没有的闸
+
+Neuromancer 12:57 报了两层，第二层比第一层值钱：
+
+**① Grove 发布管线把 `/home/alice` 洗成 `{{KIT_HOME}}`**（docs/grove_publish_sop.md §9 记过，我当时判「影响良性」）。实测核对：
+
+```
+我本地 tar  /tmp/hand-0.13.5.tar.gz   DEV="/home/alice/Hand"
+Grove 下载包 sync.sh                  DEV="{{KIT_HOME}}/Hand"          ← 字面量
+Grove 下载包 hand/plan/engine.py:22   "{{KIT_HOME}}/.local/bin/opencode"
+（bundle 197664 vs 本地 196013，差 1651 字节，就是这个变换）
+```
+
+⇒ **同一个脚本，两份人群、两段失败史**：他那份第一步就死（源路径是字面量），我这份今天跑通了全五步。他的「从未成功跑完过」对下载包成立，我的「早上刚跑过」对仓库成立。两句都对。
+
+**② 真正要命的是 `rsync -a --delete` 没有源闸门**：源存在但空 → 忠实清空部署目录，rc=0，打印成功。他现在没被清空，是因为源路径坏了、rsync 报错退出——**「它现在坏着所以没事」是运气**。
+
+修：
+- 撤掉脚本里所有绝对路径：`DEV` 从 `$SCRIPT_DIR/..` 推、`DEPLOY` 从 `$HOME` 推（可用 `HAND_DEPLOY_DIR` 覆盖，给沙盒用）。发布管线再洗也无处可洗。
+- 前置闸门：五个关键文件必须存在 + `hand/` 里 `*.py` ≥ 20，否则 exit 2，一个字节都不写。
+- `[1/5]` 改成 `if ... then else exit 1`：Neuromancer 实测 `set -e` 不中止 `A && B` 里 A 的失败。
+- 语法检查挪到 `--check` 之前 —— 判读也算读数，dry 模式不该跳过一次判断。
+- 「没有进程」分三句说：真没有 / 只有我自己（全是祖先链）/ 有候选但都不是本部署（⚠ 可能仍在跑旧代码）。
+
+验收（全部真跑）：
+```
+A 仓库 --check            → [1/5] 语法 OK；只有我自己：1 个候选全是祖先链；exit 0
+B 源存在但 hand/ 空       → exit 2，部署目录 critical.py 仍在
+D 语法坏 + --check        → 被闸门先拦（exit 2）
+E1 语法坏（源真）         → exit 1，部署目录根本没被创建
+E2 语法好（源真）         → 五步走完，38 个 py，stale.py 被 --delete 清掉
+```
