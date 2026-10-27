@@ -38,13 +38,23 @@ for f in kit/mcp_server.py hand/__init__.py hand/hand.py hand/action/cdp_act.py 
     SRC_OK=0
   fi
 done
-# Q0 审计（2026-10-27，与 Neuromancer 互验后反查全仓，只有这一处这个形状）：
-# 管道的 rc 只属于最后一级——find 在这里死掉，wc -l 照样打印 0、rc=0，看着像数据。
-# 判过之后决定不改，理由是**危害方向**：0 落在安全侧（N_PY<20 → 中止、部署目录不动）。
-# 判据记在这里：安全侧的洞不用修，但要写清；放行侧的必须修。
-# （同族的放行侧样本就在今天：`pytest | tail -4 && git commit` 把一次 FAILED 的提交放了过去。）
-N_PY=$(find "$DEV/hand" -name '*.py' -type f 2>/dev/null | wc -l || true)
-if [ "${N_PY:-0}" -lt 20 ]; then
+# Q0 审计（2026-10-27，与 Neuromancer 互验后反查全仓；当天两次修订，留全过程）：
+# ① 管道的 rc 只属于最后一级——find 在这里死掉，wc -l 照样打印 0、rc=0，看着像数据。
+# ② 我先判「安全侧，不必修」，理由是 0 会落进中止分支。**那个判断只挡住了「源全空」。**
+#    「源被截断」是另一格，而且它落在放行侧：find 读到 25 个就撞上不可读子目录、rc=1，
+#    wc 照印 25，25 ≥ 20 → 闸门放行，而真实的树有几千个文件。
+#    ⇒ 闸门 `< 20` 只验的是「非空」，它结构上不可能分辨「完整」与「被截断」。
+# ③ 修法（2026-10-27，沙盒实测三格）：先把 find 的输出收下来、拿到它自己的 rc，
+#    再数行。rc≠0 ⇒ 判不了 ⇒ 中止（判不了不许压成「够用」）。零源仍走 <20 那一支。
+# 判据更新：安全侧 / 放行侧的分界不是「0 落在哪边」，而是「这一格能不能被读成『够用』」。
+_PY_LIST=$(find "$DEV/hand" -name '*.py' -type f 2>/dev/null)
+_PY_FIND_RC=$?
+N_PY=$(printf '%s\n' "$_PY_LIST" | grep -c . || true)
+if [ "$_PY_FIND_RC" != "0" ]; then
+  echo "  ✗ 判不了：枚举 $DEV/hand 的 *.py 时 find 出错（rc=$_PY_FIND_RC），只数到 ${N_PY:-0} 个"
+  echo "     —— 被截断的计数不能当『够用』，源按不可信处理"
+  SRC_OK=0
+elif [ "${N_PY:-0}" -lt 20 ]; then
   echo "  ✗ $DEV/hand 里只有 ${N_PY:-0} 个 *.py（不足 20）——空源 + --delete 会清空部署目录"
   SRC_OK=0
 fi
