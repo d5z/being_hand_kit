@@ -389,6 +389,24 @@ proc_state() {
   echo unknown
 }
 
+# proc_state 的值 → 我该做什么。纯映射，无副作用，可以拿假值单独问它。
+#
+# 2026-10-27 修（Neuromancer 那格 `v == "unreachable"` 的同一形状，方向更坏）：
+# 原写法是 `case "$STATE" in gone|reused|zombie) … ;; unknown) … ;; *) kill -9 ;;`
+# —— `*)` 是一张白拿的黑名单：分支按「已见过的值」列，没见过的值落进最后那格**动手**。
+# proc_state 今天有 5 个值（gone/reused/zombie/alive/unknown），今晚一晚上就涨过两次
+# （加僵尸、加年龄闸）。第 6 个值只要意思是「判不了」，就会在 `*)` 里被读成「仍活跃」
+# 然后 kill -9。
+#   他的黑名单 → 假绿（漏掉一个真缺陷）；我这格的黑名单 → **误杀**（杀一个我从没判别过的进程）。
+#   假绿是少做一件事，误杀是做错一件事。所以这格我按白名单写：只有明确 alive 才动手。
+stop_action() {
+  case "${1:-}" in
+    gone|reused|zombie) echo stopped ;;   # 明确已不在（或不再执行代码）
+    alive)              echo kill ;;      # 明确还活着且身份没变
+    *)                  echo unknown ;;   # 其余一律判不了 ⇒ 不动手（未来的新值自动落这里）
+  esac
+}
+
 # 我自己的祖先链
 # 为什么不写成「[ "$_p" = "$$" ] && continue」：两平台默认语义相反，一行判不住两边。
 #   2026-10-27 实测 Linux procps-ng 3.3.17：man 只承诺 "never report itself"，
@@ -548,8 +566,8 @@ step4_stop_old() {
         STATE=$(proc_state "$_p" "$_s" || true)
         [ "$STATE" = "alive" ] || break
       done
-      case "$STATE" in
-        gone|reused|zombie)
+      case "$(stop_action "$STATE")" in
+        stopped)
           _n_stopped=$((_n_stopped + 1)); _l_stopped="$_l_stopped $_p"
           case "$STATE" in
             gone)   echo "  ✓ PID=$_p 已退出" ;;
@@ -558,17 +576,17 @@ step4_stop_old() {
           esac ;;
         unknown)
           _n_unknown=$((_n_unknown + 1)); _l_unknown="$_l_unknown $_p"
-          echo "  ? PID=$_p 状态无法判别（读不到 / 或太年轻、同一 tick 内身份无判别力）——不补 kill -9，请人工核" ;;
-        *)
+          echo "  ? PID=$_p 状态无法判别（state=${STATE:-空}：读不到 / 太年轻、同一 tick 内身份无判别力 / 或这是一个我没见过的值）——不补 kill -9，请人工核" ;;
+        kill)
           echo "  ✗ PID=$_p 仍活跃（身份未变），强制 kill -9"
           kill -9 "$_p" 2>/dev/null || true
           sleep 1
           STATE=$(proc_state "$_p" "$_s" || true)
-          case "$STATE" in
-            gone|reused|zombie) _n_stopped=$((_n_stopped + 1)); _l_stopped="$_l_stopped $_p"
+          case "$(stop_action "$STATE")" in
+            stopped)     _n_stopped=$((_n_stopped + 1)); _l_stopped="$_l_stopped $_p"
                          echo "  ✓ PID=$_p 已终止（kill -9 之后，state=$STATE）" ;;
             *)           _n_unknown=$((_n_unknown + 1)); _l_unknown="$_l_unknown $_p"
-                         echo "  ? PID=$_p kill -9 之后仍判不了——请人工核" ;;
+                         echo "  ? PID=$_p kill -9 之后仍判不了（state=${STATE:-空}）——请人工核" ;;
           esac ;;
       esac
     done
