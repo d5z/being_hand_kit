@@ -55,7 +55,7 @@ def _fn_source():
     text = SYNC.read_text(encoding="utf-8")
     out = []
     for fn in ("proc_runner", "proc_runner_ok", "proc_stdio_any", "proc_listening_by_lsof",
-               "proc_is_listening", "proc_service_evidence"):
+               "proc_is_listening", "proc_service_evidence", "proc_cwd"):
         start = text.index("%s() {" % fn)
         end = text.index("\n}\n", start) + 3
         out.append(text[start:end])
@@ -443,3 +443,70 @@ class ServiceEvidenceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CwdReadTest(unittest.TestCase):
+    """proc_cwd 的 macOS 分支：lsof -Fn 的 n 行「恰 1 个」是观测，不是保证。
+
+    为什么要有这份：2026-10-27 Neuromancer 在 Darwin 实测，同一进程
+    `lsof -a -p P -d cwd -Fn` 恒给 3 行（p / fcwd / n），n 行恰好 1 个——
+    所以旧的 `| head -1` 在真机上两年从不失败。**但「从不失败」不等于「正确」**，
+    它只说明没有反例面。这里自己造反例面：multi 那格旧写法会静默挑第一个，
+    新写法退回「读不到」（调用方按「不是本部署」处置，安全侧）。
+
+    「同」的那三格（none / empty / err）别当没测：它们证明收紧没把原来正确的路径弄哑。
+    """
+
+    TABLE_ONE = "p29749\nfcwd\nn/tmp/one\n"
+    TABLE_MULTI = "p29749\nfcwd\nn/tmp/a\nn/tmp/b\n"
+    TABLE_NONE = "p29749\nfcwd\n"
+    TABLE_EMPTY = ""
+    TABLE_DIAG = "p29749\nfcwd\nn/proc/1/cwd (readlink: Permission denied)\n"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cwd-")
+        self.addCleanup(subprocess.run, ["rm", "-rf", self.tmp])
+        self.fake_pid = "999997"
+        while os.path.isdir("/proc/%s" % self.fake_pid):
+            self.fake_pid = str(int(self.fake_pid) - 1)
+        self.fn = os.path.join(self.tmp, "fn.sh")
+        with open(self.fn, "w", encoding="utf-8") as fh:
+            fh.write(_fn_source())
+        lsof = os.path.join(self.tmp, "lsof")
+        with open(lsof, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\n[ -n "$FAKE_RC" ] && exit "$FAKE_RC"\ncat "$FAKE_TABLE"\n')
+        os.chmod(lsof, 0o755)
+
+    def _cwd(self, table, rc=None):
+        env = dict(os.environ)
+        env["PATH"] = self.tmp + os.pathsep + env["PATH"]
+        path = os.path.join(self.tmp, "table.txt")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(table)
+        env["FAKE_TABLE"] = path
+        if rc is not None:
+            env["FAKE_RC"] = str(rc)
+        r = subprocess.run(
+            ["bash", "-c", '. "$1" >/dev/null 2>&1; proc_cwd "$2"', "bash", self.fn, self.fake_pid],
+            env=env, capture_output=True, text=True)
+        return r.stdout.strip()
+
+    def test_one_n_line_is_the_cwd(self):
+        self.assertEqual(self._cwd(self.TABLE_ONE), "/tmp/one")
+
+    def test_two_n_lines_is_unknown_not_the_first(self):
+        # ← 这一格在旧写法（| head -1）下会返回 /tmp/a：静默挑一个，且永远不知道有第二个
+        self.assertEqual(self._cwd(self.TABLE_MULTI), "")
+
+    def test_no_n_line_is_unknown(self):
+        self.assertEqual(self._cwd(self.TABLE_NONE), "")
+
+    def test_empty_table_is_unknown(self):
+        self.assertEqual(self._cwd(self.TABLE_EMPTY), "")
+
+    def test_lsof_error_is_unknown(self):
+        self.assertEqual(self._cwd(self.TABLE_EMPTY, rc=1), "")
+
+    def test_diagnostic_text_in_stdout_is_not_a_path(self):
+        # lsof 权限不足时把诊断写进 stdout；照收就会拿一句报错当 cwd 去比较
+        self.assertEqual(self._cwd(self.TABLE_DIAG), "")

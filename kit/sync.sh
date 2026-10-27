@@ -253,7 +253,15 @@ proc_cwd() {
   # 输出必须真的像路径：lsof 在权限不足时会把诊断文字写进 stdout（实测形态
   # "/proc/1/cwd (readlink: Permission denied)"），照收就会拿一句报错当 cwd 去比较。
   # 比较结果永远是"不等于部署目录"——安全方向，但那是一句谎报，不是读数。
-  _c=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)
+  # 不再假定「n 行恰好 1 个」（2026-10-27 Neuromancer 实测：真机恒 1 行，所以旧写法两年不失败——
+  # 但那不是因为它对，是因为没有反例面）。数出来：0 ⇒ 读不到，>1 ⇒ 判不了，恰 1 才返回。
+  # 只取第一行是「静默挑一个」：挑中的那个可能压根不是本进程，而我永远不知道还有第二个。
+  _all=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)
+  _cnt=$(printf '%s\n' "${_all:-}" | grep -c . || true)
+  case "${_cnt:-0}" in
+    1) _c=$_all ;;
+    *) _c="" ;;
+  esac
   case "${_c:-}" in
     /*) case "$_c" in *"("*) return 0 ;; *) printf '%s\n' "$_c" ;; esac ;;
     *) : ;;
