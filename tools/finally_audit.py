@@ -116,8 +116,11 @@ def main():
     print("装置自检（门后放一格必定被数到的东西）: 夹具 finally 命中 %d 处（应 1）→ %s"
           % (n, "会响 ✓" if ok else "不响 ✗"))
     if not ok:
-        print("装置不响 ⇒ 拒绝印出任何 0，rc=2")
-        return 2
+        # 「守卫响了」与「脚本没跑」在回执里必须不同形（Neuromancer 2026-10-27 坑3）。
+        # 所以：① 一行可 grep 的标记 ② 期望值/实测值都印 ③ rc=3，与崩溃(rc=1)/正常(rc=0)分开
+        print("[GATE] finally_audit: self_test 不响 —— 期望 NARROW 命中 1 处，实测 %d 处" % n)
+        print("[GATE] 判据：拒绝印出任何 0（未过自检的门后面，0 不算读数）")
+        return 3
     print()
 
     files = sorted(iter_py("."))
