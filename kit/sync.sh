@@ -125,12 +125,17 @@ proc_service_evidence() {
     [ "$_rc" -ne 0 ] && { echo unknown; return 0; }
     _both=1
     for _n in 0 1; do
-      # lsof 列：COMMAND PID USER FD TYPE DEVICE …；$4 形如 "0r"/"1w"
-      _t=$(printf '%s\n' "$_o" | awk -v f="$_n" 'NR>1 && index($4,f)==1 {print $5}')
+      # lsof 列：COMMAND PID USER FD TYPE DEVICE …；$4 形如 "0r"/"1w"/裸 "0"。
+      # FD 必须**整字段**匹配：旧写法 index($4,f)==1 会让 fd 10/11/12 冒充 fd 1
+      # （今晚的「子串冒充字段」族）。-d 0,1 眼下挡得住，但挡它的不是这行代码。
+      _t=$(printf '%s\n' "$_o" | awk -v f="$_n" 'NR>1 && ($4==f || $4 ~ ("^" f "[ruw]$")) {print $5}')
+      # 读不到这一头 ⇒ 「判不了」，不是「不是」。零行表/单行表都从这条出口走：
+      # 2026-10-27 Neuromancer 那侧的 all([]) 让空集合说「是」（假阳）；
+      # 我这一版原来让它说「不是」（假阴）——两边都在从「什么都没有」里挤一个确定值。
+      [ -n "$_t" ] || { echo unknown; return 0; }
       case "$_t" in PIPE*|FIFO*|unix*|sock*) : ;; *) _both=0 ;; esac
     done
     [ "$_both" -eq 1 ] && { echo stdio; return 0; }
-    [ -z "$_o" ] && { echo unknown; return 0; }
     echo none
     return 0
   fi

@@ -113,6 +113,29 @@ class ServiceEvidenceTest(unittest.TestCase):
         """rc≠0 ⇒ unknown。旧写法 `lsof | tail -n +2` 会把不存在的 pid 读成 none。"""
         self.assertEqual(self._ask(rc=1), "unknown")
 
+    # ---- 零行 / 单行 / 子串冒充（2026-10-27 第七把尺的对侧） ----
+    def test_header_only_is_unknown_not_none(self):
+        """rc=0 但一行数据都没有 ⇒ unknown。
+
+        Neuromancer 那侧 all([]) 让空集合说「是」（假阳）；
+        我这版原来让它说「不是」（假阴）。两边都在从「什么都没有」里挤一个确定值。
+        """
+        table = ("COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n")
+        self.assertEqual(self._ask(table), "unknown")
+
+    def test_one_row_is_unknown_not_none(self):
+        """只读到一头（另一头 fd 缺失）⇒ 判不了，不是「不是」。"""
+        table = ("COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+                 "sleep   15000 alice 0 PIPE 0x100 0t0 ->0x101\n")
+        self.assertEqual(self._ask(table), "unknown")
+
+    def test_fd_substring_does_not_masquerade(self):
+        """fd 10 不能冒充 fd 1：fd0=PIPE + 只有 fd10=PIPE ⇒ unknown（不是 stdio）。"""
+        table = ("COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+                 "sleep   16000 alice 0  PIPE 0x200 0t0 ->0x201\n"
+                 "sleep   16000 alice 10 PIPE 0x300 0t0 ->0x301\n")
+        self.assertEqual(self._ask(table), "unknown")
+
     # ---- socket 形（2026-10-27 Neuromancer 造的形状；我这边补的格） ----
     def test_socketpair_is_stdio(self):
         """$5=unix/unix：socketpair 驱动的 stdio 仍是「两头被驱动」，判据落 stdio。
