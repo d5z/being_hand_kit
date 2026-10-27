@@ -440,3 +440,19 @@ other-profile   读到了，是别人的 profile → stranger（这才是真正�
 回执文字也跟着分开：`unreadable` 写 "no evidence either way"，`no-listener` 写 "nothing is listening on this port"。
 
 **过程诚实记一笔**：这个补丁第一版把「不是我们的」改对的同时，把「是我们的」改坏了——`_reclaim_by_profile` 从返回二元组变成三元组，另一处 `if claim:` 于是永远为真（三元组恒真），recycled-pid 那格从 stranger 变成 mine。是 `test_owner.test_recycled_pid_is_stranger` 抓到的。**为了把一种沉默说得更准，先弄哑了一种声音**——这类 bug 的形状值得单独记住。788→785 全绿（新增 3 例，含一例以他的样本命名：`test_unreadable_listener_argv_is_not_called_a_stranger`）。
+
+### 0.13.8 补腿 — 「够不着端点」不等于「关闭失败」
+
+活体样本（2026-10-27 11:41Z，0.13.5）：对一个已经退出的浏览器调 close，回执是
+
+```
+closed: partial   verified: false   error: "<urlopen error [Errno 111] Connection refused>"
+```
+
+而事实是：端口上没人、浏览器没了、也没有残留进程——**关闭想要的正是这个状态**。原因在 `close()` 的第一段：`list_pages()` 抛异常就直接返回错误回执，走不到后面的 `endpoint_gone` 判定。
+
+改法：在异常分支里再问一次端点（`chrome_running()`）。答「没有」→ 回执写 `closed: "already_gone"`, `endpoint_gone: true`, verified 真，并在 reason 里说清楚；答「不知道」（探测本身失败）→ 仍然是错误回执，**新增的分支不许吞掉真失败**。
+
+同时把 `tests/test_hand_api.py` 里那条**把旧读数钉住**的用例（断言 ok=False + error）改写为断言新形状——它本来就该是这条 bug 的标本，不是它的护栏。
+
+786 tests 绿 / 30.5s。**边界**：这刀只有单测覆盖，活体验证要等 0.13.8 上机；触发它的那个活体读数属于上游 0.13.5。

@@ -603,6 +603,41 @@ class Browser:
                 chrome_running, owner_status, close_refusal, clear_owner)
             pages = list_pages()
         except Exception as e:
+            # 0.13.8: "I could not reach the endpoint" is not the same as "the
+            # close failed". When nothing answers on the port there is nothing
+            # to close — the desired state already holds — and reporting an
+            # exception leaves the caller unable to tell a broken close from a
+            # browser that was already gone. (Found live 2026-10-27: a close on
+            # a dead endpoint returned "Connection refused / verified: false".)
+            try:
+                still_there = chrome_running()
+            except Exception:
+                still_there = None
+            if still_there is False:
+                owner = None
+                try:
+                    from hand.perception.cdp_launcher import owner_status
+                    owner = owner_status().get("owner")
+                except Exception:
+                    pass
+                if owner == "mine":
+                    try:
+                        clear_owner()
+                    except Exception:
+                        pass
+                return self._record(_receipt("close", {
+                    "verified": True,
+                    "evidence": {
+                        "verified": True,
+                        "endpoint_gone": True,
+                        "already_gone": True,
+                        "owner": owner,
+                        "read_back": "GET /json/version: nothing answers",
+                        "reason": ("nothing is listening on this port — the "
+                                   "close had nothing to do, which is the state "
+                                   "a close is for"),
+                    },
+                }, extra={"closed": "already_gone", "endpoint_gone": True}))
             return self._record(_receipt("close", error=f"{type(e).__name__}: {e}"))
         status = owner_status()
         if status.get("owner") != "mine" and not force:

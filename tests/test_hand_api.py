@@ -389,11 +389,37 @@ class TestClose(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertEqual(r["action"], "close")
 
-    def test_close_is_safe_when_no_browser_is_running(self):
+    def test_close_on_a_dead_endpoint_says_already_gone(self):
+        """0.13.8 — "I could not reach it" is not "the close failed".
+
+        Live sample, 2026-10-27: closing a browser that had already exited came
+        back as "Connection refused / verified: false", which reads as a broken
+        close while the state a close is for already held. This test used to
+        pin that reading (ok=False + error) — the receipt was reporting the
+        action it attempted, not the fact it found.
+        """
         with mock.patch("hand.perception.cdp_core.list_pages",
                         side_effect=RuntimeError("connection refused")), \
              mock.patch("hand.perception.cdp_launcher.chrome_running",
-                        return_value=False):
+                        return_value=False), \
+             mock.patch("hand.perception.cdp_launcher.owner_status",
+                        return_value={"owner": "unknown"}):
+            r = face.close(timeout=0.1)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["closed"], "already_gone")
+        self.assertTrue(r["evidence"]["endpoint_gone"])
+        self.assertIn("nothing is listening", r["evidence"]["reason"])
+
+    def test_close_still_reports_an_error_when_the_endpoint_state_is_unknown(self):
+        """The new branch must not swallow real failures.
+
+        When the port cannot be probed at all we do not know whether the
+        browser is gone, so the exception stays an error.
+        """
+        with mock.patch("hand.perception.cdp_core.list_pages",
+                        side_effect=RuntimeError("boom")), \
+             mock.patch("hand.perception.cdp_launcher.chrome_running",
+                        side_effect=RuntimeError("cannot probe")):
             r = face.close(timeout=0.1)
         self.assertFalse(r["ok"])
         self.assertIn("error", r)
