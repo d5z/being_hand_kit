@@ -21,22 +21,58 @@ os.environ.setdefault(
 )
 
 
-MODULES = ["tests.test_type_landed", "tests.test_plan", "tests.test_tier2_3", "tests.test_platform", "tests.test_vision_llm", "tests.test_cdp_contract", "tests.test_cdp_contract_real", "tests.test_page_identity", "tests.test_windows_support", "tests.test_receipt_contract", "tests.test_truncation", "tests.test_ax_tree", "tests.test_ax_see", "tests.test_macos_discovery", "tests.test_chrome_profile", "tests.test_kit_quickfixes", "tests.test_release_070", "tests.test_release_080", "tests.test_release_097", "tests.test_release_098", "tests.test_release_0100", "tests.test_release_chain", "tests.test_hand_api", "tests.test_visual_state", "tests.test_ocr_diff", "tests.test_expect_spec", "tests.test_viewport_alignment", "tests.test_text_match", "tests.test_enter_submit", "tests.test_handle_staleness", "tests.test_heading_redirect", "tests.test_clickable_point", "tests.test_eye_check", "tests.test_emitted", "tests.test_action_primitives", "tests.test_release_0110", "tests.test_frame_diff", "tests.test_effect", "tests.test_release_0120", "tests.test_release_0130", "tests.test_iframe_coords", "tests.test_release_0131", "tests.test_iframe_transform", "tests.test_iframe_transform_geo", "tests.test_release_0132", "tests.test_dom_no_text", "tests.test_release_0133", "tests.test_frame_origins", "tests.test_release_0134", "tests.test_effect_channels", "tests.test_release_0135", "tests.test_release_0136", "tests.test_release_0137", "tests.test_xy_expect", "tests.test_dpr_decl", "tests.test_dpr_tiers", "tests.test_owner", "tests.test_owner_listener", "tests.test_click_once", "tests.test_dpr_single_read", "tests.test_version_fork", "tests.test_selfharm", "tests.test_sync_service_evidence", "tests.test_sync_age_threshold"]
+MODULES = ["tests.test_type_landed", "tests.test_plan", "tests.test_tier2_3", "tests.test_platform", "tests.test_vision_llm", "tests.test_cdp_contract", "tests.test_cdp_contract_real", "tests.test_page_identity", "tests.test_windows_support", "tests.test_receipt_contract", "tests.test_truncation", "tests.test_ax_tree", "tests.test_ax_see", "tests.test_macos_discovery", "tests.test_chrome_profile", "tests.test_kit_quickfixes", "tests.test_release_070", "tests.test_release_080", "tests.test_release_097", "tests.test_release_098", "tests.test_release_0100", "tests.test_release_chain", "tests.test_hand_api", "tests.test_visual_state", "tests.test_ocr_diff", "tests.test_expect_spec", "tests.test_viewport_alignment", "tests.test_text_match", "tests.test_enter_submit", "tests.test_handle_staleness", "tests.test_heading_redirect", "tests.test_clickable_point", "tests.test_eye_check", "tests.test_emitted", "tests.test_action_primitives", "tests.test_release_0110", "tests.test_frame_diff", "tests.test_effect", "tests.test_release_0120", "tests.test_release_0130", "tests.test_iframe_coords", "tests.test_release_0131", "tests.test_iframe_transform", "tests.test_iframe_transform_geo", "tests.test_release_0132", "tests.test_dom_no_text", "tests.test_release_0133", "tests.test_frame_origins", "tests.test_release_0134", "tests.test_effect_channels", "tests.test_release_0135", "tests.test_release_0136", "tests.test_release_0137", "tests.test_xy_expect", "tests.test_dpr_decl", "tests.test_dpr_tiers", "tests.test_owner", "tests.test_owner_listener", "tests.test_click_once", "tests.test_dpr_single_read", "tests.test_version_fork", "tests.test_selfharm", "tests.test_sync_service_evidence", "tests.test_sync_age_threshold", "tests.test_bin_smoke", "tests.test_runner_registry"]
 
 
-def build_suite():
+def registry_report():
+    """分母自证：磁盘上有几个 test_*.py，清单里登记了几个，差在哪。
+
+    2026-10-27 交的学费：新写 tests/test_sync_age_threshold.py，单跑全绿，
+    套件里从不执行——因为 MODULES 是显式清单而不是 discover。当天 870 对不上
+    预期的 875 才抓到。文件存在、单测绿、套件不跑，是三件互不相干的事，
+    只有分母能分开它们。所以这里每次跑都念一遍：磁盘 vs 清单，各是几。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    on_disk = sorted(
+        f[:-3] for f in os.listdir(here)
+        if f.startswith("test_") and f.endswith(".py")
+    )
+    registered = sorted(n.rsplit(".", 1)[-1] for n in MODULES)
+    missing = [m for m in on_disk if m not in registered]   # 存在但永不运行
+    ghost = [m for m in registered if m not in on_disk]     # 登记了但文件不在
+    return on_disk, registered, missing, ghost
+
+
+def build_suite(problems=None):
+    problems = problems if problems is not None else []
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for name in MODULES:
         try:
             mod = __import__(name, fromlist=[name.rsplit(".", 1)[-1]])
         except ImportError as e:
-            print(f"SKIP {name}: {e}")
+            # 曾经这里 print("SKIP ...") + continue：一个坏掉的模块会被读成
+            # 「跳过」，而整轮仍然是绿的。跳过不是通过——它进 problems。
+            problems.append(f"无法导入 {name}: {e}")
             continue
         suite.addTests(loader.loadTestsFromModule(mod))
     return suite
 
 
 if __name__ == "__main__":
-    result = unittest.TextTestRunner(verbosity=2).run(build_suite())
-    sys.exit(0 if result.wasSuccessful() else 1)
+    on_disk, registered, missing, ghost = registry_report()
+    print(f"modules: {len(registered)}/{len(on_disk)} on disk")
+    problems = []
+    for m in missing:
+        problems.append(f"未注册（文件在磁盘上但清单里没有，永不会跑）: tests/{m}.py")
+    for m in ghost:
+        problems.append(f"幽灵注册（清单里有但磁盘上没这个文件）: tests/{m}.py")
+
+    suite = build_suite(problems)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if problems:
+        print("\n" + "=" * 70)
+        print("清单与磁盘不一致 / 模块无法导入（这些不是 SKIP，是没数进去）：")
+        for p in problems:
+            print("  ✗ " + p)
+    sys.exit(0 if (result.wasSuccessful() and not problems) else 1)
