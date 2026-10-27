@@ -249,3 +249,49 @@ argv 读不到（别的用户的进程）记 `cmdline_checked: false`，不冒�
 **验证**：`tests/test_owner.py` 11 条（三档 + 拒绝回执形状 + 真路径：spawn → 篡改记录 →
 close 必须拒且浏览器仍在跑 → 恢复记录后 close 通过并清记录）。全量 749 tests OK / 30.7s。
 本地 commit `05ceac3`，仍未推、未打包，活体仍 0.13.5。
+
+---
+
+## 2026-10-27 — 读数侧：回执得说出「谁的浏览器」（0.13.7 第七腿）
+
+**问题**：所有权在 close 那侧已经会拒生人，open 那侧却一个字没说。`open_place` 里写的是
+`if not chrome_running(): ensure_chrome()` —— 端点答话就直接用，回执与「我自己刚起了一个」
+一模一样。10-26 那起事件（整天读数取在别人 166 天前起的浏览器上，close 顺手把它杀了）
+根子在这里：**事实出生时写了，复用点没读。**
+
+**改法**：在复用点读一次 `owner_status()`，把两格写进 `evidence`：
+
+```
+origin : "spawned" | "attached"     ← 这次是我起的，还是接了个已经在答话的
+owner  : {state: mine|stranger|unknown, reason, pid, cmdline_checked}
+```
+
+attach 到生人仍然**允许**（同机两个安装共用 :9222 是合法的），但不再不可见。
+`level` / `verified` 不受影响 —— 说清「谁的」不等于升级「证到多少」，这两件事必须各占一格。
+
+**顺带撞出一个真缺陷**（新功能自己暴露的）：0.13.7 的 spawn 会写所有权记录，而
+`tests/test_chrome_profile.py` 的 `_spawn()` 用假 Popen（`pid=4242`）跑真 `ensure_chrome()`
+⇒ 测试把一条**假记录写进了本机** `~/.hand-cdp-owner.json`。机器于是声称自己起过一个
+从没起过的浏览器；任何一次 close 读到的是谎（"recorded process is not alive"）而不是真。
+已清掉那条记录（`pid 4242`、`profile /tmp/tmp_8mij295/prof`），并把隔离放进
+`tests/__init__.py`：`-m unittest tests.x` 与 `tests/run_tests.py` 两个入口都要先 import
+这个包，所以「新写一个假 spawn 的测试」忘不掉这件事。
+
+**验证**：`tests.test_owner` 18 条（含三档 × origin × 机器记录不被触碰）；全量
+**765 tests OK / 29.9s**（758 → 765）。本地 commit `560f0be`，仍未推、未打包，活体仍 0.13.5。
+
+**活体验收（不是夹具）**：真起一个浏览器，三格一次取全——
+
+```
+A 第一次 open        level=navigate_confirmed  origin=spawned   owner=mine     pid=854067
+B 第二次 open        level=navigate_confirmed  origin=attached  owner=mine     pid=854067
+C 记录被藏起后 open   level=navigate_confirmed  origin=attached  owner=unknown  pid=null
+                     └ owner={"state":"unknown","reason":"no spawn record"}
+```
+
+C 就是 10-26 那天的形状：端点答话、没有记录说它是谁的、旧代码在这里什么都不说。现在这一格
+在回执里明写着。收尾也走真路径：恢复记录 → `close` 判 `mine` → 放行、`endpoint_gone:true`、
+记录清除；机器上不留浏览器也不留记录。
+
+**Next**：推/打包/部署仍等一句话；`origin` 的真实**生产页面**样本仍没有（上面三格用的
+about:blank，证明的是 spawn/attach 判别与回执形状，不证明真页覆盖面）。
