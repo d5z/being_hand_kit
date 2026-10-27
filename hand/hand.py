@@ -149,10 +149,17 @@ def _receipt(action, raw=None, *, kind=None, verb=None, target=None, error=None,
     raw = dict(raw or {})
     if error is None:
         error = raw.get("error")
-    ok = not error
+    # 2026-10-27 (Neuromancer's格子3 in my body): a refusal used to return
+    # ok=True because it carries no `error`. "Refused" is not "succeeded" --
+    # a caller that judges by `ok` would read a declined close as a done one.
+    refused = bool(raw.get("refused"))
+    ok = not error and not refused
     if hint is None:
         hint = raw.get("hint") if action == "see" else None
-        if ok and hint is None:
+        if refused and hint is None:
+            hint = ((raw.get("evidence") or {}).get("reason")
+                    or "refused: this call declined to act")
+        elif ok and hint is None:
             hint = _unverified_hint(raw)
         elif not ok:
             hint = _failure_hint(error, raw)
@@ -167,6 +174,8 @@ def _receipt(action, raw=None, *, kind=None, verb=None, target=None, error=None,
         "error": error,
         "hint": hint,
     }
+    if refused:
+        out["refused"] = True
     if verb is not None:
         out["verb"] = verb
     if target is not None:

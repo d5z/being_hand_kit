@@ -23,6 +23,7 @@ the human's Chrome for the profile lock); HAND_PROFILE=persistent and
 HAND_HEADLESS=0 are explicit opt-ins. See the profile-strategy block below.
 """
 
+import errno
 import os
 import re
 import shutil
@@ -633,21 +634,43 @@ def force_witness():
             "why": "the listener carries this install's isolated profile"}
 
 
+_HAVE_PROC = os.path.isdir("/proc/self")
+
+
 def _argv_of(pid):
-    """argv of a live pid, as a list; None if it cannot be read."""
+    """Three-valued on purpose: ('ok', argv) | ('gone', None) | ('unreadable', None).
+
+    2026-10-27 (Neuromancer's organ, my body): a function that returns None for
+    "the process is gone" AND for "I could not read it" makes one value carry two
+    meanings. The caller then kills what it should have left alone, or leaves a
+    corpse it called gone. "gone" and "cannot judge" are different answers and
+    must not share a bucket.
+    """
+    if _HAVE_PROC:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                raw = fh.read()
+        except FileNotFoundError:
+            return ("gone", None)          # no such pid (or it exited just now)
+        except PermissionError:
+            return ("unreadable", None)    # it exists, we may not look
+        except OSError as e:
+            if e.errno == errno.ESRCH:
+                return ("gone", None)
+            return ("unreadable", None)
+        parts = [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
+        # An empty cmdline on a live pid is a kernel thread or a zombie: readable,
+        # but it says nothing about ownership.
+        return ("ok", parts)
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as fh:
-            raw = fh.read()
-        return [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
+        r = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                           capture_output=True, text=True, timeout=5)
     except Exception:
-        pass
-    try:
-        import subprocess as _sp
-        out = _sp.run(["ps", "-o", "command=", "-p", str(pid)],
-                      capture_output=True, text=True, timeout=5).stdout
-        return out.split() if out.strip() else None
-    except Exception:
-        return None
+        return ("unreadable", None)
+    if r.returncode != 0:
+        return ("gone", None)              # ps: no such process
+    out = r.stdout
+    return ("ok", out.split()) if out.strip() else ("gone", None)
 
 
 def kill_our_browsers(sig=9, marker=None, dry_run=False):
@@ -670,14 +693,17 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
         return {"killed": [], "skipped": 0, "unreadable": 0,
                 "why": f"could not enumerate candidates: {e}"}
 
-    killed, skipped, unreadable = [], [], []
+    killed, skipped, unreadable, gone = [], [], [], []
     me = os.getpid()
     for pid in pids:
         if pid == me:
             continue
-        argv = _argv_of(pid)
-        if argv is None:
-            unreadable.append(pid)
+        state, argv = _argv_of(pid)
+        if state == "gone":
+            gone.append(pid)          # already exited: nothing to kill, not a fault
+            continue
+        if state == "unreadable":
+            unreadable.append(pid)    # exists, cannot judge: do not touch
             continue
         if not any(marker in a for a in argv):
             skipped.append(pid)
@@ -696,6 +722,7 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
             "skipped": skipped, "skipped_count": len(skipped),
             "skipped_why": "argv carries no marker of this install",
             "unreadable": unreadable, "unreadable_count": len(unreadable),
+            "gone": gone, "gone_count": len(gone),
             "marker": marker}
 
 
@@ -716,6 +743,7 @@ def close_refusal(status, witness=None, forced=False):
                   "install cannot show is its own.")
     return {
         "closed": "refused",
+        "refused": True,          # 2026-10-27: a refusal must not read as ok
         "endpoint_gone": False,
         "verified": False,
         "owner": status.get("owner"),

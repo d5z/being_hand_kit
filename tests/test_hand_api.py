@@ -384,7 +384,12 @@ class TestClose(unittest.TestCase):
              mock.patch("hand.perception.cdp_core.cdp_connect",
                         side_effect=RuntimeError("no socket in a unit test")), \
              mock.patch("hand.perception.cdp_launcher.chrome_running",
-                        return_value=False):
+                        return_value=False), \
+             mock.patch("hand.perception.cdp_launcher.owner_status",
+                        return_value={"owner": "mine", "reason": "birth record"}):
+            # 0.13.7: a close with no birth record is now a *refusal*, so this
+            # test must say whose browser it is -- otherwise it is testing the
+            # refusal path, not the page report it is named after.
             r = face.close(timeout=0.1)
         self.assertTrue(r["ok"])
         self.assertEqual(r["action"], "close")

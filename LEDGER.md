@@ -567,3 +567,17 @@ kit/sync.sh:54                      kill -9 "$OLD_PID"               ← 按 pid
 sync.sh 改成：只杀 argv 含 `$DEPLOY` 的那个 mcp_server；强杀前再核 `ps -o lstart=`，与初值不符（pid 已被复用）就不动手。
 
 **残留**：`pgrep` 仍参与枚举——它是候选来源不是判据，但「候选来源也可能漏」（非 chrome 名、改过 argv 的进程）。这格未测。
+
+### 0.13.8 补腿 — 「拒绝」不许报成功（同一病第三、四个器官）
+
+Neuromancer 2026-10-27 真机踩到：他的探针返回值 `None` 同时兼「判不了」与「它不在」，于是把还在跑的判成该清的；另一处拒绝时 `sys.exit(0)`——**拒绝了，但报成功**。照这两条回头查自己，各中一处：
+
+**(1) `_argv_of` 返回值兼了两义。** 它 except 一切 → `None`，而已死的 pid（ENOENT）和读不到的 pid（EACCES）落在同一格，receipt 里死的浏览器被数进 `unreadable`。改成三值：`('ok', argv) / ('gone', None) / ('unreadable', None)`，`kill_our_browsers` 的 receipt 分四格（killed / skipped / unreadable / gone），gone 不再冒充 unreadable。Linux 走 `/proc`（ENOENT=gone、EACCES=unreadable），非 Linux 走 `ps -p`（rc≠0=gone）。
+
+真机三格：自己的 pid → ok + argv[0]=python3（**这条是自证格：它读不到自己，后面所有读数都不可信**）；真退出过的 pid → gone；999999 → gone。`unreadable` 真样本仍为零（要 root 或 hidepid=2）。
+
+**(2) 拒绝用了 `ok:true`。** `_receipt` 里 `ok = not error`，而拒绝不带 error ⇒ 一次被拒的 close 回执写着 `ok: true`。读 `ok` 的调用方会把「我拒绝了」读成「关掉了」。改成 `ok = not error and not refused`，顶层加 `refused: true`，hint 直接用 `evidence.reason`（拒绝不是失败，`error` 保持 null）。
+
+顺带修出一个旧夹具：`test_close_reports_the_visible_pages` 从 0.13.7 起其实一直在测「无出生记录的 close」＝拒绝路径，它却断言 ok=true。补上 `owner_status → mine`，它才回到名字说的事。
+
+802 tests 绿 / 31.1s。

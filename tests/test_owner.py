@@ -450,3 +450,68 @@ class ForceWitnessTest(unittest.TestCase):
         self.assertIn("force proves intent, not identity",
                       rec["evidence"]["reason"])
         self.assertIn("different profile", rec["evidence"]["reason"])
+
+
+class ThreeValuedArgvTest(unittest.TestCase):
+    """2026-10-27 -- 'gone' and 'cannot judge' must not share a bucket.
+
+    Neuromancer's organ in my body: a hand-written struct was 8 bytes too big, so
+    the probe returned None for *every* pid -- and None also meant "no such
+    process". One value, two meanings: it called live browsers gone.
+
+    _argv_of now returns ('ok', argv) / ('gone', None) / ('unreadable', None),
+    and kill_our_browsers reports them as separate counts.
+    """
+
+    def test_self_pid_is_readable(self):
+        # The self-proving grid: if this fails, the probe cannot read anything,
+        # and every other reading from it is worthless.
+        state, argv = cdp_launcher._argv_of(os.getpid())
+        self.assertEqual(state, "ok")
+        self.assertTrue(argv and argv[0])
+
+    def test_an_exited_pid_is_gone_not_unreadable(self):
+        p = subprocess.Popen(["sleep", "0.1"])
+        p.wait()
+        time.sleep(0.3)
+        state, _ = cdp_launcher._argv_of(p.pid)
+        self.assertEqual(state, "gone")
+
+    def test_a_nonexistent_pid_is_gone(self):
+        state, _ = cdp_launcher._argv_of(999999)
+        self.assertIn(state, ("gone", "unreadable"))  # pid 1..N could exist; see below
+        if state == "unreadable":
+            self.skipTest("this pid happens to exist on this host")
+
+    def test_receipt_keeps_gone_out_of_unreadable(self):
+        r = cdp_launcher.kill_our_browsers(dry_run=True, marker="/nonexistent-marker-xyz")
+        for k in ("killed_count", "skipped_count", "unreadable_count", "gone_count"):
+            self.assertIn(k, r)
+        self.assertEqual(r["killed_count"], 0)
+        self.assertEqual(len(r["gone"]) , r["gone_count"])
+        self.assertFalse(set(r["gone"]) & set(r["unreadable"]))
+
+
+class RefusalIsNotSuccessTest(unittest.TestCase):
+    """2026-10-27 -- 'refused' must not arrive as ok=True.
+
+    Neuromancer found his tool calling sys.exit(0) on a refusal: "declined, but
+    reported success". Mine had the same shape one layer up -- _receipt computed
+    ok = not error, and a refusal carries no error, so a declined close came back
+    as ok:true. A caller judging by `ok` reads a refusal as a done job.
+    """
+
+    def test_a_refused_close_is_not_ok(self):
+        from hand.hand import _receipt
+        raw = close_refusal({"owner": "stranger"})
+        rec = _receipt("close", raw)
+        self.assertFalse(rec["ok"])
+        self.assertTrue(rec.get("refused"))
+        self.assertIsNone(rec["error"])          # not a failure -- a refusal
+        self.assertIn("refusing", rec["hint"])
+
+    def test_a_normal_close_is_still_ok(self):
+        from hand.hand import _receipt
+        rec = _receipt("close", {"closed": "ok", "verified": True})
+        self.assertTrue(rec["ok"])
+        self.assertNotIn("refused", rec)
