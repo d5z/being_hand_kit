@@ -38,6 +38,11 @@ for f in kit/mcp_server.py hand/__init__.py hand/hand.py hand/action/cdp_act.py 
     SRC_OK=0
   fi
 done
+# Q0 审计（2026-10-27，与 Neuromancer 互验后反查全仓，只有这一处这个形状）：
+# 管道的 rc 只属于最后一级——find 在这里死掉，wc -l 照样打印 0、rc=0，看着像数据。
+# 判过之后决定不改，理由是**危害方向**：0 落在安全侧（N_PY<20 → 中止、部署目录不动）。
+# 判据记在这里：安全侧的洞不用修，但要写清；放行侧的必须修。
+# （同族的放行侧样本就在今天：`pytest | tail -4 && git commit` 把一次 FAILED 的提交放了过去。）
 N_PY=$(find "$DEV/hand" -name '*.py' -type f 2>/dev/null | wc -l || true)
 if [ "${N_PY:-0}" -lt 20 ]; then
   echo "  ✗ $DEV/hand 里只有 ${N_PY:-0} 个 *.py（不足 20）——空源 + --delete 会清空部署目录"
