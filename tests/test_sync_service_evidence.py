@@ -192,6 +192,45 @@ class ServiceEvidenceTest(unittest.TestCase):
         self.assertEqual(self._ask(T_PIPE_PIPE), "stdio")
         self.assertEqual(self._ask(T_PIPE_FILE), "none")
 
+    # ── 以下是**真机原件**，不是造的形状 ──────────────────────────────
+    # 2026-10-27 16:5xZ 在 macOS（Darwin）上直接跑 lsof 抓下来的三张表，
+    # 只把用户名/家目录换成长度相同的假名，列宽与空白**原样保留**——
+    # 这张表的形状本身就是被测对象，改对齐就等于换成另一道题。
+
+    def test_mac_real_stdio_mcp_server(self):
+        """真机原件：pid 4182 = Python mcp_server.py，fd0/fd1 都是 PIPE ⇒ stdio。
+
+        这一格此前只有「代码对称」的假体，没有真机。2026-10-27 16:5xZ
+        在 Darwin 上用同一段判据跑真进程得到 `stdio ( fd0=PIPE fd1=PIPE)`。
+        与造的形状的差别：PIPE 行的 SIZEOFF/NODE 列被 `->0x…` 顶掉，
+        整行比 CHR/REG 行短一截 —— 造的形状里那一格是 `0t0`，比真的宽松。
+        """
+        table = ("COMMAND  PID USER   FD   TYPE             DEVICE SIZE/OFF      NODE NAME\n"
+                 "Python  4182   xx    0   PIPE 0xc8e57b661acad3b1    16384      ->0x5c5c8cbbdc3b7f09\n"
+                 "Python  4182   xx    1   PIPE 0x5e79d7597318863c    65536      ->0x13120502789c05ff\n")
+        self.assertEqual(self._ask(table), "stdio")
+
+    def test_mac_real_devnull_then_log_is_none(self):
+        """真机原件：pid 676，0r=CHR(/dev/null)、1u=REG(日志) ⇒ none。
+
+        这是这台 mac 上最常见的「后台常驻但不是服务」形状：输出追加到日志文件。
+        """
+        table = ("COMMAND PID USER   FD   TYPE DEVICE SIZE/OFF      NODE NAME\n"
+                 "Python  676   xx    0r   CHR    3,2      0t0       336 /dev/null\n"
+                 "Python  676   xx    1u   REG   1,16        0 181504786 /private/tmp/keyword-extract.log\n")
+        self.assertEqual(self._ask(table), "none")
+
+    def test_mac_real_half_server_pipe_then_log(self):
+        """真机原件：pid 2087，fd0=PIPE（被父进程驱动）、fd1=REG(日志) ⇒ none。
+
+        半个 server：只有 stdin 是管道。门必须排掉它——只读一头的人不是服务。
+        注意这张表的 REG 行 DEVICE 列被空白推到 $6，造的形状里没这形。
+        """
+        table = ("COMMAND  PID USER   FD   TYPE             DEVICE SIZE/OFF      NODE NAME\n"
+                 "Python  2087   xx    0   PIPE 0x13354660f6855d94    16384           \n"
+                 "Python  2087   xx    1w   REG               1,16        0 181544850 /Users/xx/.heart-portal/runtime/portal-supervisor.log\n")
+        self.assertEqual(self._ask(table), "none")
+
 
 if __name__ == "__main__":
     unittest.main()
