@@ -650,3 +650,23 @@ Neuromancer 2026-10-27 的实测：`pkill -f "mcp_server.py"` 杀掉了他自己
 - 两条都在 → 绿
 
 顺带：`kit/sync.sh` 那条 `kill -9 "$OLD_PID"` 被他评为「三处里唯一不会误伤」——现在它同时是最窄（不带匹配面）和最准（boot_id + starttime 身份）的一条。
+
+### 0.13.8 补腿 — 停旧进程那一步：判据不是名字，是它站在哪个目录里
+
+Neuromancer 2026-10-27 在 macOS 上原样跑 `sync.sh` 的 [4/5]：`pgrep -f 'python3 mcp_server\.py'` 命中 0，而 hand server 当时正跑着。原因：CPython re-exec 进 `Python.app`，argv[0] 是那条绝对路径，`python3` 与 `mcp_server.py` 之间隔着整条路径。
+
+我这边 Linux 命中 1（argv[0]="python3"），**但我的 marker 判据（argv 里含 $DEPLOY）命中 0** —— server 是在 $DEPLOY 里以相对路径起的，argv 里从来没有那个绝对路径。**两个平台坏在不同的格，同一个函数。**
+
+修：身份判据换成 **cwd**（Linux `/proc/<pid>/cwd`，macOS `lsof -a -p pid -d cwd -Fn`）。名字只是候选，站在哪个目录里才是见证。
+三种结局印三句不同的话：真没在跑 / 有 N 个候选但都不是本部署（⚠，可能仍在跑旧代码）/ cwd 读不到（判不了，不动手）。
+
+同族第二刀：**祖先链排除**。从一个 cwd=$DEPLOY 的外壳里跑本脚本，那个外壳的 argv 里就写着 `mcp_server.py`（脚本正文），它既过 cwd 判据又过名字判据 —— 于是脚本会把自己的父 shell 当旧进程杀掉。实测已复现（PID=923989 被识别为「我自己或我的祖先」）。
+
+新增 `--check`：只判不动手，可复现。三条分支各在真进程上验过一次：
+```
+跳过 PID=923942：cwd=/tmp/decoy ≠ $DEPLOY
+排除 PID=923989：它是我自己或我的祖先（argv 里只是脚本正文）
+[dry] 会 kill PID=924024（cwd=/tmp/fake-deploy，身份 <boot:ticks>）   ← 未杀，进程仍在
+```
+
+**事故（同日）**：我在给 sync.sh 加 `--check` 之前就跑了 `./kit/sync.sh --check` —— 那次补丁抛了 ValueError 没落盘，`--check` 在文件里根本不存在，于是脚本完整跑了一遍：文件同步 + kill 掉活体 server。教训与「写了≠跑过」同族：**我信任的是我即将加上的那个 flag，而不是文件里真的有什么。** 副作用是真的（部署目录已被同步成本地链、活体重启为 0.13.7），如实记账。
