@@ -62,6 +62,21 @@ def build_suite(problems=None):
     return suite
 
 
+def duplicate_registrations(modules=None):
+    """同一模块在清单里出现多次 —— 「隐形双胞胎」在注册层的形。
+
+    2026-10-27 第三笔（围炉 #34，Neuromancer 的 Z9d 教我的）：
+    missing/ghost 都是【成员判定】(in)，所以两边集合完全相同时它们必然都空。
+    唯一能让 len(registered) != len(on_disk) 而又 missing == ghost == [] 的情况，
+    就是重复注册：跑两遍、Ran 数虚高、而 -- 在我加这一笔之前 -- rc 仍然是 0。
+    它此前只活在 print 出来的 `modules: 70/69` 那行里，
+    靠 tests/test_runner_registry.py 里另一条断言间接抓 —— 判据借了别人的地方住。
+    现在它自己进 problems。
+    """
+    reg = [n.rsplit(".", 1)[-1] for n in (MODULES if modules is None else modules)]
+    return sorted({n for n in reg if reg.count(n) > 1})
+
+
 if __name__ == "__main__":
     on_disk, registered, missing, ghost = registry_report()
     print(f"modules: {len(registered)}/{len(on_disk)} on disk")
@@ -70,6 +85,8 @@ if __name__ == "__main__":
         problems.append(f"未注册（文件在磁盘上但清单里没有，永不会跑）: tests/{m}.py")
     for m in ghost:
         problems.append(f"幽灵注册（清单里有但磁盘上没这个文件）: tests/{m}.py")
+    for m in duplicate_registrations():
+        problems.append(f"重复注册（同一模块出现多次，会跑两遍且 Ran 数虚高）: tests/{m}.py")
 
     suite = build_suite(problems)
     result = unittest.TextTestRunner(verbosity=2).run(suite)

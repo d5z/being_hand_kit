@@ -51,6 +51,15 @@ class RegistryDetectionTest(unittest.TestCase):
         self.assertEqual(missing, ["test_a"])
         self.assertEqual(ghost, ["test_b"])
 
+    def test_duplicate_registration_is_a_problem_not_just_a_printed_fraction(self):
+        # 2026-10-27 第三笔：隐形双胞胎在注册层的形。
+        # missing/ghost 都是成员判定，集合相同时必然都空 —— 唯一漏网的是重复，
+        # 而它此前只活在 "modules: 70/69" 那行 print 里，rc 仍是 0。
+        self.assertEqual(run_tests.duplicate_registrations(
+            modules=mods("test_a", "test_a", "test_b")), ["test_a"])
+        self.assertEqual(run_tests.duplicate_registrations(
+            modules=mods("test_a", "test_b")), [], "干净清单不许报重复")
+
     def test_real_repo_is_the_known_good_cell(self):
         # 唯一一条碰真仓库的：它证明上面三格之外，现实这一格也是好的。
         on_disk, registered, missing, ghost = run_tests.registry_report()
