@@ -76,6 +76,32 @@ class ServiceEvidenceTest(unittest.TestCase):
         with open(self.lsof, "w", encoding="utf-8") as fh:
             fh.write('#!/bin/sh\n[ -n "$FAKE_RC" ] && exit "$FAKE_RC"\ncat "$FAKE_TABLE"\n')
         os.chmod(self.lsof, 0o755)
+        # ss 假体：不给表就吐空（proc_is_listening 会落 unknown，不影响 lsof 分支的题）
+        self.ss = os.path.join(self.tmp, "ss")
+        with open(self.ss, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\n[ -n "$FAKE_SS_RC" ] && exit "$FAKE_SS_RC"\n'
+                     '[ -n "$FAKE_SS_TABLE" ] && cat "$FAKE_SS_TABLE"\nexit 0\n')
+        os.chmod(self.ss, 0o755)
+
+    def _ask_listening(self, ss_table=None, ss_rc=None, lsof_table=None, lsof_rc=None):
+        """只问 proc_is_listening：三值纪律最容易假阴的那一格。"""
+        env = dict(os.environ)
+        env["PATH"] = self.tmp + os.pathsep + env["PATH"]
+        for var, val in (("FAKE_SS_TABLE", ss_table), ("FAKE_SS_RC", ss_rc),
+                         ("FAKE_TABLE", lsof_table), ("FAKE_RC", lsof_rc)):
+            if val is not None:
+                if var.endswith("TABLE"):
+                    path = os.path.join(self.tmp, var + ".txt")
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(str(val))
+                    env[var] = path
+                else:
+                    env[var] = str(val)
+        r = subprocess.run(
+            ["bash", "-c", '. "$1" >/dev/null 2>&1; proc_is_listening "$2"',
+             "_", self.fn, self.fake_pid],
+            capture_output=True, text=True, env=env)
+        return r.stdout.strip()
 
     def _ask(self, table=None, rc=None):
         env = dict(os.environ)
@@ -92,6 +118,39 @@ class ServiceEvidenceTest(unittest.TestCase):
              "_", self.fn, self.fake_pid],
             capture_output=True, text=True, env=env)
         return r.stdout.strip()
+
+    # ---- ss 侧的能力闸（2026-10-27 Neuromancer 逼出来的一格）----
+    def test_ss_listeners_but_no_pid_anywhere_is_unknown(self):
+        """表里有监听行、却一个 pid= 都读不到 ⇒ unknown，不是 not。
+
+        这正是非 root 读别人 socket 的形状：ss 有行、没有 users:(...)。
+        旧写法会在这里说「not」——把「我看不见」当成「它不在」。
+        """
+        table = ("State  Recv-Q Send-Q Local Address:Port Peer Address:Port\n"
+                 "LISTEN 0      128          0.0.0.0:22        0.0.0.0:*\n"
+                 "LISTEN 0      5          127.0.0.1:18923     0.0.0.0:*\n")
+        self.assertEqual(self._ask_listening(ss_table=table), "unknown")
+
+    def test_ss_other_pids_visible_mine_absent_is_not(self):
+        """看得见 pid、就是没有我这个 ⇒ not（这一格才是真的「不是」）。"""
+        table = ("State  Recv-Q Send-Q Local Address:Port Peer Address:Port\n"
+                 "LISTEN 0      128          0.0.0.0:22        0.0.0.0:*    "
+                 "users:((\"sshd\",pid=4711,fd=3))\n")
+        self.assertEqual(self._ask_listening(ss_table=table), "not")
+
+    def test_ss_pid_at_end_of_users_list_still_matches(self):
+        """回归：pid 收在行尾（`pid=999998))` 后面没逗号）也要算 listening。
+
+        旧写法 `case ... *\"pid=$_pid,\"*` 依赖后随逗号，这个形状会假阴。
+        """
+        table = ("State  Recv-Q Send-Q Local Address:Port Peer Address:Port\n"
+                 "LISTEN 0      5          127.0.0.1:18923     0.0.0.0:*    "
+                 "users:((\"python3\",pid=%s,fd=3))\n" % self.fake_pid)
+        self.assertEqual(self._ask_listening(ss_table=table), "listening")
+
+    def test_ss_failure_is_unknown(self):
+        """ss 自己非零退出 ⇒ unknown（命令成败不许被读成「没有」）。"""
+        self.assertEqual(self._ask_listening(ss_table="", ss_rc=1), "unknown")
 
     # ---- 四个真形状 ----
     def test_both_pipes_is_stdio(self):

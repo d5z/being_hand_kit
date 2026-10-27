@@ -146,15 +146,33 @@ proc_service_evidence() {
 # 2026-10-27 加：Portal 以 `python3 -` 起服务时 argv 里没有标记，只有 cwd 和「在监听」两格可用。
 proc_is_listening() {
   _pid=$1
+  # 三值纪律：listening / not / unknown。**「读不到」不许冒充「不是」**。
   if command -v ss >/dev/null 2>&1; then
-    _out=$(ss -ltnp 2>/dev/null || true)
+    _rc=0
+    _out=$(ss -ltnp 2>/dev/null) || _rc=$?
+    [ "$_rc" -eq 0 ] || { echo unknown; return 0; }
     [ -n "$_out" ] || { echo unknown; return 0; }
-    case "$_out" in *"pid=$_pid,"*) echo listening ;; *) echo not ;; esac
+    # 能力闸（2026-10-27 加）：表里有监听行、却一个 pid= 都读不到 ⇒ 我看不见进程信息
+    # （非 root 读别人的 socket 就是这个形状），这不是「它没在监听」，是「我判不了」。
+    # 同族于 Neuromancer 那侧的「空读数不许替我说一个确定值」。
+    if [ -n "$(printf '%s\n' "$_out" | tail -n +2)" ] && \
+       ! printf '%s\n' "$_out" | grep -q 'pid='; then
+      echo unknown; return 0
+    fi
+    # pid 用整字段比对：旧写法 `pid=$_pid,` 依赖「后面还有个逗号」，
+    # `users:(("x",pid=123))` 这种收在行尾的形状会假阴。
+    if printf '%s\n' "$_out" | grep -o 'pid=[0-9]*' | grep -qx "pid=$_pid"; then
+      echo listening; return 0
+    fi
+    echo not
     return 0
   fi
   if command -v lsof >/dev/null 2>&1; then
-    _out=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$_pid" 2>/dev/null | tail -n +2 || true)
-    case "$_out" in "") echo not ;; *) echo listening ;; esac
+    _rc=0
+    _o=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$_pid" 2>/dev/null) || _rc=$?
+    [ "$_rc" -eq 0 ] || { echo unknown; return 0; }
+    _o=$(printf '%s\n' "$_o" | tail -n +2)
+    case "$_o" in "") echo not ;; *) echo listening ;; esac
     return 0
   fi
   echo unknown
