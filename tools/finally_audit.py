@@ -83,7 +83,43 @@ def finally_sweep(files, names):
     return len(hits), hits
 
 
+FIXTURE = '''import subprocess
+def f(p):
+    try:
+        return 1
+    finally:
+        p.kill()
+'''
+
+
+def self_test():
+    """在门后放一个一定能被数到的东西，再报那个 0。（Neuromancer 2026-10-27 的规则）
+
+    放不进去，那个 0 就不许印出来 —— 所以本函数不通过时 main() 直接拒绝出数。
+    """
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix="fa_selftest_")
+    try:
+        p = os.path.join(d, "fixture.py")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(FIXTURE)
+        n_narrow, hits = finally_sweep([p], NARROW)
+        ok = n_narrow == 1 and hits[0]["killed"]
+        return ok, d, n_narrow
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
+    ok, where, n = self_test()
+    print("装置自检（门后放一格必定被数到的东西）: 夹具 finally 命中 %d 处（应 1）→ %s"
+          % (n, "会响 ✓" if ok else "不响 ✗"))
+    if not ok:
+        print("装置不响 ⇒ 拒绝印出任何 0，rc=2")
+        return 2
+    print()
+
     files = sorted(iter_py("."))
     # —— 每一个数都从这里 print 出来，不靠读列表 ——
     print("py files（排除 .git/__pycache__/.venv/node_modules）: %d" % len(files))
