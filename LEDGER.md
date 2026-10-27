@@ -770,3 +770,30 @@ after 1s age=102 state=alive
 真 kill 路径复跑（非 dry）：`target alive? NO / decoy alive? YES / rc=0`，且这一跑自发露出旁证格——上一轮的 decoy 被跳过并写明原因：`跳过 PID=924727：cwd=/tmp/killsbx/other ≠ /tmp/killsbx2/deploy（不是本部署的进程）`。
 
 全量 811 tests 绿 / 32.4s。
+
+### 0.13.8 补腿 — 真页读数：三个分母，一个都没说
+
+夹具全绿这条账今天真去量了两张真页（Wikipedia + MDN），掏出夹具守不住的一格：
+
+```
+MDN <iframe>  node_count 600 / raw 12699 / nodes_omitted 5471
+  skipped: coordinates for 200 node(s)  (over the 400-node budget)
+  skipped: reachability for 335 node(s) (centre outside the viewport)
+  ── 600 + 200 + 335 合不上，而页面有 12699 个原始节点
+```
+
+读者无法知道任何一个百分比的分母是什么，这些数读起来像在描述页面。加一行漏斗 + 一条可核的恒等式：
+
+```
+denominators — 600 line(s) shown of 6071 in the page; boxed 400 (budget 400, interactive first);
+hit-tested 59 = boxed 400 − 335 out of viewport − 6 unboxed.
+Every reachability verdict below describes only this last slice, not the page
+```
+
+真页上恒等式成立：400 − 335 − 6 = 59。**这才是这条线真实的覆盖面**：6071 行里 400 行有盒子，其中 59 行被真的 hit-test 过。
+
+同轮的真页正读数：Wikipedia 出 `2 node(s) covered at their centre`（covered 分支第一次在非自造页上响）；MDN 合并 6 个子 frame（iframe 那条在真页上站住）。
+
+闸门抽成 `needs_denominators()` 按行为测，不 grep 源码——「源码里有这行」今天已经不是一次的证据了。
+
+真页覆盖面：3 页（HN Guidelines / Wikipedia / MDN），仍小于 5。

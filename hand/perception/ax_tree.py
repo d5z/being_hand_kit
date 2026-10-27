@@ -344,6 +344,36 @@ def snapshot_text(ser) -> str:
     return "\n".join(ser["lines"])
 
 
+def needs_denominators(offscreen, coords_skipped, omitted):
+    """Say the funnel only when part of it is missing. On a small page where
+    everything was boxed and hit-tested, the note is noise — and a note that is
+    always printed is a note nobody reads."""
+    return bool(offscreen or coords_skipped or omitted)
+
+
+def denominators_note(shown, omitted, boxed, offscreen, unresolved, budget):
+    """2026-10-27, real page (MDN <iframe>): three denominators, none stated.
+
+    Receipt read `node_count: 600`, `nodes_omitted: 5469`, then two skip lines:
+    "coordinates for 200 node(s) (over the 400-node budget)" and "reachability
+    for 334 node(s) (centre outside the viewport)". 600 + 200 + 334 does not
+    reconcile, and the page holds 12689 raw nodes — so a reader cannot tell what
+    any percentage is a percentage of, and the numbers read as if they described
+    the page rather than a slice of it. This sentence states the funnel once,
+    with the identity that makes it checkable:
+
+        boxed = hit_tested + offscreen + unresolved
+    """
+    hit_tested = boxed - offscreen - unresolved
+    return (
+        f"denominators — {shown} line(s) shown of {shown + omitted} in the page; "
+        f"boxed {boxed} (budget {budget}, interactive first); hit-tested "
+        f"{hit_tested} = boxed {boxed} − {offscreen} out of viewport − "
+        f"{unresolved} unboxed. Every reachability verdict below describes only "
+        f"this last slice, not the page"
+    )
+
+
 def overflow_hint(nodes_meta):
     """Two-step strategy hint when the AX tree hides a collapsed menu.
 
@@ -944,6 +974,12 @@ def ax_snapshot(page_sel=None, max_lines=DEFAULT_MAX_LINES,
                     f"{covered} node(s) covered at their centre",
                     "hit test reports another branch on top — present and placed, "
                     "but a click aimed there lands on the other one"))
+            # 2026-10-27: state the funnel once, before the reader does the
+            # arithmetic and finds it does not close.
+            if needs_denominators(offscreen, coords_skipped, ser["nodes_omitted"]):
+                notes.append(denominators_note(
+                    len(ser["lines"]), ser["nodes_omitted"],
+                    len(wanted), offscreen, unresolved, MAX_COORD_NODES))
         hint = merge_hints(overflow_hint(ser["nodes"]), notes)
 
         # S2 (0.9): what the page *looks* like right now (DOM heuristic).

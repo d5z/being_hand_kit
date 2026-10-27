@@ -698,3 +698,36 @@ class TestReachabilityInputs(unittest.TestCase):
         self.assertEqual(parents[3], 1)   # a shadow child bubbles to its host
         self.assertEqual(parents[4], 3)
         self.assertEqual(parents[5], 1)   # ::before belongs to its host
+
+
+class TestDenominatorsNote(unittest.TestCase):
+    """2026-10-27, real page (MDN <iframe>): 600 shown / 200 over budget / 334
+    out of viewport / 5469 omitted — four numbers that do not reconcile, on a
+    page holding 12689 raw nodes. The receipt let the reader think they
+    described the page. This note states the funnel and the identity
+    boxed = hit_tested + offscreen + unresolved, so it can be checked."""
+
+    def test_the_identity_holds_and_is_printed(self):
+        from hand.perception.ax_tree import denominators_note
+        n = denominators_note(shown=600, omitted=5469, boxed=400,
+                              offscreen=334, unresolved=0, budget=400)
+        self.assertIn("400 − 334 out of viewport − 0 unboxed", n)
+        self.assertIn("hit-tested 66", n)
+        # the reader must be told what the verdicts do NOT describe
+        self.assertIn("not the page", n)
+
+    def test_the_three_denominators_are_all_named(self):
+        from hand.perception.ax_tree import denominators_note
+        n = denominators_note(shown=10, omitted=5, boxed=8,
+                              offscreen=2, unresolved=3, budget=400)
+        self.assertIn("10 line(s) shown of 15 in the page", n)   # tree level
+        self.assertIn("boxed 8", n)                              # box level
+        self.assertIn("hit-tested 3", n)                         # verdict level
+
+    def test_no_note_when_nothing_was_dropped(self):
+        # behavioural, not a source grep: a note always printed is a note nobody reads
+        from hand.perception.ax_tree import needs_denominators
+        self.assertFalse(needs_denominators(0, 0, 0))
+        self.assertTrue(needs_denominators(1, 0, 0))
+        self.assertTrue(needs_denominators(0, 1, 0))
+        self.assertTrue(needs_denominators(0, 0, 1))
