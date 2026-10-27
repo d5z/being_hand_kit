@@ -127,6 +127,60 @@ class AncestorExclusionTest(unittest.TestCase):
                       "the receipt must say the gate was weak, not just print a count")
         self.assertIn("simulated EACCES", r["ancestry"]["truncated_why"])
 
+    def _spawn_target(self):
+        """A process that is a real candidate: argv carries the port token + our marker."""
+        p = subprocess.Popen(["python3", "-c", "import time; time.sleep(30)",
+                              TOKEN + "-selfharm", MARKER])
+        self.addCleanup(lambda: (p.poll() is None and p.kill()))
+        return p
+
+    def test_the_process_judged_is_the_process_killed(self):
+        """Judgement and signal are two moments; the stamp is re-read between them.
+
+        0.13.8 -- the marker was read once and os.kill happened later, so a pid
+        that died and was handed to a stranger in between would be killed on the
+        strength of the dead process's argv. Cheap cell first: a normal target
+        still dies, and the receipt says the identity was actually checked.
+        """
+        from hand.perception import cdp_launcher as L
+        p = self._spawn_target()
+        r = L.kill_our_browsers(sig=15, marker=MARKER)
+        self.assertIn(p.pid, r["killed"])
+        self.assertGreaterEqual(r["identity_checked"], 1)
+        self.assertEqual(r["reused"], [])
+        self.assertEqual(p.wait(timeout=10), -15)
+
+    def test_a_pid_that_changed_identity_is_not_killed(self):
+        """The other direction: stamp differs -> refuse, and say which pid and why.
+
+        Simulated, not raced: the second read of the start time returns a
+        different value, which is exactly what a recycled pid looks like to the
+        code. A pass here means the re-read is doing work, not decoration.
+        """
+        from hand.perception import cdp_launcher as L
+        p = self._spawn_target()
+        real = L._proc_start_ticks
+        seen = {}
+
+        def flaky(pid):
+            v = real(pid)
+            if v is None:
+                return None
+            seen[pid] = seen.get(pid, 0) + 1
+            return v + (10000 if seen[pid] > 1 else 0)
+
+        L._proc_start_ticks = flaky
+        try:
+            r = L.kill_our_browsers(sig=15, marker=MARKER)
+        finally:
+            L._proc_start_ticks = real
+
+        self.assertIn(p.pid, r["reused"], "a changed stamp must not be killed")
+        self.assertNotIn(p.pid, r["killed"])
+        self.assertIn("start time", r["reused_why"])
+        self.assertIsNone(p.poll(), "it was refused, so it must still be alive")
+        p.kill()
+
     def test_a_stranger_without_the_marker_is_still_skipped_not_killed(self):
         """Ancestor exclusion must not become 'kill everything that is not me'."""
         from hand.perception.cdp_launcher import kill_our_browsers

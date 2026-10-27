@@ -776,7 +776,8 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
         return {"killed": [], "skipped": 0, "unreadable": 0,
                 "why": f"could not enumerate candidates: {e}"}
 
-    killed, skipped, unreadable, gone = [], [], [], []
+    killed, skipped, unreadable, gone, reused = [], [], [], [], []
+    identity_checked = identity_unavailable = 0
     # self + ancestors: the `sh -c "..."` that carried this call has our words
     # in its argv, so it would otherwise be a candidate for its own kill.
     # 0.13.8: keep how far up we got -- an incomplete chain is a weakened gate,
@@ -788,6 +789,11 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
         if pid in mine:
             excluded.append(pid)
             continue
+        # identity is read *before* the argv that the judgement uses, and re-read
+        # right before os.kill. Judgement and kill are two moments; a pid can die
+        # and be handed to a stranger between them (2026-10-27, Neuromancer's
+        # precise_kill: the gate and the identity are two independent facts).
+        ticks_before = _proc_start_ticks(pid)
         state, argv = _argv_of(pid)
         if state == "gone":
             gone.append(pid)          # already exited: nothing to kill, not a fault
@@ -801,11 +807,19 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
         if dry_run:
             killed.append(pid)
             continue
+        ticks_now = _proc_start_ticks(pid)
+        if ticks_before is None or ticks_now is None:
+            identity_unavailable += 1     # macOS: pid-only, and the receipt says so
+        elif ticks_now != ticks_before:
+            reused.append(pid)            # not the process we judged: leave it
+            continue
+        else:
+            identity_checked += 1
         try:
             os.kill(pid, sig)
             killed.append(pid)
         except ProcessLookupError:
-            pass
+            gone.append(pid)              # it left between the check and the signal
         except Exception:
             unreadable.append(pid)
     return {"killed": killed, "killed_count": len(killed),
@@ -813,6 +827,12 @@ def kill_our_browsers(sig=9, marker=None, dry_run=False):
             "skipped_why": "argv carries no marker of this install",
             "unreadable": unreadable, "unreadable_count": len(unreadable),
             "gone": gone, "gone_count": len(gone),
+            "reused": reused, "reused_count": len(reused),
+            "reused_why": "pid now carries a different start time: not the process that was judged",
+            "identity_checked": identity_checked,
+            "identity_unavailable": identity_unavailable,
+            "identity_why": ("start time re-read immediately before each signal; "
+                             "unavailable means pid-only identity (no /proc)"),
             "excluded": excluded, "excluded_count": len(excluded),
             "excluded_why": "self or ancestor: its argv carries this call",
             "ancestry": {"levels": chain["levels"],
