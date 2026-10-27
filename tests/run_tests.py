@@ -24,7 +24,7 @@ os.environ.setdefault(
 MODULES = ["tests.test_type_landed", "tests.test_plan", "tests.test_tier2_3", "tests.test_platform", "tests.test_vision_llm", "tests.test_cdp_contract", "tests.test_cdp_contract_real", "tests.test_page_identity", "tests.test_windows_support", "tests.test_receipt_contract", "tests.test_truncation", "tests.test_ax_tree", "tests.test_ax_see", "tests.test_macos_discovery", "tests.test_chrome_profile", "tests.test_kit_quickfixes", "tests.test_release_070", "tests.test_release_080", "tests.test_release_097", "tests.test_release_098", "tests.test_release_0100", "tests.test_release_chain", "tests.test_hand_api", "tests.test_visual_state", "tests.test_ocr_diff", "tests.test_expect_spec", "tests.test_viewport_alignment", "tests.test_text_match", "tests.test_enter_submit", "tests.test_handle_staleness", "tests.test_heading_redirect", "tests.test_clickable_point", "tests.test_eye_check", "tests.test_emitted", "tests.test_action_primitives", "tests.test_release_0110", "tests.test_frame_diff", "tests.test_effect", "tests.test_release_0120", "tests.test_release_0130", "tests.test_iframe_coords", "tests.test_release_0131", "tests.test_iframe_transform", "tests.test_iframe_transform_geo", "tests.test_release_0132", "tests.test_dom_no_text", "tests.test_release_0133", "tests.test_frame_origins", "tests.test_release_0134", "tests.test_effect_channels", "tests.test_release_0135", "tests.test_release_0136", "tests.test_release_0137", "tests.test_xy_expect", "tests.test_dpr_decl", "tests.test_dpr_tiers", "tests.test_owner", "tests.test_owner_listener", "tests.test_click_once", "tests.test_dpr_single_read", "tests.test_version_fork", "tests.test_selfharm", "tests.test_sync_service_evidence", "tests.test_sync_age_threshold", "tests.test_bin_smoke", "tests.test_runner_registry"]
 
 
-def registry_report():
+def registry_report(on_disk=None, modules=None):
     """分母自证：磁盘上有几个 test_*.py，清单里登记了几个，差在哪。
 
     2026-10-27 交的学费：新写 tests/test_sync_age_threshold.py，单跑全绿，
@@ -33,11 +33,14 @@ def registry_report():
     只有分母能分开它们。所以这里每次跑都念一遍：磁盘 vs 清单，各是几。
     """
     here = os.path.dirname(os.path.abspath(__file__))
-    on_disk = sorted(
-        f[:-3] for f in os.listdir(here)
-        if f.startswith("test_") and f.endswith(".py")
-    )
-    registered = sorted(n.rsplit(".", 1)[-1] for n in MODULES)
+    if on_disk is None:
+        on_disk = sorted(
+            f[:-3] for f in os.listdir(here)
+            if f.startswith("test_") and f.endswith(".py")
+        )
+    else:
+        on_disk = sorted(on_disk)
+    registered = sorted(n.rsplit(".", 1)[-1] for n in (MODULES if modules is None else modules))
     missing = [m for m in on_disk if m not in registered]   # 存在但永不运行
     ghost = [m for m in registered if m not in on_disk]     # 登记了但文件不在
     return on_disk, registered, missing, ghost

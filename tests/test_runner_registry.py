@@ -1,16 +1,15 @@
-"""零位：这套测试跑之前，先证明「它数的是全部」。
+"""零位本身也要被拨：把「数得全」这条判据喂假数据，看它会不会红。
 
-2026-10-27 的学费：`tests/test_sync_age_threshold.py` 写好了、单跑全绿、
-从没在套件里跑过——因为 `run_tests.py` 的 `MODULES` 是显式清单，不是 discover。
-当时靠「870 对不上预期的 875」抓到。
+2026-10-27 第二笔（Neuromancer 的 N6 教我的）：一条从没被拨过的零位，
+绿一年也说明不了什么——它可能永远不会红。所以这里不测「真仓库是齐的」
+（那是第一条测试的事），这里测**这条判据在两格里响得不一样**：
 
-更早的一笔：`tests/test_bin_smoke.py` 的 docstring 写着「macOS release preflight
-会跑这条护栏」，而它根本不在清单里——**一条自称在 macOS 上把关的护栏，从来没跑过**。
-它不报错，它只是不存在。
+  已知好格：磁盘与清单一致       → missing/ghost 都空
+  已知坏格：磁盘比清单多一个      → missing 必须点名
+  已知坏格：清单比磁盘多一个      → ghost 必须点名
+  已知坏格：两边完全不相交        → 两边都要报全，不许只报一个
 
-这两笔同一个形状：文件存在、测试绿、套件不跑。三件互不相干的事。
-唯一能分开它们的读数是分母（磁盘上有几个 vs 清单里登记了几个），所以这条测试
-把分母钉进套件本身——它是这里唯一一条「关于这套测试自己」的测试。
+不碰真仓库：on_disk / modules 由这里注入。
 """
 
 import pathlib
@@ -22,19 +21,41 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import run_tests  # noqa: E402
 
 
-class RegistryCoversDiskTest(unittest.TestCase):
-    def test_every_test_file_on_disk_is_registered(self):
+def mods(*names):
+    return ["tests." + n for n in names]
+
+
+class RegistryDetectionTest(unittest.TestCase):
+    def test_agreeing_inputs_are_silent(self):
+        on_disk, reg, missing, ghost = run_tests.registry_report(
+            on_disk=["test_a", "test_b"], modules=mods("test_a", "test_b"))
+        self.assertEqual((missing, ghost), ([], []))
+
+    def test_file_on_disk_but_not_registered_is_named(self):
+        # 已知坏格：这正是 2026-10-27 真实发生过的那格（test_bin_smoke / age_threshold）
+        on_disk, reg, missing, ghost = run_tests.registry_report(
+            on_disk=["test_a", "test_never_runs"], modules=mods("test_a"))
+        self.assertEqual(missing, ["test_never_runs"])
+        self.assertEqual(ghost, [])
+
+    def test_registered_without_file_is_named(self):
+        on_disk, reg, missing, ghost = run_tests.registry_report(
+            on_disk=["test_a"], modules=mods("test_a", "test_ghost"))
+        self.assertEqual(missing, [])
+        self.assertEqual(ghost, ["test_ghost"])
+
+    def test_disjoint_sets_report_both_sides(self):
+        # 只报一边的实现会在这格上绿——那正是「回执只报一个数」的病
+        on_disk, reg, missing, ghost = run_tests.registry_report(
+            on_disk=["test_a"], modules=mods("test_b"))
+        self.assertEqual(missing, ["test_a"])
+        self.assertEqual(ghost, ["test_b"])
+
+    def test_real_repo_is_the_known_good_cell(self):
+        # 唯一一条碰真仓库的：它证明上面三格之外，现实这一格也是好的。
         on_disk, registered, missing, ghost = run_tests.registry_report()
-        self.assertEqual(
-            missing, [],
-            "这些文件在磁盘上但不在 MODULES 里，永不会跑：%r" % (missing,),
-        )
-        self.assertEqual(
-            ghost, [],
-            "这些在 MODULES 里但磁盘上没有文件：%r" % (ghost,),
-        )
-        # 分母本身也要报出来：只有一个数字的「全绿」没法判。
-        self.assertGreater(len(registered), 0)
+        self.assertEqual(missing, [], "磁盘上未注册：%r" % (missing,))
+        self.assertEqual(ghost, [], "清单里幽灵：%r" % (ghost,))
         self.assertEqual(len(registered), len(on_disk))
 
 
