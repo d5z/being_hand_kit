@@ -797,3 +797,30 @@ Every reachability verdict below describes only this last slice, not the page
 闸门抽成 `needs_denominators()` 按行为测，不 grep 源码——「源码里有这行」今天已经不是一次的证据了。
 
 真页覆盖面：3 页（HN Guidelines / Wikipedia / MDN），仍小于 5。
+
+### 0.13.8 补腿 — 回执扫面：谁在报事实，谁在报它看过什么
+
+意图 #36192（挂着 15h）要求的不是一句判断，是一张表。十一个对外工具，三列：它报了什么 / 事实是什么 / 差在哪。
+
+```
+工具              顶层词                              判读
+cdp_open          origin(spawned|attached) · owner      ✅ 今天就修过：说清「谁的浏览器」
+cdp_close         pages · closed · endpoint_gone       ✅ 今天修过：browser 级关闭，报终局
+cdp_nav           nav_id · title · navigated           ✅ 导航事实（同 id 判「没跳」）
+cdp_see           verified · denominators(新) · hint    ✅ 今天修：三个分母说清 + 恒等式
+cdp_click         resolved · landed · effected         ✅ 三态
+cdp_drag          resolved · landed · effected         ✅ 三态
+cdp_key           resolved · landed · effected         ✅ 三态
+cdp_scroll        moved · scrollY_before/after         ✅ 报世界（滚没滚、滚到哪）
+cdp_shot          path · format · 图像本身              ✅ 事实就是帧本身；空帧的判读归 eye_check
+hand_health       uptime · calls · chrome              ✅
+cdp_type          ✗ landed 埋在 evidence.read_back      ❌ 唯一在说方言的那个
+```
+
+**判据不是「字段多不多」，是「同一个词在别的工具里是什么意思」。** `landed` 在 click/drag/key 是顶层词，在 typing 里只存在于 `evidence.read_back.landed`——调用方一次 `r.get("landed")` 在十个工具里返回 True/False，在 typing 上返回 None。**缺席不是 False：缺席读起来是「这个工具没有这个概念」。**
+
+修法：`_typed_out()` 一个收据构造器，三条 typing 路径（handle / selector / focused）共用——顶层补 `resolved · landed · landed_source="readback"`，失败路径同样带 `landed: False`（`landed` 不再只在成功时才存在）。读不到回读时 `landed: False`，绝不因为「派发成功了」就算落地。
+
+按行为测（不用 CDP）：`tests/test_type_landed.py` 5 格，其中一格断言失败路径也带这个键。819 tests 绿。
+
+顺带记：第一版测试断言 `assertIn("INPUT", out["evidence"])` 是错的——'INPUT' 是 `tag` 的**值**，不是键；测试自己红了，红得对。

@@ -43,6 +43,34 @@ def _receipt_fail(method: str, reason: str, **fields) -> dict:
     return out
 
 
+def _typed_out(method, page_index, text, evidence, rb, fail=None, **extra):
+    """One vocabulary for typing receipts (0.13.8).
+
+    click / drag / key speak `resolved · landed · effected` at the top level.
+    Typing spoke only `verified` and buried the read-back verdict inside
+    `evidence.read_back`, so a caller reading `r.get("landed")` across tools got
+    None from typing — and **absence is not False: it reads as "this tool has no
+    such concept"**. The verdict is now a top-level word shared with its
+    siblings, and it is sourced: `landed_source = "readback"` says the claim came
+    from re-reading the field, not from the dispatch succeeding.
+    """
+    evidence = dict(evidence or {})
+    evidence['read_back'] = _rb_evidence(rb)
+    landed = bool((rb or {}).get('landed'))
+    if fail:
+        out = _receipt_fail(method, fail, text=text)
+        out['evidence'].update(evidence)
+        out['landed'] = False
+        out['landed_source'] = 'readback'
+        return out
+    out = {'method': method, 'page_index': page_index, 'text': text,
+           'result': 'ok', 'verified': True,
+           'resolved': True, 'landed': landed, 'landed_source': 'readback',
+           'evidence': evidence}
+    out.update(extra)
+    return out
+
+
 def _selector_hit(ws, selector: str, msg_id: int = 2) -> dict:
     """Does `selector` match an element right now? (document.querySelector)
 
@@ -1135,6 +1163,8 @@ def cdp_type_handle(handle, text, page_sel=None):
                 method="cdp_type", nav=nav_ev)
             out["text"] = text
             out["evidence"]["read_back"] = _rb_evidence(rb)
+            out["landed"] = False
+            out["landed_source"] = "readback"
             return out
         evidence = {
             "element": _handle_label(entry),
@@ -1144,13 +1174,11 @@ def cdp_type_handle(handle, text, page_sel=None):
             "focus": _focus_label(focus),
             "method_detail": "DOM.resolveNode → focus() → Input.insertText",
             "enter_mode": used_enter,
-            "read_back": _rb_evidence(rb),
             "verified": True,
         }
         evidence.update(nav_ev)
-        return {"method": "cdp_type", "handle": f'[{entry["idx"]}]',
-                "page_index": idx, "text": text, "result": "ok",
-                "verified": True, "evidence": evidence}
+        return _typed_out("cdp_type", idx, text, evidence, rb,
+                          handle=f'[{entry["idx"]}]')
     finally:
         ws.close()
 
@@ -1332,15 +1360,14 @@ def cdp_type(selector, text, page_sel=None, fast=False):
         if fail:
             out = _receipt_fail('cdp_type', fail, selector=selector, text=text)
             out['evidence']['read_back'] = _rb_evidence(rb)
+            out['landed'] = False
+            out['landed_source'] = 'readback'
             return out
         ev = _element_evidence(info)
         ev['verified'] = True
         ev['selector'] = selector
-        ev['read_back'] = _rb_evidence(rb)
         ev['enter_mode'] = used_enter
-        return {'method': 'cdp_type', 'page_index': idx, 'selector': selector,
-                'text': text, 'result': 'ok',
-                'verified': True, 'evidence': ev}
+        return _typed_out('cdp_type', idx, text, ev, rb, selector=selector)
     finally:
         ws.close()
 
@@ -1907,15 +1934,15 @@ def cdp_type_focused(text, page_sel=None):
         if fail:
             out = _receipt_fail('cdp_type', fail, text=text)
             out['evidence']['read_back'] = _rb_evidence(rb)
+            out['landed'] = False
+            out['landed_source'] = 'readback'
             return out
-        return {'method': 'cdp_type', 'page_index': idx, 'text': text,
-                'result': 'ok', 'verified': True,
-                'evidence': {'focus': _focus_label(focus), 'tag': tag,
-                             'focus_id': focus.get('id') or '',
-                             'focus_type': focus.get('type') or '',
-                             'enter_mode': used_enter,
-                             'read_back': _rb_evidence(rb),
-                             'verified': True}}
+        return _typed_out('cdp_type', idx, text,
+                          {'focus': _focus_label(focus), 'tag': tag,
+                           'focus_id': focus.get('id') or '',
+                           'focus_type': focus.get('type') or '',
+                           'enter_mode': used_enter, 'verified': True},
+                          rb)
     finally:
         ws.close()
 
