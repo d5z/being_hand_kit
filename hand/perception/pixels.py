@@ -179,7 +179,12 @@ def ink_stats(png_bytes, step=1):
                    b >> INK_QUANT_SHIFT)
             counts[key] = counts.get(key, 0) + 1
     total = len(samples) or 1
-    bg_key = max(counts.items(), key=lambda kv: kv[1])[0]
+    # 并列（2026-10-27）：max() 在两个桶计数相同时，赢家由 dict 迭代序静默决定——
+    # 那是「谁先进 counts 谁赢」，不是任何关于画面的判断。背景色照旧给一个（下游要它），
+    # 但把并列的事实带出去：background_tie = 与赢家同票的桶数（1 = 无并列）。
+    _top = max(counts.values())
+    _tied = [k for k, v in counts.items() if v == _top]
+    bg_key = _tied[0]
     # Compare against the centre of the winning bucket, not its floor: with
     # floor-only centres a pure white frame (255 -> bucket 15 -> 240) would be
     # 45 away from its own background and count as ink.
@@ -196,6 +201,7 @@ def ink_stats(png_bytes, step=1):
         "pixels": total,
         "ink_ratio": ink / float(total),
         "background": "#%02x%02x%02x" % centre,
+        "background_tie": len(_tied),
         "distinct_colors": len(counts),
     }
 

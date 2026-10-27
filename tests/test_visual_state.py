@@ -377,6 +377,31 @@ class TestPixelVote(unittest.TestCase):
         self.assertEqual((stats["width"], stats["height"]), (4, 4))
         self.assertEqual(stats["ink_ratio"], 0.0)
 
+    def test_background_tie_is_reported_not_hidden(self):
+        """两个桶同票时，赢家由 dict 迭代序决定——那是事实的一部分，必须带出去。
+
+        2026-10-27：`max(counts.items(), key=kv[1])[0]` 在并列时静默选一个，
+        回执读起来像「背景色是 X」这个判断，其实是「谁先进 counts 谁赢」。
+        """
+        flat = []
+        for y in range(4):
+            for x in range(4):
+                black = y < 2                      # 上半黑、下半白：8 票对 8 票
+                flat.extend((0, 0, 0, 255) if black else (255, 255, 255, 255))
+        stats = pixels.ink_stats(_png(4, 4, flat))
+        self.assertEqual(stats["distinct_colors"], 2)
+        self.assertEqual(stats["background_tie"], 2)
+
+    def test_background_has_no_tie_when_one_bucket_wins(self):
+        flat = []
+        for y in range(4):
+            for x in range(4):
+                black = y < 3                      # 12 票黑 vs 4 票白
+                flat.extend((0, 0, 0, 255) if black else (255, 255, 255, 255))
+        stats = pixels.ink_stats(_png(4, 4, flat))
+        self.assertEqual(stats["background_tie"], 1)
+        self.assertEqual(stats["background"], "#080808")
+
 
     def test_unsupported_png_raises_instead_of_guessing(self):
         with self.assertRaises(pixels.PngUnsupported):
