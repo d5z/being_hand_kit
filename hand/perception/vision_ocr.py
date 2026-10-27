@@ -47,8 +47,11 @@ def _vision_recognize(image_path: str) -> dict:
     """
     warnings = []
     if not os.path.exists(VISION_OCR_BIN):
-        # Fallback: compile on the fly
-        _compile_vision_bin()
+        # Fallback: compile on the fly. 编译失败必须在这里说清，不能让调用方
+        # 拿着一个不存在的路径去 subprocess.run（那条错只说路径，不说原因）。
+        ok, detail = _compile_vision_bin()
+        if not ok:
+            raise RuntimeError(f"vision_ocr unavailable: {detail}")
 
     # Stale-binary detection (0.9): a bin older than its swift source
     # predates the bounds output — old-format lines silently lose
@@ -114,12 +117,31 @@ def _vision_recognize(image_path: str) -> dict:
 
 
 def _compile_vision_bin():
-    """Compile the Swift Vision OCR binary."""
+    """Compile the Swift Vision OCR binary. 返回 (ok, detail)。
+
+    2026-10-28 08:0x：旧版不读 swiftc 的 rc（`subprocess.run(...)` 的结果被丢弃），
+    于是「编译失败」与「编译成功」在回执上同形 —— 调用方随后拿 VISION_OCR_BIN
+    去 subprocess.run，得到的是 FileNotFoundError，消息里只有路径，
+    没有 swiftc 真正说的那句（例如 `error: no such module 'Vision'`、
+    或者 `swiftc: command not found`）。
+    现在三个失败各有名字：swiftc 不在 / 超时 / rc≠0 带 stderr 尾 / rc=0 却没产物。
+    """
     swift_source = os.path.join(os.path.dirname(__file__), "vision_ocr.swift")
-    subprocess.run(
-        ["swiftc", "-o", VISION_OCR_BIN, swift_source],
-        capture_output=True, text=True, timeout=60
-    )
+    try:
+        proc = subprocess.run(
+            ["swiftc", "-o", VISION_OCR_BIN, swift_source],
+            capture_output=True, text=True, timeout=60
+        )
+    except FileNotFoundError:
+        return False, "swiftc not found on PATH (Vision OCR needs Xcode command line tools)"
+    except subprocess.TimeoutExpired:
+        return False, "swiftc timed out after 60s"
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip()[-500:]
+        return False, "swiftc rc=%d: %s" % (proc.returncode, tail or "(no stderr)")
+    if not os.path.exists(VISION_OCR_BIN):
+        return False, "swiftc rc=0 but %s was not produced" % VISION_OCR_BIN
+    return True, "compiled %s" % VISION_OCR_BIN
 
 
 def vision_ocr_see() -> dict:

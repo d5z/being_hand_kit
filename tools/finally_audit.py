@@ -64,9 +64,27 @@ OK_NOT_SOURCE = "not_source"
 UNREADABLE = "unreadable"
 
 
-def iter_py(root="."):
+def iter_py(root=".", stats=None, cap=20000):
+    """遍历 *.py。stats 给一个 dict 时，把被 SKIP_DIRS 排掉的 .py 数记进去。
+
+    为什么要数：SKIP_DIRS 是自己设的口味门。「0 是数出来的」和「0 是因为没看」
+    在读数上同形（本文件第 3 条判据）。所以每项都要自报命中数；超过 cap 报 ≥cap，
+    不假装精确。
+    """
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        keep = []
+        for d in dirnames:
+            if d in SKIP_DIRS:
+                if stats is not None:
+                    n = 0
+                    for _dp, _dn, _fn in os.walk(os.path.join(dirpath, d)):
+                        n += sum(1 for f in _fn if f.endswith(".py"))
+                        if n >= cap:
+                            break
+                    stats[d] = stats.get(d, 0) + n
+            else:
+                keep.append(d)
+        dirnames[:] = keep
         for f in filenames:
             if f.endswith(".py"):
                 yield os.path.join(dirpath, f)
@@ -261,8 +279,15 @@ def main():
         return 3
     print()
 
-    files = sorted(iter_py(root))
+    skip_stats = {}
+    files = sorted(iter_py(root, stats=skip_stats))
     infos = [(p, analyse(p)) for p in files]
+
+    print("SKIP_DIRS 自报（每项排掉了几个 .py；0 是数出来的，不是没看）:")
+    for d in sorted(SKIP_DIRS):
+        n = skip_stats.get(d, 0)
+        print("  %-14s 排掉 %s 个 .py" % (d, ("≥%d" % n) if n >= 20000 else n))
+    print()
 
     by_kind = {}
     unreadable = []

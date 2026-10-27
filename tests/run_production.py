@@ -70,9 +70,19 @@ def run_layer(layer, modules):
     if payload is None:
         return {"tests": 0, "passed": 0, "skipped": 0, "failed": 0, "errors": 1,
                 "skips": [],
-                "failures": [[layer, "no result payload; stderr:\n"
-                              + proc.stderr[-1500:]]],
+                "failures": [[layer, "no result payload (runner rc=%s); stderr:\n%s"
+                              % (proc.returncode, proc.stderr[-1500:])]],
                 "seconds": 0.0}
+    # 两份判词不一致时必须说出来（2026-10-28 08:0x，清单⑦）：
+    # payload 说 0 失败 0 error，而 runner 自己以非零码退出 —— 只读 payload
+    # 会把「runner 崩在收尾」读成绿。若 payload 本来就报了红，rc 不作数
+    # （unittest 失败时 rc=1 是正常的），别把红翻成更红。
+    if proc.returncode != 0 and not payload.get("failed") and not payload.get("errors"):
+        payload["errors"] = payload.get("errors", 0) + 1
+        payload.setdefault("failures", []).append(
+            [layer, "runner rc=%d but payload reports 0 failed / 0 errors "
+                    "(the two verdicts disagree); stderr tail:\n%s"
+                    % (proc.returncode, (proc.stderr or "")[-800:])])
     return payload
 
 
