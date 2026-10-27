@@ -633,6 +633,72 @@ def force_witness():
             "why": "the listener carries this install's isolated profile"}
 
 
+def _argv_of(pid):
+    """argv of a live pid, as a list; None if it cannot be read."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            raw = fh.read()
+        return [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
+    except Exception:
+        pass
+    try:
+        import subprocess as _sp
+        out = _sp.run(["ps", "-o", "command=", "-p", str(pid)],
+                      capture_output=True, text=True, timeout=5).stdout
+        return out.split() if out.strip() else None
+    except Exception:
+        return None
+
+
+def kill_our_browsers(sig=9, marker=None, dry_run=False):
+    """Kill only browsers whose argv carries OUR marker. Never by name.
+
+    2026-10-27: this repo had three "kill every chrome" sites; one of them
+    (`tests/production/test_stability.py`) ran `pkill -9 -f chrome`, which on a
+    desktop kills the human's own browser. A name proves nothing about who
+    started the process -- the judgement must be a witness in the argv.
+
+    marker defaults to this install's profile dir (see profile_dir()).
+    Returns a receipt: killed / skipped (argv lacked the marker) / unreadable.
+    """
+    marker = marker or profile_dir()
+    try:
+        out = subprocess.run(["pgrep", "-f", "remote-debugging-port"],
+                             capture_output=True, text=True, timeout=10).stdout
+        pids = [int(x) for x in out.split() if x.strip().isdigit()]
+    except Exception as e:
+        return {"killed": [], "skipped": 0, "unreadable": 0,
+                "why": f"could not enumerate candidates: {e}"}
+
+    killed, skipped, unreadable = [], [], []
+    me = os.getpid()
+    for pid in pids:
+        if pid == me:
+            continue
+        argv = _argv_of(pid)
+        if argv is None:
+            unreadable.append(pid)
+            continue
+        if not any(marker in a for a in argv):
+            skipped.append(pid)
+            continue
+        if dry_run:
+            killed.append(pid)
+            continue
+        try:
+            os.kill(pid, sig)
+            killed.append(pid)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            unreadable.append(pid)
+    return {"killed": killed, "killed_count": len(killed),
+            "skipped": skipped, "skipped_count": len(skipped),
+            "skipped_why": "argv carries no marker of this install",
+            "unreadable": unreadable, "unreadable_count": len(unreadable),
+            "marker": marker}
+
+
 def close_refusal(status, witness=None, forced=False):
     """The receipt a close returns when it declines to kill someone else's browser.
 

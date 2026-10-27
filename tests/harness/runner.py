@@ -52,9 +52,10 @@ def ensure_fresh_browser(timeout=15):
         while time.time() < deadline and chrome_available():
             time.sleep(0.5)
         if chrome_available():
-            # Browser.close not honored — hard kill, then re-probe
-            subprocess.run(["pkill", "-f", "chrome-headless-shell"],
-                           capture_output=True, timeout=10)
+            # Browser.close not honored — hard kill, but only ours (2026-10-27):
+            # a name proves nothing about who started the process.
+            from hand.perception.cdp_launcher import kill_our_browsers
+            kill_our_browsers()
             deadline = time.time() + 10
             while time.time() < deadline and chrome_available():
                 time.sleep(0.5)

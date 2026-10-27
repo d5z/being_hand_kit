@@ -33,9 +33,19 @@ done
 echo "  已同步: mcp_server.py manifest.json start.sh README.md requirements.txt"
 
 echo "[4/5] 停旧进程（若在运行）..."
-OLD_PID=$(pgrep -f "python3 mcp_server\.py" | head -1 || true)
+# 2026-10-27：只杀「argv 里带本部署目录的 mcp_server」。pgrep 出来的名只是候选，
+# 名不是见证——sw 的教训同族：按名字杀证明不了它是我起的。
+OLD_PID=""
+OLD_START=""
+for cand in $(pgrep -f "python3 mcp_server\.py" || true); do
+  ARGV=$(ps -o command= -p "$cand" 2>/dev/null || true)
+  case "$ARGV" in
+    *"$DEPLOY"*) OLD_PID="$cand"; OLD_START=$(ps -o lstart= -p "$cand" 2>/dev/null || true); break ;;
+    *) echo "  跳过 PID=$cand：argv 不含 $DEPLOY（不是本部署的进程）" ;;
+  esac
+done
 if [ -n "$OLD_PID" ]; then
-  echo "  旧进程 PID=$OLD_PID → kill"
+  echo "  旧进程 PID=$OLD_PID（起于 $OLD_START）→ kill"
   kill "$OLD_PID" 2>/dev/null || true
   # 判断「已退出」：进程不存在，或处于僵尸态（Z，等待 Portal 回收）。
   # 不能用 kill -0 —— 它对 zombie 也返回成功。
@@ -50,8 +60,14 @@ if [ -n "$OLD_PID" ]; then
   if [ "$exited" = "1" ]; then
     echo "  ✓ 旧进程已退出${STAT:+（状态 $STAT）}"
   else
-    echo "  ✗ 旧进程仍活跃（状态 $STAT），强制 kill -9"
-    kill -9 "$OLD_PID" 2>/dev/null || true
+    # 强杀前再核一次出生时刻：pid 可能已被复用（那已经不是刚才那个进程）。
+    NOW_START=$(ps -o lstart= -p "$OLD_PID" 2>/dev/null || true)
+    if [ "$NOW_START" != "$OLD_START" ]; then
+      echo "  ✗ PID 已被复用（起于 '$NOW_START' ≠ '$OLD_START'）——不动手"
+    else
+      echo "  ✗ 旧进程仍活跃（状态 $STAT），强制 kill -9"
+      kill -9 "$OLD_PID" 2>/dev/null || true
+    fi
   fi
 else
   echo "  无运行中的 mcp_server 进程（Portal 将在下次调用时拉起）"

@@ -36,10 +36,14 @@ def tearDownModule():
 
 
 def _kill_chrome():
-    """SIGKILL every chrome process — a genuine crash, not a graceful close."""
-    for pat in ("chrome-headless-shell", "chrome", "chromium"):
-        subprocess.run(["pkill", "-9", "-f", pat],
-                       capture_output=True, text=True)
+    """SIGKILL our browser — a genuine crash, not a graceful close.
+
+    2026-10-27: this used to be `pkill -9 -f chrome`, which kills EVERY chrome on
+    the machine including the human's own browsing session. A name is not a
+    witness; the marker in argv is.
+    """
+    from hand.perception.cdp_launcher import kill_our_browsers
+    kill_our_browsers(sig=9)
     deadline = time.time() + 10
     while time.time() < deadline and runner.chrome_available(timeout=1):
         time.sleep(0.4)

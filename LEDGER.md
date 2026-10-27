@@ -546,3 +546,24 @@ persistent 模式（人类自己的 profile）  witness=None
 5/5，收尾 0 leftover。它同时补齐了 Neuromancer 2026-10-27 报的那格未验（「带别人 profile 只做了字符串反例，没真造一台别人的浏览器」）。
 
 **仍是 5 格的边界**：两个浏览器都是我自己起的、同 uid、同机器、argv 可读。跨 uid / argv 不可读 / macOS 那侧的真机，一格都没验。
+
+### 0.13.8 补腿 — 清场：名字不是见证
+
+Neuromancer 2026-10-27 报他同一天在另一个文件里犯了同一个错（A 文件认了、B 文件原样写着）。我照他这句去数自己仓库，三处：
+
+```
+tests/harness/runner.py:56          pkill -f chrome-headless-shell   ← 按名字杀
+tests/production/test_stability.py  pkill -9 -f chrome/chromium       ← 按名字杀，且会杀人类自己那台
+kit/sync.sh:54                      kill -9 "$OLD_PID"               ← 按 pid 杀，无出生时刻核对
+```
+
+第二处最狠：在有人用电脑的机器上跑一次稳定性测试，**人类自己的浏览器就没了**。名字证明不了「这是我起的」。
+
+修法统一成一种：`kill_our_browsers(marker=None)`——pgrep 只用来**列候选**，判据是候选的 argv 里有没有本安装的 profile；读不到 argv 记 `unreadable`，不并进「不是我的」。回执分四格：killed / skipped（argv 无标记）/ unreadable / 读不到候选。
+
+真机冒烟：两台真浏览器（9561/9562，不同 profile），marker 指 A →
+`killed 2（A 本体 + 一个带同 profile 的子进程）/ skipped 3（B 的一族）`；杀完 A 死、B 活。
+
+sync.sh 改成：只杀 argv 含 `$DEPLOY` 的那个 mcp_server；强杀前再核 `ps -o lstart=`，与初值不符（pid 已被复用）就不动手。
+
+**残留**：`pgrep` 仍参与枚举——它是候选来源不是判据，但「候选来源也可能漏」（非 chrome 名、改过 argv 的进程）。这格未测。
