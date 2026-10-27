@@ -1,0 +1,17 @@
+fix(owner): an unreadable argv is 'unknown', not 'stranger'
+
+Neuromancer's pid-1 sample applied here: proc_pidinfo(1) is EPERM while ps sees
+launchd, so a two-valued in/out test reads a live process as gone. The same
+shape lived in _reclaim_by_profile, where every way of failing to claim
+(no profile, nobody listening, argv unreadable, another profile) collapsed into
+one "recorded process is not alive" and came out as "stranger".
+
+"stranger" is a claim of evidence, not a claim of ignorance. The four ways of
+not claiming now separate: no-listener and other-profile stay "stranger"
+(positive evidence of absence / of somebody else); unreadable becomes
+"unknown" with reason "no evidence either way".
+
+Caught on the way in: the first cut of this change also broke the positive
+answer -- the helper now returns a 3-tuple, so an "if claim:" elsewhere was
+always true and a recycled pid was reported as mine. tests/test_owner.py
+test_recycled_pid_is_stranger caught it. 785 tests green.

@@ -445,7 +445,7 @@ def clear_owner():
 
 
 def _reclaim_by_profile(rec):
-    """(pid, how) for the listener that carries this record's profile, else None.
+    """(pid, how, why) — why says what happened when nothing could be claimed.
 
     This is the Chrome re-exec case: the browser we started is still serving the
     port, under a pid different from the one we recorded. Identity here is
@@ -453,16 +453,28 @@ def _reclaim_by_profile(rec):
     a clue about the birth, not the identity. A listener whose argv names a
     *different* profile is not accepted — that is another install's browser and
     calling it "mine" is the wrongful kill this whole module exists to prevent.
+
+    The three ways of *not* claiming are deliberately not one answer (2026-10-27,
+    after Neuromancer's pid-1 sample: `proc_pidinfo(1)` is EPERM while `ps` sees
+    it, so "in/out" alone would read a live process as gone):
+      'no-profile'        the record does not even name a profile
+      'no-listener'       nothing answers the port — positive evidence of absence
+      'unreadable'        someone listens, but the argv could not be read — no
+                          evidence either way; must not be reported as a stranger
+      'other-profile'     someone listens and is demonstrably not ours
     """
     prof = (rec or {}).get("profile")
     if not prof:
-        return None
+        return None, None, "no-profile"
     pid, how = _listener_pid(timeout=1.0)
     if not pid:
-        return None
-    if _cmdline_has(pid, prof) is not True:
-        return None
-    return pid, how
+        return None, None, "no-listener"
+    match = _cmdline_has(pid, prof)
+    if match is None:
+        return None, how, "unreadable"
+    if match is False:
+        return None, how, "other-profile"
+    return pid, how, None
 
 
 def owner_status():
@@ -487,24 +499,37 @@ def owner_status():
     pid = rec.get("pid")
     alive = _pid_alive(pid) if pid else False
     if not alive:
-        claim = _reclaim_by_profile(rec)
-        if claim:
+        claim_pid, claim_how, why = _reclaim_by_profile(rec)
+        if claim_pid:
             return {"owner": "mine", "record": rec, "pid_alive": True,
-                    "pid_source": "listener", "listener_via": claim[1],
-                    "listener_pid": claim[0],
+                    "pid_source": "listener", "listener_via": claim_how,
+                    "listener_pid": claim_pid,
                     "reason": ("recorded pid is gone; the listener on this "
                                "port carries this record's profile (browser "
                                "re-exec, not a stranger)")}
+        if why == "unreadable":
+            # 0.13.8: "could not find out" is not "it is someone else's".
+            # Reporting a stranger here would be evidence we do not have; the
+            # close path refuses either way, but the receipt must not claim
+            # knowledge it lacks.
+            return {"owner": "unknown", "record": rec, "pid_alive": False,
+                    "pid_source": "listener", "listener_via": claim_how,
+                    "reason": ("recorded pid is gone and the listener's argv "
+                               "could not be read — no evidence either way")}
         return {"owner": "stranger", "record": rec, "pid_alive": False,
-                "reason": "recorded process is not alive"}
+                "reason": ("recorded process is not alive and no listener on "
+                           "this port carries this record's profile"
+                           if why != "no-listener" else
+                           "recorded process is not alive; nothing is "
+                           "listening on this port")}
     now_ticks = _proc_start_ticks(pid)
     recorded = rec.get("start_ticks")
     if recorded is not None and now_ticks is not None and now_ticks != recorded:
-        claim = _reclaim_by_profile(rec)
-        if claim:
+        claim_pid, claim_how, _why = _reclaim_by_profile(rec)
+        if claim_pid:
             return {"owner": "mine", "record": rec, "pid_alive": True,
-                    "pid_source": "listener", "listener_via": claim[1],
-                    "listener_pid": claim[0], "start_ticks_now": now_ticks,
+                    "pid_source": "listener", "listener_via": claim_how,
+                    "listener_pid": claim_pid, "start_ticks_now": now_ticks,
                     "reason": ("recorded pid was recycled; the listener on this "
                                "port carries this record's profile")}
         return {"owner": "stranger", "record": rec, "pid_alive": True,

@@ -157,7 +157,30 @@ class ReexecReclaimTest(unittest.TestCase):
     def test_unreadable_listener_argv_does_not_claim_mine(self):
         """No evidence is not consent: an unreadable argv cannot make it ours."""
         st = self._status(None)
+        self.assertNotEqual(st["owner"], "mine")
+
+    def test_unreadable_listener_argv_is_not_called_a_stranger(self):
+        """0.13.8 — Neuromancer's pid-1 sample, applied here.
+
+        `proc_pidinfo(1)` is EPERM while `ps` shows launchd: a two-valued
+        in/out test would read a live process as gone, and it would read an
+        unreadable argv as "someone else's". Neither is knowledge we have.
+        A stranger is the answer when the listener is *demonstrably* not ours
+        (its argv names another profile), not when we could not look.
+        """
+        st = self._status(None)
+        self.assertEqual(st["owner"], "unknown")
+        self.assertIn("no evidence", st["reason"])
+        self.assertNotIn("not alive", st["reason"].split("—")[0])
+
+    def test_other_profile_listener_is_still_called_a_stranger(self):
+        st = self._status(["chrome", "--user-data-dir=/tmp/somebody-else"])
         self.assertEqual(st["owner"], "stranger")
+
+    def test_nobody_listening_says_so_in_the_reason(self):
+        st = self._status(None, listener=(None, None))
+        self.assertEqual(st["owner"], "stranger")
+        self.assertIn("nothing is listening", st["reason"])
 
 
 if __name__ == "__main__":

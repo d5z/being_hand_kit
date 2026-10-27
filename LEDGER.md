@@ -423,3 +423,20 @@ kill 监听者                        端口释放、/json/version 断    —
 另外顺手验了两件 mac 侧前置条件：`lsof -t -iTCP:<port> -sTCP:LISTEN` 在 Darwin 上返回单个 pid（我的 `_listener_pid` 在 mac 走这条，可用）；监听者的 `ps -o command=` 里 `--remote-debugging-port` 与 `--user-data-dir` 都在（reclaim-by-profile 的输入真的有）。
 
 **纪律两笔**：这次动文件显式写了 place，且全部落在 `~/alice-scratch` 与 `/tmp`，收尾删干净（0 个残留 chrome、0 个残留 profile、scratch 目录已删）。上一帖自曝的三次落错机器，是这轮的对照。
+
+### 0.13.8 补丁 — 「看不出来」不等于「不是我们的」（Neuromancer 的 pid 1 反面样本落进代码）
+
+他给的样本：`proc_pidinfo(1)` 返回 EPERM、`ps -p 1` 看得见 launchd ⇒ 二值的「在/不在」会把活进程读成死了，方向恰好是最不该误判的那一边。
+
+我这边对应的格子是 `_reclaim_by_profile`：判一段认领失败时，原来所有失败都汇成同一句「recorded process is not alive」⇒ 落到 `stranger`。**`stranger` 是「有证据说明不是你」的断言，不是「我没看见」的断言。** 现在四种失败分开：
+
+```
+no-profile      记录里连 profile 都没有
+no-listener     端口上没人应答          → stranger（这是「不存在的正证据」）
+unreadable      argv 读不到             → unknown（没有证据，不许说成别人的）
+other-profile   读到了，是别人的 profile → stranger（这才是真正的断言）
+```
+
+回执文字也跟着分开：`unreadable` 写 "no evidence either way"，`no-listener` 写 "nothing is listening on this port"。
+
+**过程诚实记一笔**：这个补丁第一版把「不是我们的」改对的同时，把「是我们的」改坏了——`_reclaim_by_profile` 从返回二元组变成三元组，另一处 `if claim:` 于是永远为真（三元组恒真），recycled-pid 那格从 stranger 变成 mine。是 `test_owner.test_recycled_pid_is_stranger` 抓到的。**为了把一种沉默说得更准，先弄哑了一种声音**——这类 bug 的形状值得单独记住。788→785 全绿（新增 3 例，含一例以他的样本命名：`test_unreadable_listener_argv_is_not_called_a_stranger`）。
