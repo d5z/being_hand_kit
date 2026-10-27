@@ -296,6 +296,13 @@ proc_state() {
   want=${2:-}
   # Linux：/proc 是内核给的，存在即活着；身份对不上说明 pid 被复用（已经不是那个进程了）。
   if [ -d "/proc/$pid" ]; then
+    # 僵尸：进程已经终止（不再执行任何代码），只是父进程还没 wait 回收它。
+    # Linux 上 /proc/<pid> 仍然存在 ⇒ 只看目录在不在会把它读成 alive（假红，落在安全侧，
+    # 但假红会污染回执：2026-10-27 沙盒里两个真被 kill 的实例被报成「判不了」+ rc=2）。
+    _st=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+    _tail=${_st##*)}
+    set -- $_tail
+    if [ "${1:-}" = "Z" ]; then echo zombie; return 0; fi
     cur=$(proc_identity "$pid" 2>/dev/null || true)
     if [ -z "$cur" ]; then echo unknown; return 0; fi
     if [ -n "$want" ] && [ "$cur" != "$want" ]; then echo reused; return 0; fi
@@ -311,7 +318,11 @@ proc_state() {
   fi
   # 没有 /proc 这条路由（macOS）：ps 只在 rc=0 且有状态时敢说 alive，其余一律 unknown。
   st=$(ps -o stat= -p "$pid" 2>/dev/null || true)
-  if [ -n "$st" ]; then echo alive; return 0; fi
+  case "$st" in
+    Z*) echo zombie; return 0 ;;   # macOS 同形：Z 开头 = 已终止未回收
+    "" ) : ;;
+    *) echo alive; return 0 ;;
+  esac
   if [ -d /proc ]; then echo gone; return 0; fi   # Linux 且 /proc/<pid> 不在 → 真的不在
   echo unknown
 }
@@ -357,6 +368,10 @@ step4_stop_old() {
   OLD_START=""
   N_CAND=0
   N_MINE=0
+  # 2026-10-27 Neuromancer 实测出的塌缩：枚举是对的，但归约那一步 `X=${X:-$p}`（或这里的 break）
+  # 把「认领 N 个」悄悄压成「只留第一个」，剩下的静默丢弃。回执干净、进程还在跑旧代码。
+  # ⇒ 认领必须累积，逐个停、逐个报；汇总里分开计 已停/拒绝/判不了。
+  OLD_PIDS=""
   # 候选 = 名字命中 ∪ 所有 python 进程（cwd 闸在后面收）
   # 2026-10-27 实测我这台：真正在跑的 hand 服务是 `python3 -`（Portal 把脚本喂进 stdin），
   # argv 里根本没有 mcp_server.py —— 名字判据完全看不见它，于是 step4 报「无运行中的进程」
@@ -409,45 +424,89 @@ step4_stop_old() {
             # 这个问题上是 none，在「该不该停」这个问题上必须是 yes。
             if [ "$(proc_stdio_any "$cand")" = "driven" ]; then
               echo "  认领 PID=$cand：cwd 命中、argv 无标记，但有一头被 pipe/socket 驱着（半 stdio 实例）"
-              OLD_PID="$cand"; OLD_START=$(proc_identity "$cand"); break
+              OLD_PIDS="$OLD_PIDS $cand|$(proc_identity "$cand")"
             fi
             echo "  跳过 PID=$cand：cwd 命中但 argv 无标记、无服务证据（argv=$ARGV）"
             continue ;;
         esac ;;
     esac
-    OLD_PID="$cand"; OLD_START=$(proc_identity "$cand"); break
+    OLD_PIDS="$OLD_PIDS $cand|$(proc_identity "$cand")"
   done
 
-  if [ -n "$OLD_PID" ] && [ "$DRY" = "1" ]; then
-    echo "  [dry] 会 kill PID=$OLD_PID（cwd=$DEPLOY，身份 $OLD_START）"
+  # 认领数：不是 0/1 两态，多的要说出来（0 个 / 1 个 / N 个是不同的世界）
+  N_CLAIM=0
+  if [ -n "$OLD_PIDS" ]; then
+    N_CLAIM=$(printf '%s\n' $OLD_PIDS | wc -l | tr -d ' ')
+  fi
+
+  if [ "$N_CLAIM" -gt 1 ]; then
+    echo "  ⚠ 认领到 $N_CLAIM 个旧实例：$OLD_PIDS（逐个停，不是一个）"
+  fi
+
+  if [ -n "$OLD_PIDS" ] && [ "$DRY" = "1" ]; then
+    for _tok in $OLD_PIDS; do
+      _p=${_tok%%|*}; _s=${_tok#*|}
+      echo "  [dry] 会 kill PID=$_p（cwd=$DEPLOY，身份 $_s）"
+    done
     return 0
   fi
 
-  if [ -n "$OLD_PID" ]; then
-    echo "  旧进程 PID=$OLD_PID（身份 $OLD_START）→ kill"
-    kill "$OLD_PID" 2>/dev/null || true
-    # 「已退出」：进程不存在，或处于僵尸态（Z，等 Portal 回收）。不能用 kill -0 —— 它对
-    # zombie 也返回成功。
-    STATE=""
-    for _ in $(seq 1 5); do
-      sleep 1
-      STATE=$(proc_state "$OLD_PID" "$OLD_START" || true)
-      [ "$STATE" = "alive" ] || break
+  if [ -n "$OLD_PIDS" ]; then
+    _n_stopped=0; _n_refused=0; _n_unknown=0
+    _l_stopped=""; _l_refused=""; _l_unknown=""
+    for _tok in $OLD_PIDS; do
+      _p=${_tok%%|*}; _s=${_tok#*|}
+      # 动手门前重读：判与 kill 之间可能换人（同 tick 复用 / cwd 被换）
+      _now_start=$(proc_identity "$_p")
+      _now_cwd=$(proc_cwd "$_p")
+      if [ "$_now_start" != "$_s" ]; then
+        echo "  ✗ 拒绝 PID=$_p：动手前重读身份变了（$_s → ${_now_start:-读不到}）——不 kill"
+        _n_refused=$((_n_refused + 1)); _l_refused="$_l_refused $_p"; continue
+      fi
+      if [ "$_now_cwd" != "$DEPLOY_REAL" ] && [ "$_now_cwd" != "$DEPLOY" ]; then
+        echo "  ✗ 拒绝 PID=$_p：动手前重读 cwd 变了（${_now_cwd:-读不到}）——不 kill"
+        _n_refused=$((_n_refused + 1)); _l_refused="$_l_refused $_p"; continue
+      fi
+      OLD_PID="$_p"; OLD_START="$_s"
+      echo "  旧进程 PID=$_p（身份 $_s）→ kill"
+      kill "$_p" 2>/dev/null || true
+      # 「已退出」：进程不存在，或处于僵尸态（Z，等 Portal 回收）。不能用 kill -0 —— 它对
+      # zombie 也返回成功。
+      STATE=""
+      for _ in $(seq 1 5); do
+        sleep 1
+        STATE=$(proc_state "$_p" "$_s" || true)
+        [ "$STATE" = "alive" ] || break
+      done
+      case "$STATE" in
+        gone|reused|zombie)
+          _n_stopped=$((_n_stopped + 1)); _l_stopped="$_l_stopped $_p"
+          case "$STATE" in
+            gone)   echo "  ✓ PID=$_p 已退出" ;;
+            reused) echo "  ✓ PID=$_p 已退出（PID 已被别的进程复用，未触碰）" ;;
+            zombie) echo "  ✓ PID=$_p 已终止（僵尸态，等父进程回收；它不再执行任何代码）" ;;
+          esac ;;
+        unknown)
+          _n_unknown=$((_n_unknown + 1)); _l_unknown="$_l_unknown $_p"
+          echo "  ? PID=$_p 状态无法判别（读不到 / 或太年轻、同一 tick 内身份无判别力）——不补 kill -9，请人工核" ;;
+        *)
+          echo "  ✗ PID=$_p 仍活跃（身份未变），强制 kill -9"
+          kill -9 "$_p" 2>/dev/null || true
+          sleep 1
+          STATE=$(proc_state "$_p" "$_s" || true)
+          case "$STATE" in
+            gone|reused|zombie) _n_stopped=$((_n_stopped + 1)); _l_stopped="$_l_stopped $_p"
+                         echo "  ✓ PID=$_p 已终止（kill -9 之后，state=$STATE）" ;;
+            *)           _n_unknown=$((_n_unknown + 1)); _l_unknown="$_l_unknown $_p"
+                         echo "  ? PID=$_p kill -9 之后仍判不了——请人工核" ;;
+          esac ;;
+      esac
     done
-    case "$STATE" in
-      gone)
-        echo "  ✓ 旧进程已退出" ;;
-      reused)
-        # pid 槽被复用：我起的那个已经没了，现在占着这个号的是别人 —— 不许动它。
-        echo "  ✓ 旧进程已退出（PID 已被别的进程复用，未触碰）" ;;
-      unknown)
-        # 判不了就不许动手：不补 kill -9，也不宣称成功。
-        echo "  ? 状态无法判别（读不到 / 或进程太年轻、同一 tick 内身份无判别力）——不补 kill -9，请人工核 PID=$OLD_PID" ;;
-      *)
-        # 还活着且身份未变（不是复用）：这才是该强杀的一格。
-        echo "  ✗ 旧进程仍活跃（身份未变），强制 kill -9"
-        kill -9 "$OLD_PID" 2>/dev/null || true ;;
-    esac
+    echo "  汇总：已停[${_l_stopped:-}] 拒绝[${_l_refused:-}] 判不了[${_l_unknown:-}]"
+    if [ "$_n_refused" != "0" ] || [ "$_n_unknown" != "0" ]; then
+      echo "  ⚠ 不要认为同步已完成：认领的实例里有的没被停掉，旧代码可能还在内存里"
+      return 2
+    fi
     return 0
   fi
 
