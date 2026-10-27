@@ -12,6 +12,7 @@ lsof 的**列形状**搬过来，就能在本机验读法本身（列位置、�
 """
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -53,7 +54,8 @@ def _fn_source():
     """把要测的两个函数段切出来，不跑整脚本。"""
     text = SYNC.read_text(encoding="utf-8")
     out = []
-    for fn in ("proc_listening_by_lsof", "proc_is_listening", "proc_service_evidence"):
+    for fn in ("proc_runner", "proc_stdio_any", "proc_listening_by_lsof",
+               "proc_is_listening", "proc_service_evidence"):
         start = text.index("%s() {" % fn)
         end = text.index("\n}\n", start) + 3
         out.append(text[start:end])
@@ -146,6 +148,56 @@ class ServiceEvidenceTest(unittest.TestCase):
              "_", self.fn, self.fake_pid],
             capture_output=True, text=True, env=env)
         return r.stdout.strip()
+
+    # ---- 执行者闸：argv 里有同名文件 ≠ 它是 server（2026-10-27 Neuromancer 的 vim 负例）----
+    def test_runner_extracts_interpreter(self):
+        cases = {
+            "python3 mcp_server.py": "python3",
+            "python3 -": "python3",
+            "/usr/bin/python3.11 -m x": "python3.11",
+            # macOS CPython re-exec 后 argv[0] 是 Python.app 的绝对路径、首字母大写
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/Python -": "python",
+            "tail -f mcp_server.py": "tail",
+            "vim -R mcp_server.py": "vim",
+        }
+        for argv, want in cases.items():
+            with self.subTest(argv=argv):
+                r = subprocess.run(["bash", "-c", '. "$1" >/dev/null 2>&1; proc_runner "$2"',
+                                    "_", self.fn, argv], capture_output=True, text=True)
+                self.assertEqual(r.stdout, want)
+
+    # ---- 宽门：一条头被驱动就算「有人喂着」（半个 server）----
+    def _ask_any(self, fd0, fd1):
+        d = os.path.join(self.tmp, "proc", self.fake_pid, "fd")
+        if fd0 is None and fd1 is None:
+            shutil.rmtree(os.path.join(self.tmp, "proc"), ignore_errors=True)
+        else:
+            os.makedirs(d, exist_ok=True)
+        for n, target in ((0, fd0), (1, fd1)):
+            path = os.path.join(d, str(n))
+            if os.path.islink(path) or os.path.exists(path):
+                os.unlink(path)
+            if target is not None:
+                os.symlink(target, path)
+        env = dict(os.environ)
+        env["PROC_ROOT"] = os.path.join(self.tmp, "proc")
+        r = subprocess.run(["bash", "-c", '. "$1" >/dev/null 2>&1; proc_stdio_any "$2"',
+                            "_", self.fn, self.fake_pid], capture_output=True, text=True, env=env)
+        return r.stdout.strip()
+
+    def test_half_pipe_is_driven(self):
+        """Neuromancer 递的半个 server（fd0=PIPE、fd1=文件）：宽门要认，且门仍是 none。"""
+        self.assertEqual(self._ask_any("pipe:[777]", "/tmp/out.log"), "driven")
+        self.assertEqual(self._ask_any("socket:[778]", "/dev/null"), "driven")
+
+    def test_both_files_is_none(self):
+        self.assertEqual(self._ask_any("/dev/null", "/tmp/out.log"), "none")
+
+    def test_pipe_both_is_driven(self):
+        self.assertEqual(self._ask_any("pipe:[1]", "pipe:[2]"), "driven")
+
+    def test_no_fd_dir_is_unknown(self):
+        self.assertEqual(self._ask_any(None, None), "unknown")
 
     # ---- macOS：lsof rc=1 的两义（2026-10-27 真机负样本）----
     def test_lsof_rc1_own_process_is_not(self):

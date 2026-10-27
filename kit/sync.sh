@@ -144,6 +144,14 @@ proc_service_evidence() {
 
 # 这个 pid 是否持有 LISTEN socket —— 服务证据（三值，不许把「判不了」写成「不是」）。
 # 2026-10-27 加：Portal 以 `python3 -` 起服务时 argv 里没有标记，只有 cwd 和「在监听」两格可用。
+proc_runner() {
+  # 执行者 = argv[0] 的 basename。macOS 的 CPython re-exec 后 argv[0] 是 Python.app
+  # 的绝对路径，所以不能拿整串比，也不能只看 basename 的大小写（"Python"）。
+  _a=${1%% *}
+  _a=${_a##*/}
+  printf '%s' "$_a" | tr 'A-Z' 'a-z'
+}
+
 proc_listening_by_lsof() {
   _pid=$1
   _rc=0
@@ -164,6 +172,25 @@ proc_listening_by_lsof() {
   case "$_o" in "") echo not ;; *) echo listening ;; esac
   return 0
 
+}
+
+proc_stdio_any() {
+  # 「被某处驱动着」的宽门：任一头是 pipe/socket 就算。
+  # 与且门分工（2026-10-27 Neuromancer 递来半个 server 的样本后分出来的）：
+  #   且门 proc_service_evidence → 答「它是不是一个 stdio 服务」（证据，用于汇报与监听并置）
+  #   宽门 本函数               → 答「它是不是被人从某处喂着的实例」（用于 step4 停旧进程）
+  # 两个问题共用一个判据是错的；半个 server（fd0=PIPE, fd1=文件）在第一个问题里是 none，
+  # 在第二个问题里该被停——不然旧代码继续活在内存里，那正是本脚本存在的理由。
+  _pid=$1
+  _root=${PROC_ROOT:-/proc}          # 测试可指向假体目录
+  [ -d "$_root/$_pid/fd" ] || { echo unknown; return 0; }
+  for _n in 0 1; do
+    _t=$(readlink "$_root/$_pid/fd/$_n" 2>/dev/null || true)
+    case "$_t" in
+      pipe:*|socket:*) echo driven; return 0 ;;
+    esac
+  done
+  echo none
 }
 
 proc_is_listening() {
@@ -337,6 +364,17 @@ step4_stop_old() {
       echo "  跳过 PID=$cand：cwd=$CWD ≠ $DEPLOY（不是本部署的进程）"
       continue
     fi
+    # 第三格：谁在执行它（2026-10-27 Neuromancer 的 vim -R mcp_server.py）。
+    # 站在部署目录里、argv 末尾正好是同名文件、cwd 也命中——两条判据都对，联合起来错：
+    # 用户未保存的内容会被 kill 掉。分开它们的不是 argv 内容，是执行者：
+    # 真 server 是解释器在跑代码，编辑器只是把那个文件名当参数。
+    _run=$(proc_runner "$ARGV")
+    case "$_run" in
+      python|python3|python3.*|node|nodejs) : ;;
+      *)
+        echo "  跳过 PID=$cand：执行者是「$_run」，不是解释器（argv=$ARGV）"
+        continue ;;
+    esac
     # cwd 命中还不够：一个路过的手敲解释器 cwd 也在 $DEPLOY。要么 argv 带标记，
     # 要么有服务证据（listening 端口 / stdio 管道）。
     # 2026-10-27 反例（Neuromancer 递的）：只认 LISTEN 的或门会把整台 stdio 部署判成阴性。
@@ -350,6 +388,12 @@ step4_stop_old() {
             echo "  ? PID=$cand：cwd 命中、argv 无标记，服务证据判不了（不动手）"
             continue ;;
           *)
+            # 服务证据是 none 不等于「不该停」：半个 server（只一头管道）在「是不是服务」
+            # 这个问题上是 none，在「该不该停」这个问题上必须是 yes。
+            if [ "$(proc_stdio_any "$cand")" = "driven" ]; then
+              echo "  认领 PID=$cand：cwd 命中、argv 无标记，但有一头被 pipe/socket 驱着（半 stdio 实例）"
+              OLD_PID="$cand"; OLD_START=$(proc_identity "$cand"); break
+            fi
             echo "  跳过 PID=$cand：cwd 命中但 argv 无标记、无服务证据（argv=$ARGV）"
             continue ;;
         esac ;;
