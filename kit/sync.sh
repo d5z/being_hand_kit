@@ -329,6 +329,22 @@ proc_age_ticks() {
   echo $(( up - st ))
 }
 
+# 年龄闸的阈值不属于这台机器（2026-10-27）。tick 分辨率是 1/HZ 秒，而这里的尺子
+# 是 /proc/uptime 的两位小数 = 10ms（与 HZ 无关）。以 tick 计的不确定度 =
+# ceil(HZ/100) ⇒ 阈值 = 1 + ceil(HZ/100)：
+#   HZ=100 → 2（这台机器恰好就是这个数，所以它一直是绿的，看不出问题）
+#   HZ=250 → 4    HZ=1000 → 11
+# 写死 2 的后果：内核换 Hz（发行版/preempt/无 Hz 内核）时门自己变松变紧而代码不动；
+# HZ=1000 时 2 ticks 远低于尺子不确定度 10 ticks ⇒ 门以为自己在判身份，其实分不开。
+# 读不到 HZ ⇒ 取最严（按 1000 的形状）：失败落安全侧——宁可判不了，不可误杀。
+age_threshold_ticks() {
+  hz=$(getconf CLK_TCK 2>/dev/null || true)
+  case "${hz:-}" in
+    ''|*[!0-9]*|0) echo 11 ;;
+    *) echo $(( 1 + (hz + 99) / 100 )) ;;
+  esac
+}
+
 proc_state() {
   pid=$1
   want=${2:-}
@@ -347,9 +363,10 @@ proc_state() {
     # 年龄闸：太年轻则身份无判别力（见 proc_age_ticks 注释）
     if [ -n "$want" ]; then
       age=$(proc_age_ticks "$pid" 2>/dev/null || true)
+      _thr=$(age_threshold_ticks)
       case "${age:-}" in
         ''|*[!0-9]*) : ;;
-        *) [ "$age" -lt 2 ] && { echo unknown; return 0; } ;;
+        *) [ "$age" -lt "$_thr" ] && { echo unknown; return 0; } ;;
       esac
     fi
     echo alive; return 0
