@@ -581,3 +581,26 @@ Neuromancer 2026-10-27 真机踩到：他的探针返回值 `None` 同时兼「�
 顺带修出一个旧夹具：`test_close_reports_the_visible_pages` 从 0.13.7 起其实一直在测「无出生记录的 close」＝拒绝路径，它却断言 ok=true。补上 `owner_status → mine`，它才回到名字说的事。
 
 802 tests 绿 / 31.1s。
+
+### 0.13.8 补腿 — 兜底必须朝「判不了」偏（ps 分支的 rc!=0）
+
+Neuromancer 2026-10-27 补的最后一格把我的手按在同一个位置：他的结构体算错时 errno=ENOMEM(12)，落进 `return ("gone")` 那行兜底——**活着的进程被判成已经不在**，随后销账、丢责。我回查自己：Linux 分支（`/proc`）是对的（ENOENT→gone、EACCES→unreadable、其余→unreadable），**非 Linux 的 `ps` 分支正是那个形状**：
+
+```python
+if r.returncode != 0:
+    return ("gone", None)      # 修前：任何非零都当「不在」
+```
+
+macOS 25.1.0 实测（sw-mac-mini，Darwin 25.1.0/arm64）：
+
+```
+不存在的 pid                rc=1  out=[]
+pid 1 (launchd)             rc=0  out=/sbin/launchd
+pid 0 (kernel_task，活着)    rc=1  out=[]
+```
+
+⇒ **rc=1 的意思是「ps 没有这一行」，不是「没有这个进程」。** pid 0 是活的反例（没人会去杀它，所以代价为零，但值的含义不能读成「不存在」）。
+
+修：只有 `rc==1 且无输出` 才算 gone；其他非零码一律 unreadable；`rc==0 但输出为空`（内核线程/僵尸）改成 `("ok", [])`，与 `/proc` 分支对齐——**能看，只是没内容**，不是不在。
+
+806 tests 绿 / 30.9s。四条 rc 映射测试（1→gone、2→unreadable、0+空→ok/[]、0+输出→切 argv）用 mock 钉住，不需要 Mac。

@@ -515,3 +515,39 @@ class RefusalIsNotSuccessTest(unittest.TestCase):
         rec = _receipt("close", {"closed": "ok", "verified": True})
         self.assertTrue(rec["ok"])
         self.assertNotIn("refused", rec)
+
+
+class PsFallbackDirectionTest(unittest.TestCase):
+    """2026-10-27b -- the fallback must lean toward "cannot tell", not "gone".
+
+    Neuromancer's errno=12 case: a struct size error landed in his `return gone`
+    line, so a live process was called dead and dropped off the books. My
+    non-Linux branch had the same shape -- `if returncode != 0: return gone`.
+    rc!=0 is not the code that means "no such process"; only rc==1 is, and even
+    rc==1 only means "ps has no row" (macOS: pid 0 is alive, rc=1).
+
+    These tests pin the mapping without needing a Mac.
+    """
+    def _fake(self, rc, out=""):
+        import subprocess as sp
+        from unittest import mock
+        return mock.patch.object(cdp_launcher.subprocess, "run",
+                                 return_value=sp.CompletedProcess([], rc, out, ""))
+
+    def test_rc1_with_no_output_is_gone(self):
+        with self._fake(1), mock.patch.object(cdp_launcher, "_HAVE_PROC", False):
+            self.assertEqual(cdp_launcher._argv_of(4242), ("gone", None))
+
+    def test_rc2_is_unreadable_not_gone(self):
+        with self._fake(2), mock.patch.object(cdp_launcher, "_HAVE_PROC", False):
+            self.assertEqual(cdp_launcher._argv_of(4242), ("unreadable", None))
+
+    def test_rc0_with_empty_output_is_readable_but_empty(self):
+        # a kernel thread / zombie: we can look, there is just nothing to see.
+        with self._fake(0, ""), mock.patch.object(cdp_launcher, "_HAVE_PROC", False):
+            self.assertEqual(cdp_launcher._argv_of(4242), ("ok", []))
+
+    def test_rc0_with_output_splits_argv(self):
+        with self._fake(0, "/a/chrome --user-data-dir=/x\n"), \
+                mock.patch.object(cdp_launcher, "_HAVE_PROC", False):
+            self.assertEqual(cdp_launcher._argv_of(4242)[1][0], "/a/chrome")

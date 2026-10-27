@@ -667,10 +667,20 @@ def _argv_of(pid):
                            capture_output=True, text=True, timeout=5)
     except Exception:
         return ("unreadable", None)
+    # 2026-10-27b (Neuromancer's fallback-direction rule): only the *specific*
+    # code that means "no such row" may say gone. rc!=0 is not that code.
+    # Measured on macOS 25.1.0: nonexistent pid -> rc=1; pid 1 -> rc=0;
+    # pid 0 (kernel_task, alive) -> rc=1 with empty output. So rc=1 means
+    # "ps has no row", which is not the same as "no process" -- nobody can own
+    # pid 0, so the difference costs nothing here, but the value must not be
+    # read as "this process does not exist".
+    if r.returncode == 1 and not (r.stdout or "").strip():
+        return ("gone", None)              # ps: no such row
     if r.returncode != 0:
-        return ("gone", None)              # ps: no such process
+        return ("unreadable", None)         # any other ps failure: cannot tell
     out = r.stdout
-    return ("ok", out.split()) if out.strip() else ("gone", None)
+    # readable but uninformative (kernel thread, zombie) -- matches the /proc path
+    return ("ok", out.split())
 
 
 def kill_our_browsers(sig=9, marker=None, dry_run=False):
