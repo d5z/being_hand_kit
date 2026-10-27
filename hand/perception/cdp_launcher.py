@@ -313,12 +313,41 @@ def _proc_start_ticks(pid):
         return None
 
 
-def _pid_alive(pid):
+def _pid_state(pid):
+    """Does the pid exist? Four answers, because `os.kill(pid, 0)` fails in four ways.
+
+    alive   — it is there and we may signal it
+    eperm   — it is there, owned by someone else (kernel refuses the *signal*,
+              not the *enumeration*) — EPERM is positive evidence of existence
+    gone    — ESRCH: it is not there
+    unknown — the probe itself failed some other way: we did not find out
+
+    2026-10-27: this used to be `try: os.kill(pid, 0); True / except Exception: False`,
+    and EPERM therefore read as "not alive". On a machine where sync ran once as
+    root, or where another user's chrome holds the profile, our own browser was
+    reported `pid_alive: False` — the receipt claiming a fact it did not have.
+    Same shape Neuromancer was forced to split into gone/exited/eperm/unknown
+    tonight; the difference is only which layer the collapse lives at.
+    """
     try:
         os.kill(int(pid), 0)
-        return True
+    except ProcessLookupError:
+        return "gone"
+    except PermissionError:
+        return "eperm"
     except Exception:
+        return "unknown"
+    return "alive"
+
+
+def _pid_alive(pid):
+    """True = exists (incl. someone else's), False = really gone, None = could not find out."""
+    st = _pid_state(pid)
+    if st in ("alive", "eperm"):
+        return True
+    if st == "gone":
         return False
+    return None
 
 
 def _proc_cmdline(pid):
@@ -531,7 +560,24 @@ def owner_status():
                 "reason": "no spawn record"}
     pid = rec.get("pid")
     alive = _pid_alive(pid) if pid else False
-    if not alive:
+    if alive is None:
+        # 2026-10-27：「判不了」不许落进「不在」那一支——那一支整条推理的起点是
+        # 「记录里那个进程没了」。它没没，我不知道。先按身份（端口+profile）问一次
+        # listener，问得到就还是 mine；问不到就如实报 unknown，不冒充 stranger。
+        claim_pid, claim_how, _why = _reclaim_by_profile(rec)
+        if claim_pid:
+            return {"owner": "mine", "record": rec, "pid_alive": None,
+                    "pid_state": "unknown", "pid_source": "listener",
+                    "listener_via": claim_how, "listener_pid": claim_pid,
+                    "reason": ("liveness of the recorded pid could not be "
+                               "determined; the listener on this port carries "
+                               "this record's profile")}
+        return {"owner": "unknown", "record": rec, "pid_alive": None,
+                "pid_state": "unknown",
+                "reason": ("the liveness probe could not answer (not ESRCH) and "
+                           "no listener carries this record's profile — no "
+                           "evidence either way, so not claiming 'gone'")}
+    if alive is False:
         claim_pid, claim_how, why = _reclaim_by_profile(rec)
         if claim_pid:
             return {"owner": "mine", "record": rec, "pid_alive": True,
