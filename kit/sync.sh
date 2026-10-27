@@ -321,7 +321,14 @@ proc_age_ticks() {
   pid=$1
   st=$(proc_identity_ticks "$pid" 2>/dev/null || true)
   [ -n "$st" ] || return 0
-  hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+  # 2026-10-27 修：这里原来是 `|| echo 100` 兜底，与阈值侧的 fail-closed 反着。
+  # HZ 真是 1000 时它会算出 10 倍大的 age ⇒ 门以为「够老、分得开」⇒ 当成 alive 放行；
+  # 而阈值侧读不到 HZ 时取最严 11。同一个数在一条链上出现两次，两处的失败方向必须同向，
+  # 否则一处 fail-open、一处 fail-closed，合起来是 fail-open 冒充 fail-closed。
+  hz=$(getconf CLK_TCK 2>/dev/null || true)
+  case "${hz:-}" in
+    ''|*[!0-9]*|0) return 3 ;;   # 读不到 HZ ⇒ 不报年龄，让调用方判 unknown（不动手）
+  esac
   # 必须按 tick 精度换算：/proc/uptime 的整数秒截断会带进最多一个 tick-rate 的误差
   # （我第一版就是这么错的，新生进程算出 age=-25）。
   up=$(awk -v hz="$hz" '{printf "%d", $1*hz}' /proc/uptime 2>/dev/null || true)
@@ -365,7 +372,7 @@ proc_state() {
       age=$(proc_age_ticks "$pid" 2>/dev/null || true)
       _thr=$(age_threshold_ticks)
       case "${age:-}" in
-        ''|*[!0-9]*) : ;;
+        ''|*[!0-9]*) echo unknown; return 0 ;;   # 读不到年龄 ⇒ 身份无判别力，判不了（宁可不动手）
         *) [ "$age" -lt "$_thr" ] && { echo unknown; return 0; } ;;
       esac
     fi
