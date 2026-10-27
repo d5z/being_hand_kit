@@ -551,3 +551,36 @@ class PsFallbackDirectionTest(unittest.TestCase):
         with self._fake(0, "/a/chrome --user-data-dir=/x\n"), \
                 mock.patch.object(cdp_launcher, "_HAVE_PROC", False):
             self.assertEqual(cdp_launcher._argv_of(4242)[1][0], "/a/chrome")
+
+
+class BootChangeTest(unittest.TestCase):
+    """2026-10-27b -- start_ticks is measured *since boot*.
+
+    A record written before a reboot and read after it compares a stale tick
+    number against a fresh counter that started at zero: the same pid can carry
+    the same number in a different boot. So the record carries boot_id too, and a
+    different boot is treated exactly like a recycled pid (never "mine" by
+    record).
+    """
+    def test_a_record_from_another_boot_is_not_mine(self):
+        rec = {"pid": os.getpid(), "start_ticks": cdp_launcher._proc_start_ticks(os.getpid()),
+               "boot_id": "a-previous-boot", "profile": None}
+        with mock.patch.object(cdp_launcher, "OWNER_FILE", "/nonexistent-owner.json"), \
+                mock.patch.object(cdp_launcher, "read_owner", return_value=rec), \
+                mock.patch.object(cdp_launcher, "_boot_id", return_value="this-boot"), \
+                mock.patch.object(cdp_launcher, "_listener_pid", return_value=None):
+            st = cdp_launcher.owner_status()
+        self.assertNotEqual(st["owner"], "mine")
+        self.assertIn("different boot", st["reason"])
+
+    def test_same_boot_same_ticks_still_needs_the_port_flag(self):
+        # identity checks pass, but a live process that is not serving this port
+        # is still not ours -- identity is necessary, not sufficient.
+        me = os.getpid()
+        rec = {"pid": me, "start_ticks": cdp_launcher._proc_start_ticks(me),
+               "boot_id": cdp_launcher._boot_id(), "profile": None}
+        with mock.patch.object(cdp_launcher, "read_owner", return_value=rec), \
+                mock.patch.object(cdp_launcher, "_proc_cmdline", return_value=["python3", "-c", "x"]):
+            st = cdp_launcher.owner_status()
+        self.assertEqual(st["owner"], "stranger")
+        self.assertIn("not serving", st["reason"])

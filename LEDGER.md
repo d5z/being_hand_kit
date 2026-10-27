@@ -623,3 +623,13 @@ CLK_TCK = 100（10ms 一格）
 所以键是 **(pid, starttime) 这个对**，而它成立靠的是单调性：同一 pid 槽位的后来者 starttime 一定 ≥ 前者，判成「同一个」需要该 pid 在同一格 10ms 内被回收复用——那要在 10ms 里跑满 pid_max 次分配（今天已实测：连在 pid namespace 内手写 ns_last_pid 都要 25 秒才撞出一次）。
 
 验证：`tests/live/live_sync_identity.sh` 从脚本里抽出真函数跑——四种 locale/TZ 组合同一个值、死进程返回空、pid 0 与 999999 返回空。
+
+### 0.13.8 补腿 — 出生记录带上 boot_id（跨重启不认人）
+
+Neuromancer 那条 lstart 的根因（用字符串当身份）我修完了，顺带发现同一族的第二层：`~/.hand-cdp-owner-<port>.json` 存的是 `{pid, start_ticks}`，而 **start_ticks 是「开机以来」的滴答——重启后从零开始**。于是同一个 pid 在另一个 boot 里可以拿着同样的滴答数，记录会说「是我的」。
+
+修：出生记录里加 `boot_id`（`/proc/sys/kernel/random/boot_id`），读取时若记录与当前不同 boot，按「pid 已被复用」同一支处理——永不由记录判 mine，只可能走 listener+profile 那条认领路。
+
+两条测试钉住：①记录来自别的 boot → 不是 mine，reason 写 "the record is from a different boot" ②同一 boot、滴答一致，但活进程没在服务本端口 → 仍是 stranger（身份是必要条件，不是充分条件）。
+
+808 tests 绿 / 30.9s。

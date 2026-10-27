@@ -286,6 +286,19 @@ def _owner_file():
                         f".hand-cdp-owner-{CDP_PORT}.json")
 
 
+def _boot_id():
+    """This boot's identity (Linux), else None.
+
+    start_ticks is measured *since boot*, so after a reboot the counter starts
+    over: the same pid can carry the same tick number in a different boot. Pair
+    the two and the record can no longer claim a process from a previous boot."""
+    try:
+        with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as f:
+            return f.read().strip() or None
+    except Exception:
+        return None
+
+
 def _proc_start_ticks(pid):
     """Process start time in clock ticks since boot (Linux), else None.
 
@@ -430,6 +443,7 @@ def record_owner(proc, binary=None, claim_listener=True):
     rec = {
         "pid": pid,
         "start_ticks": _proc_start_ticks(pid),
+        "boot_id": _boot_id(),
         "spawn_pid": spawn_pid,
         "pid_source": pid_source,
         "listener_via": listener_via,
@@ -543,7 +557,11 @@ def owner_status():
                            "listening on this port")}
     now_ticks = _proc_start_ticks(pid)
     recorded = rec.get("start_ticks")
-    if recorded is not None and now_ticks is not None and now_ticks != recorded:
+    rec_boot, now_boot = rec.get("boot_id"), _boot_id()
+    other_boot = (rec_boot is not None and now_boot is not None
+                  and rec_boot != now_boot)
+    if other_boot or (recorded is not None and now_ticks is not None
+                      and now_ticks != recorded):
         claim_pid, claim_how, _why = _reclaim_by_profile(rec)
         if claim_pid:
             return {"owner": "mine", "record": rec, "pid_alive": True,
@@ -553,7 +571,9 @@ def owner_status():
                                "port carries this record's profile")}
         return {"owner": "stranger", "record": rec, "pid_alive": True,
                 "start_ticks_now": now_ticks,
-                "reason": "pid was recycled (start time differs)"}
+                "reason": ("the record is from a different boot"
+                           if other_boot else
+                           "pid was recycled (start time differs)")}
     # A live pid with matching start time still has to be a browser *serving
     # this port* — otherwise "a process we started" would be enough to justify
     # killing whatever answers on :9222, which is the mistake this module exists
