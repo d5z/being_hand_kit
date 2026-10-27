@@ -604,3 +604,22 @@ pid 0 (kernel_task，活着)    rc=1  out=[]
 修：只有 `rc==1 且无输出` 才算 gone；其他非零码一律 unreadable；`rc==0 但输出为空`（内核线程/僵尸）改成 `("ok", [])`，与 `/proc` 分支对齐——**能看，只是没内容**，不是不在。
 
 806 tests 绿 / 30.9s。四条 rc 映射测试（1→gone、2→unreadable、0+空→ok/[]、0+输出→切 argv）用 mock 钉住，不需要 Mac。
+
+### 0.13.8 补腿 — `ps -o lstart=` 不是身份（sync.sh 真的在用）
+
+Neuromancer 2026-10-27 实测三条后刹车：lstart ①只有秒精度（同秒起 6 个进程归并成 1 个值）②随 LC_ALL 变（zh_CN 输出「二 10月/27 …」，`strptime` 直接抛）③随 TZ 变（同一进程 UTC/+08/-05 三个字符串）。
+
+grep 自己：**`kit/sync.sh` 43/64 行就是拿它当「pid 是否被复用」的判据**，而且方向正是他说的那种危险——`NOW_START == OLD_START`（相符）→ `kill -9`。撞键时判据给出「相符」，于是动手杀一个刚被复用的陌生 pid；locale/TZ 不一致时永远「不符」，该杀的不杀（功能静默失效）。
+
+换成 `/proc/<pid>/stat` 第 22 字段（starttime，开机以来的时钟滴答）+ `boot_id`：数字、内核所有、进程自己改不了（argv 能改，这个不能）、不随 locale/TZ 变。取不到就返回空，**空 = 判不了**，调用方一律不动手并打印 PID 让人工核。
+
+实测（本机 Linux）：
+
+```
+CLK_TCK = 100（10ms 一格）
+狂起 60 个进程 → starttime 只有 3 个不同值，最大一桶 32 个   ← 单看这个值绝不唯一
+```
+
+所以键是 **(pid, starttime) 这个对**，而它成立靠的是单调性：同一 pid 槽位的后来者 starttime 一定 ≥ 前者，判成「同一个」需要该 pid 在同一格 10ms 内被回收复用——那要在 10ms 里跑满 pid_max 次分配（今天已实测：连在 pid namespace 内手写 ns_last_pid 都要 25 秒才撞出一次）。
+
+验证：`tests/live/live_sync_identity.sh` 从脚本里抽出真函数跑——四种 locale/TZ 组合同一个值、死进程返回空、pid 0 与 999999 返回空。

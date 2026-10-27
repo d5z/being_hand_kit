@@ -32,6 +32,27 @@ for f in mcp_server.py manifest.json start.sh README.md requirements.txt; do
 done
 echo "  已同步: mcp_server.py manifest.json start.sh README.md requirements.txt"
 
+# --- identity start ---
+# 进程身份：不用 `ps -o lstart=`。
+# 2026-10-27 Neuromancer 实测三条：①lstart 只有秒精度，同一秒起 6 个进程归并成
+# 1 个值；②随 LC_ALL 变（zh_CN 下是「二 10月/27 …」）；③随 TZ 变。用它判「是同
+# 一个进程」，撞键时会放行误杀、locale/TZ 不一致时会永远判「不符」而该杀不杀。
+# Linux 上用 /proc/<pid>/stat 第 22 字段（starttime，开机以来的时钟滴答）+ boot_id：
+# 数字、内核所有、进程自己改不了（argv 能改，这个不能）、不随 locale/TZ 变。
+# 取不到就返回空 —— 空表示「我判不了」，调用方必须当成不能动手，不是「不在」。
+proc_identity() {
+  pid=$1
+  st=$(cat /proc/$pid/stat 2>/dev/null) || return 0
+  # comm 里可能有空格/括号，从最后一个 ')' 之后切
+  after=${st##*)}
+  # after 以 " S 1 2 ..." 开头；starttime 是 stat 的第 22 字段 => after 里第 20 个
+  set -- $after
+  ticks=${20}
+  boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || return 0
+  [ -n "$ticks" ] && [ -n "$boot" ] && printf '%s:%s\n' "$boot" "$ticks"
+}
+# --- identity end ---
+
 echo "[4/5] 停旧进程（若在运行）..."
 # 2026-10-27：只杀「argv 里带本部署目录的 mcp_server」。pgrep 出来的名只是候选，
 # 名不是见证——sw 的教训同族：按名字杀证明不了它是我起的。
@@ -40,12 +61,12 @@ OLD_START=""
 for cand in $(pgrep -f "python3 mcp_server\.py" || true); do
   ARGV=$(ps -o command= -p "$cand" 2>/dev/null || true)
   case "$ARGV" in
-    *"$DEPLOY"*) OLD_PID="$cand"; OLD_START=$(ps -o lstart= -p "$cand" 2>/dev/null || true); break ;;
+    *"$DEPLOY"*) OLD_PID="$cand"; OLD_START=$(proc_identity "$cand"); break ;;
     *) echo "  跳过 PID=$cand：argv 不含 $DEPLOY（不是本部署的进程）" ;;
   esac
 done
 if [ -n "$OLD_PID" ]; then
-  echo "  旧进程 PID=$OLD_PID（起于 $OLD_START）→ kill"
+  echo "  旧进程 PID=$OLD_PID（身份 $OLD_START）→ kill"
   kill "$OLD_PID" 2>/dev/null || true
   # 判断「已退出」：进程不存在，或处于僵尸态（Z，等待 Portal 回收）。
   # 不能用 kill -0 —— 它对 zombie 也返回成功。
@@ -60,12 +81,14 @@ if [ -n "$OLD_PID" ]; then
   if [ "$exited" = "1" ]; then
     echo "  ✓ 旧进程已退出${STAT:+（状态 $STAT）}"
   else
-    # 强杀前再核一次出生时刻：pid 可能已被复用（那已经不是刚才那个进程）。
-    NOW_START=$(ps -o lstart= -p "$OLD_PID" 2>/dev/null || true)
-    if [ "$NOW_START" != "$OLD_START" ]; then
-      echo "  ✗ PID 已被复用（起于 '$NOW_START' ≠ '$OLD_START'）——不动手"
+    # 强杀前再核一次身份：pid 可能已被复用（那已经不是刚才那个进程）。
+    NOW_START=$(proc_identity "$OLD_PID")
+    if [ -z "$OLD_START" ] || [ -z "$NOW_START" ]; then
+      echo "  ✗ 身份取不到（OLD='$OLD_START' NOW='$NOW_START'）——判不了就不动手，请人工核 PID=$OLD_PID"
+    elif [ "$NOW_START" != "$OLD_START" ]; then
+      echo "  ✗ PID 已被复用（身份 '$NOW_START' ≠ '$OLD_START'）——不动手"
     else
-      echo "  ✗ 旧进程仍活跃（状态 $STAT），强制 kill -9"
+      echo "  ✗ 旧进程仍活跃（状态 $STAT，身份未变），强制 kill -9"
       kill -9 "$OLD_PID" 2>/dev/null || true
     fi
   fi
