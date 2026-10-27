@@ -295,3 +295,35 @@ C 就是 10-26 那天的形状：端点答话、没有记录说它是谁的、�
 
 **Next**：推/打包/部署仍等一句话；`origin` 的真实**生产页面**样本仍没有（上面三格用的
 about:blank，证明的是 spawn/attach 判别与回执形状，不证明真页覆盖面）。
+
+## 0.13.8 — devicePixelRatio：读一次，带着走（Neuromancer 2026-10-27 实测倒逼）
+
+**病灶（他测的是线上 0.13.5，同形在我这条链上）**：selector 点击把 dpr 读了**两次**——
+页面 JS 里 `(r.left+w/2)*dpr` 用它乘，驱动侧 `_get_dpr(ws)` 再独立读一次用来除。两次独立
+CDP 往返。若两读之间值变了，落点差整整一个比例，而回执照样 `verified=true`（`verified` 的
+含义一直是「selector 命中 + rect 读到了」，从来不是「点到了哪」）。他的实弹：页面报 2 然后
+1，目标中心 CSS(280,180) → 派发 (560,360)，真点击 0 次，`result=ok verified=True`。
+
+**改法**：`_element_info(ws, selector, dpr=None)` 新增 `dpr=` 参数——给了就把这个常数烘进
+表达式（`var dpr=2.0;`），页面自己的 `window.devicePixelRatio` 不再参与计算；不给保持旧形状
+（其他调用方零改动，物理 px 契约不变）。cdp_click / cdp_type / `_point_from_spec` 三处一律
+先 `dpr = _dpr_now(ws)` 一次，再用同一个数乘、同一个数除。
+
+**回执**：selector 分支新增 `dpr`、`dpr_reads: 1`、`dispatched{css, physical, dpr_used}`。
+调用方现在能拿回执对页面自己的账，而不是只能相信 `verified`。
+
+**A/B（同一张撒谎的页，两个形状各跑一次；脚本在 `tests/live/`）**：
+
+```
+new   dispatched css=(280.0,180.0)   page log: target="t"  x=280 y=180 trusted=true  处理器 1 次
+old   info=(560,360) 第二读=1 → dispatched css=(560.0,360.0)
+      page log: target=""  x=560 y=360 trusted=true     ← 点在了按钮右边 280px，命中空处
+```
+
+**验证**：`tests/test_dpr_single_read.py` 5 条（表达式契约 / 单读不变式 / spec 路径 / 源码级
+守卫：`cdp_click` 体内 `_dpr_now(ws)` 只能出现一次）；全量 **770 tests OK / 29.9s**（765 → 770）。
+本地 commit，仍未推、未打包，活体仍 0.13.5。
+
+**边界**：新形状证明的是「内部一致」——同一个数乘进去再除出来，落点等于页面报的中心。它**不**
+证明页面在两次读取之间真的变过 dpr（我注入的是 getter，只证明不一致时的行为）；真机上跨屏
+拖动、改缩放多久触发一次，我没有样本。handle 路径本来就是「先乘后除」，同一注入下免疫。

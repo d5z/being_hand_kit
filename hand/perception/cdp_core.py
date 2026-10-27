@@ -183,9 +183,34 @@ def _get_dpr(ws):
         result = cdp_call(ws,'Runtime.evaluate',{'expression':'window.devicePixelRatio'},msg_id=99,timeout=5)
         return result.get('result',{}).get('value',1.0)
     except: return 1.0
-def _element_info(ws, selector):
+def _element_info(ws, selector, dpr=None):
+    """Rect of the first match. `x/y/w/h` are PHYSICAL px when `dpr` is given.
+
+    0.13.8 — one dpr, carried. `dpr=None` keeps the legacy shape: the page's own
+    `window.devicePixelRatio` is read *inside* this expression and baked into
+    the numbers. Any caller that later re-reads dpr and divides by it is then
+    using two independent reads of the same quantity: if the value changes
+    between them, the dispatch point is off by that ratio while the receipt
+    still says verified (measured 2026-10-27: page reporting 2 then 1, target
+    centre CSS(280,180) → dispatched (560,360), zero real clicks, verified=true).
+    Passing `dpr` in removes the second read from the chain: the caller reads it
+    once and every multiply *and* divide downstream uses that same number.
+    """
     import json as jm
-    expr = '(function(){var el=document.querySelector('+jm.dumps(selector)+');if(!el)return JSON.stringify({error:"element not found"});var r=el.getBoundingClientRect();var dpr=window.devicePixelRatio||1;return JSON.stringify({x:(r.left+r.width/2)*dpr,y:(r.top+r.height/2)*dpr,w:r.width*dpr,h:r.height*dpr,visible:r.width>0&&r.height>0,tag:el.tagName,text:(el.innerText||"").substring(0,80)});})()'
+    if dpr is None:
+        scale, dpr_field = 'var dpr=window.devicePixelRatio||1;', 'null'
+    else:
+        scale, dpr_field = 'var dpr=%r;' % float(dpr), 'dpr'
+    expr = ('(function(){var el=document.querySelector('+jm.dumps(selector)+');'
+            'if(!el)return JSON.stringify({error:"element not found"});'
+            'var r=el.getBoundingClientRect();' + scale +
+            'var x=(r.left+r.width/2)*dpr,y=(r.top+r.height/2)*dpr,'
+            'w=r.width*dpr,h=r.height*dpr;'
+            'return JSON.stringify({x:x,y:y,w:w,h:h,'
+            'css:{x:r.left+r.width/2,y:r.top+r.height/2},'
+            'dpr_used:' + dpr_field + ','
+            'visible:r.width>0&&r.height>0,tag:el.tagName,'
+            'text:(el.innerText||"").substring(0,80)});})()')
     result = cdp_call(ws,'Runtime.evaluate',{'expression':expr,'returnByValue':True})
     value = result.get('result',{}).get('value','{}')
     return jm.loads(value)

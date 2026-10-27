@@ -1168,16 +1168,25 @@ def cdp_click(selector, page_sel=None):
             if hit.get('parse_error'):
                 reason += f" (verification failed: {hit['parse_error']})"
             return _receipt_fail('cdp_click', reason, selector=selector)
-        info = _element_info(ws, selector)
+        # 0.13.8 — dpr is read ONCE, here, and carried through both operations:
+        # the point is multiplied under this number and `_click_at` divides by
+        # the same one. Before this, the page multiplied under its own dpr and
+        # the driver re-read dpr to divide — two independent CDP round trips of
+        # the same quantity. Measured 2026-10-27 (Neuromancer, 0.13.5): page
+        # reporting 2 then 1 → dispatched (560,360) for a target centred at
+        # CSS(280,180), zero real clicks, and the receipt still said
+        # verified=true. A single read makes that inconsistency impossible
+        # rather than merely visible.
+        dpr = _dpr_now(ws)
+        info = _element_info(ws, selector, dpr=dpr)
         if 'error' in info:
             return _receipt_fail('cdp_click',
                                  f"element info failed: {info['error']}", selector=selector)
         if not info.get('visible'):
             _scroll_into_view(ws, selector)
             time.sleep(0.2)
-            info = _element_info(ws, selector)
+            info = _element_info(ws, selector, dpr=dpr)
         x, y = info['x'], info['y']
-        dpr = _get_dpr(ws)
         # 0.13.7 — a click must reach the page's handler exactly once.
         #
         # Before this, the selector branch fired the handler up to THREE times:
@@ -1221,6 +1230,21 @@ def cdp_click(selector, page_sel=None):
             'probe': 'capture-phase listener installed before dispatch, removed after',
             'escalation': escalation,
             'dispatches': 1 + (1 if escalation != 'none' else 0),
+        }
+        # 0.13.8: the receipt can now be checked against the page's own opinion
+        # of where the click went. `dpr` is the number this click was computed
+        # and dispatched under — read ONCE (`dpr_reads: 1`), so the multiply and
+        # the divide inside _click_at cannot disagree with each other. Up to
+        # 0.13.7 they could, and silently: dispatching at the wrong point still
+        # produced verified=true, because `verified` meant "the selector and the
+        # rect were read", never "the click landed".
+        css_x, css_y = (x / dpr if dpr else x), (y / dpr if dpr else y)
+        ev['dpr'] = dpr
+        ev['dpr_reads'] = 1
+        ev['dispatched'] = {
+            'css': {'x': round(css_x, 2), 'y': round(css_y, 2)},
+            'physical': {'x': round(x, 1), 'y': round(y, 1)},
+            'dpr_used': dpr,
         }
         return {'method': 'cdp_click', 'selector': selector, 'page_index': idx,
                 'result': 'ok', 'tiers': '4-tier',
@@ -1274,7 +1298,11 @@ def cdp_type(selector, text, page_sel=None, fast=False):
             if hit.get('parse_error'):
                 reason += f" (verification failed: {hit['parse_error']})"
             return _receipt_fail('cdp_type', reason, selector=selector, text=text)
-        info = _element_info(ws, selector)
+        # 0.13.8: dpr read ONCE for this type: the focus click and its own
+        # divide use the same number (before: the page multiplied under its own
+        # dpr, then the driver re-read dpr to divide — same defect as cdp_click).
+        dpr = _dpr_now(ws)
+        info = _element_info(ws, selector, dpr=dpr)
         if 'error' in info:
             return _receipt_fail('cdp_type',
                                  f"element info failed: {info['error']}",
@@ -1295,7 +1323,7 @@ def cdp_type(selector, text, page_sel=None, fast=False):
                 out['evidence']['name'] = attrs['name']
             return out
         x, y = info['x'], info['y']
-        _click_at(ws, x, y, _get_dpr(ws))
+        _click_at(ws, x, y, dpr)
         # 0.9.4-P3: the target's tag decides what "\n" means.
         enter_mode = _type_enter_mode(tag)
         used_enter, rb, fail = _type_with_readback(
@@ -2197,7 +2225,10 @@ def _point_from_spec(ws, spec, msg_id=72):
             return None, 'handle %s has no clickable point (%s)' % (s, how)
         return {'x': pt[0], 'y': pt[1], 'how': how, 'input': s, 'dpr': dpr,
                 'element': _handle_label(entry)}, None
-    info = _element_info(ws, s)
+    # 0.13.8: same single-read rule — `dpr` was read once at the top of this
+    # function; the rect is multiplied by that number and divided by it here, so
+    # the CSS point cannot shift if the page's dpr changes between the two.
+    info = _element_info(ws, s, dpr=dpr)
     if not info or info.get('error'):
         return None, 'selector %r not found: %s' % (
             s, (info or {}).get('error', 'no element'))
