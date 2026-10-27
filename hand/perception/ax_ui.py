@@ -13,17 +13,12 @@ Validated patterns (2026-06-19):
 Design: follow ax_app.py pattern — _osascript() helper, typed functions.
 """
 
-import subprocess
 from typing import Optional
 
-
-def _osascript(script: str, timeout: int = 10) -> tuple[str, str, int]:
-    """Run AppleScript, return (stdout, stderr, exit_code)."""
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True, text=True, timeout=timeout
-    )
-    return result.stdout.strip(), result.stderr.strip(), result.returncode
+# _osascript 曾被复制一份在这里（与 ax_app.py 逐字相同，2026-10-27 比对确认）。
+# 逐字相同的副本是最危险的那种：没有任何读数会告诉你它已经和原件分叉。
+# 改为从 ax_app 导入——检查按名字守（名字是自由变量），导入按身份守（身份不能改）。
+from hand.perception.ax_app import _osascript
 
 
 # ── Process discovery ───────────────────────────────────────────────
