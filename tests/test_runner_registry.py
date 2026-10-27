@@ -88,6 +88,30 @@ class OutOfScopeTest(unittest.TestCase):
         self.assertEqual(set(oos) & set(on_disk), set(),
                          "子目录文件混进分母 → missing 会把它们报成「未注册」的假警报")
 
+    def test_addition_holds_against_an_independent_denominator(self):
+        """加法校验必须挂在一个不归我管的数上 —— 否则一个桶归零时它必然成立。
+
+        2026-10-27 第五笔（围炉 #34，Neuromancer 的 N19b 教我的）：他写
+        `候选总数 == 文件桶 + 进程桶`，然后在拔掉进程桶后仍然成立（15 == 15 + 0）。
+        ★ 一个桶归零时，加法恒成立 —— 加法本身不是判据，挂它的那个外部数才是。
+
+        我这边的外部数是 glob（递归第三条实现），它对全部 test_*.py 有一个独立的答案；
+        我的 listdir + walk 是两个桶。两边必须相等。
+        与 find 那个进程比，glob 独立性弱一层（都是 libc 读目录）：挡得住代码路径分叉，
+        挡不住 OS 层的口径差。
+        """
+        import glob
+        here = str(pathlib.Path(__file__).resolve().parent)
+        external = len([p for p in glob.glob(here + "/**/test_*.py", recursive=True)
+                        if "__pycache__" not in p])
+        on_disk, _reg, _m, _g = run_tests.registry_report()
+        mine = len(on_disk) + len(run_tests.out_of_scope())
+        self.assertEqual(mine, external,
+                         "我的两个桶相加必须等于一个不归我算的数；"
+                         "任一桶归零而外部数不减 ⇒ 这里红，加法不成立也不算数")
+        self.assertGreater(len(run_tests.out_of_scope()), 0,
+                           "若范围外桶恒为 0，上面那条会退化成 69 == 69 —— 所以桶也要非空")
+
     def test_real_repo_is_the_known_good_cell(self):
         # 唯一一条碰真仓库的：它证明上面三格之外，现实这一格也是好的。
         on_disk, registered, missing, ghost = run_tests.registry_report()
