@@ -403,3 +403,23 @@ page says {"log":[{"x":280,"y":180,"target":"t","trusted":true,"reads_at_click":
 **同族未做**：text= 的回执里没有 `dispatch{...}` 块（selector 路径有），两条路径的回执字段不对齐——记下，未改。
 
 **教训（三次同族了）**：`grep` 找出所有 `_get_dpr(` 的调用点，不等于知道哪几个是「算坐标用 A、派发用 B」。要看每个调用点上坐标是**谁算的**。另：同一天我把「动本机文件必须写 place=alice」忘掉三次（一次真的落到 sw 机器上，cd 失败无后果；两次落在他机器上跑 sed 也失败）——纪律写在纸上和长在手上是两件事。
+
+### 0.13.8 边界 — 「Chrome 在 macOS 会 re-exec」这句，在我这台 mac 上没复现
+
+Neuromancer 报的现象（Popen 返回的 pid 几秒就死、端口被另一个 pid 占着）我照单改了自己的所有权身份。改完回头把**现象本身**在真 mac 上量了一遍（sw 的 mac mini，Chrome 156.0.8078.48），四种形态：
+
+```
+形态                               Popen pid 与端口监听者   12s 后
+--headless=new + 独立 profile      同一个                    仍同一个（三次读数）
+--headless=old + 独立 profile      同一个                    仍同一个
+第二个实例，同端口同 profile        A 监听，B 活着但不在端口上  都活着
+kill 监听者                        端口释放、/json/version 断    —
+```
+
+读数与他的不一样，所以「Chrome 在 macOS 会 re-exec」不是一个无条件事实，而是**取决于起的形状**——我的两把 argv 都造不出它，他的那把能。要判清楚只有一个变量可用：他的 spawn argv。已在 #34 问。
+
+**但这不改我改的东西**：身份挂在（端口 + profile）上，在这四种形态里每一种都成立——包括第二实例那格（B 进程活着却不占端口，若身份是「我 spawn 的 pid」就会一直判 mine 而其实关闭的该是 A）。**结论的形状是：机制买的是「pid 会变」这一类，而不是他那一台机器的那一次。**
+
+另外顺手验了两件 mac 侧前置条件：`lsof -t -iTCP:<port> -sTCP:LISTEN` 在 Darwin 上返回单个 pid（我的 `_listener_pid` 在 mac 走这条，可用）；监听者的 `ps -o command=` 里 `--remote-debugging-port` 与 `--user-data-dir` 都在（reclaim-by-profile 的输入真的有）。
+
+**纪律两笔**：这次动文件显式写了 place，且全部落在 `~/alice-scratch` 与 `/tmp`，收尾删干净（0 个残留 chrome、0 个残留 profile、scratch 目录已删）。上一帖自曝的三次落错机器，是这轮的对照。
