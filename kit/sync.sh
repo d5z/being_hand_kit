@@ -17,6 +17,10 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 DEV=$(cd "$SCRIPT_DIR/.." && pwd)                      # kit/ 的上一级 = 开发仓库根
 DEPLOY="${HAND_DEPLOY_DIR:-$HOME/.heart-portal/kits/hand}"
+# 归一：lsof 给的是真实路径（macOS 上 /tmp 是 /private/tmp 的符号链接）。不归一则
+# HAND_DEPLOY_DIR=/tmp/x 时每个候选都判成 FOREIGN，永远不认领（2026-10-27 他实测）。
+mkdir -p "$DEPLOY" 2>/dev/null || true
+DEPLOY_REAL=$(cd "$DEPLOY" 2>/dev/null && pwd -P || printf '%s' "$DEPLOY")
 
 DRY=0
 if [ "${1:-}" = "--check" ]; then DRY=1; fi
@@ -62,6 +66,12 @@ fi
 # 进程归并成一个值；②随 LC_ALL 变（zh_CN 下是「二 10月/27 …」）；③随 TZ 变。
 # 用 /proc/<pid>/stat 第 22 字段（starttime）+ boot_id：数字、内核所有、进程改不了、
 # 不随 locale/TZ 变。取不到就返回空——空表示「我判不了」，调用方必须当成不能动手。
+#
+# 语义边界（2026-10-27 我自己踩过）：这个值标识的是「同一个 pid 槽位上的同一个进程」，
+# **不能跨 pid 比较**。/proc 的 starttime 是 10ms 精度（clock tick），同一 tick 里起的两个
+# 进程值相同——我拿自己的 identity 去比一个刚起的 sleep，判等成功，于是以为「reused 分支
+# 坏了」。其实是我把「pid 槽位的出生时刻」当成「进程的唯一指纹」用了。调用方只在同一
+# pid 上比前后两次，语义才对。
 proc_identity() {
   pid=$1
   st=$(cat "/proc/$pid/stat" 2>/dev/null) || return 0
@@ -78,7 +88,16 @@ proc_cwd() {
     readlink "/proc/$pid/cwd" 2>/dev/null && return 0
   fi
   command -v lsof >/dev/null 2>&1 || return 0
-  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
+  # || true 是必须的：set -euo pipefail 下，赋值里的失败管道会直接杀掉整个脚本——
+  # 而那个分支本来就是要「报读不到 cwd」，报错机制被报错掐掉了（2026-10-27 Neuromancer 实测）。
+  # 输出必须真的像路径：lsof 在权限不足时会把诊断文字写进 stdout（实测形态
+  # "/proc/1/cwd (readlink: Permission denied)"），照收就会拿一句报错当 cwd 去比较。
+  # 比较结果永远是"不等于部署目录"——安全方向，但那是一句谎报，不是读数。
+  _c=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)
+  case "${_c:-}" in
+    /*) case "$_c" in *"("*) return 0 ;; *) printf '%s\n' "$_c" ;; esac ;;
+    *) : ;;
+  esac
 }
 
 proc_ppid() {
@@ -88,6 +107,27 @@ proc_ppid() {
     return 0
   fi
   ps -o ppid= -p "$pid" 2>/dev/null | awk '{print $1}'
+}
+
+# 三值判读：alive / gone / reused / unknown。
+# 2026-10-27 Neuromancer 实测 macOS：`ps -o stat= -p <pid>` 对「已死」「不存在」「超范围」
+# 三者同形——rc=1、stdout 空、stderr 空。单靠 ps 分不开 gone 和 unreadable。
+# 而「判不了」既不许当 gone（会去清账），也不许当 alive（会拿验证不了的 pid 补 kill -9）。
+proc_state() {
+  pid=$1
+  want=${2:-}
+  # Linux：/proc 是内核给的，存在即活着；身份对不上说明 pid 被复用（已经不是那个进程了）。
+  if [ -d "/proc/$pid" ]; then
+    cur=$(proc_identity "$pid" 2>/dev/null || true)
+    if [ -z "$cur" ]; then echo unknown; return 0; fi
+    if [ -n "$want" ] && [ "$cur" != "$want" ]; then echo reused; return 0; fi
+    echo alive; return 0
+  fi
+  # 没有 /proc 这条路由（macOS）：ps 只在 rc=0 且有状态时敢说 alive，其余一律 unknown。
+  st=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+  if [ -n "$st" ]; then echo alive; return 0; fi
+  if [ -d /proc ]; then echo gone; return 0; fi   # Linux 且 /proc/<pid> 不在 → 真的不在
+  echo unknown
 }
 
 # 我自己的祖先链
@@ -133,7 +173,7 @@ step4_stop_old() {
       echo "  ? PID=$cand：cwd 读不到（判不了 —— 不动手）argv=[$ARGV]"
       continue
     fi
-    if [ "$CWD" != "$DEPLOY" ]; then
+    if [ "$CWD" != "$DEPLOY_REAL" ] && [ "$CWD" != "$DEPLOY" ]; then
       echo "  跳过 PID=$cand：cwd=$CWD ≠ $DEPLOY（不是本部署的进程）"
       continue
     fi
@@ -150,29 +190,26 @@ step4_stop_old() {
     kill "$OLD_PID" 2>/dev/null || true
     # 「已退出」：进程不存在，或处于僵尸态（Z，等 Portal 回收）。不能用 kill -0 —— 它对
     # zombie 也返回成功。
-    exited=0
-    STAT=""
+    STATE=""
     for _ in $(seq 1 5); do
       sleep 1
-      STAT=$(ps -o stat= -p "$OLD_PID" 2>/dev/null | awk '{print $1}' || true)
-      case "$STAT" in
-        ""|Z*) exited=1; break ;;
-      esac
+      STATE=$(proc_state "$OLD_PID" "$OLD_START" || true)
+      [ "$STATE" = "alive" ] || break
     done
-    if [ "$exited" = "1" ]; then
-      echo "  ✓ 旧进程已退出${STAT:+（状态 $STAT）}"
-    else
-      # 强杀前再核一次身份：pid 可能已被复用（那已经不是刚才那个进程）。
-      NOW_START=$(proc_identity "$OLD_PID")
-      if [ -z "$OLD_START" ] || [ -z "$NOW_START" ]; then
-        echo "  ✗ 身份取不到（OLD='$OLD_START' NOW='$NOW_START'）——判不了就不动手，请人工核 PID=$OLD_PID"
-      elif [ "$NOW_START" != "$OLD_START" ]; then
-        echo "  ✗ PID 已被复用（身份 '$NOW_START' ≠ '$OLD_START'）——不动手"
-      else
-        echo "  ✗ 旧进程仍活跃（状态 $STAT，身份未变），强制 kill -9"
-        kill -9 "$OLD_PID" 2>/dev/null || true
-      fi
-    fi
+    case "$STATE" in
+      gone)
+        echo "  ✓ 旧进程已退出" ;;
+      reused)
+        # pid 槽被复用：我起的那个已经没了，现在占着这个号的是别人 —— 不许动它。
+        echo "  ✓ 旧进程已退出（PID 已被别的进程复用，未触碰）" ;;
+      unknown)
+        # 判不了就不许动手：不补 kill -9，也不宣称成功。
+        echo "  ? 状态读不到（ps 对已死/不存在/无权限同形）——不补 kill -9，请人工核 PID=$OLD_PID" ;;
+      *)
+        # 还活着且身份未变（不是复用）：这才是该强杀的一格。
+        echo "  ✗ 旧进程仍活跃（身份未变），强制 kill -9"
+        kill -9 "$OLD_PID" 2>/dev/null || true ;;
+    esac
     return 0
   fi
 

@@ -703,3 +703,37 @@ D 语法坏 + --check        → 被闸门先拦（exit 2）
 E1 语法坏（源真）         → exit 1，部署目录根本没被创建
 E2 语法好（源真）         → 五步走完，38 个 py，stale.py 被 --delete 清掉
 ```
+
+### 0.13.8 补腿 — 判据从假阴性翻成假阳性时，风险等级跳一级
+
+Neuromancer 3627 递来的三层，逐条落到我自己代码上：
+
+**① 装死的判据只是白跑，修好的判据会越权。**
+他原 pattern `python3 mcp_server\.py` 恒零命中（macOS re-exec 后 argv[0] 是绝对路径的 `Python`），一步没干；改成 `mcp_server\.py$` 后命中率上去，然后一次沙盒跑里**杀了他活体的 server**。
+⇒ 「零命中」和「命中太多」不是同一类故障：前者白跑，后者越权。**判据从假阴性翻成假阳性时，风险等级跳一级，不是平移。**
+
+**② `set -euo pipefail` 下，函数里的失败管道会杀掉整个脚本。**
+实测（我这边也成立）：
+```
+X=$(false | sed -n 's/^n//p' | head -1)        → rc=1，脚本死在那里
+X=$(false | sed -n 's/^n//p' | head -1 || true) → SURVIVED
+```
+我 `proc_cwd` 里那行 lsof 正缺 `|| true`——而那个分支本来就是要「报读不到 cwd」，**报错机制被报错掐掉了**。已补。
+
+**③ `ps -o stat=` 对「已死」「不存在」「超范围」三者同形**（他 macOS 实测：rc=1、stdout 空、stderr 空）⇒ 单靠 ps 分不开 gone 与 unreadable。我原来的写法 `""|Z*` → 判成「已退出」，正是把 unknown 当 gone（会去清账）。改成三值 `proc_state`：alive / gone / reused / unknown，**unknown 不许当 gone，也不许补 kill -9**。
+
+**④ lsof 会把诊断文字写进 stdout。** 我实测 `proc_cwd 1` 抓到 `"/proc/1/cwd (readlink: Permission denied)"` 这一整句，照收就是拿报错当 cwd 去比较——比较方向是安全的（永远不等于部署目录），但那是谎报不是读数。现在只接受 `/` 开头且不含 `(` 的值。
+
+**⑤ 他提醒的那句我照做了：验的那一刻那个进程还活着吗。**
+`subprocess` 的子进程随发起调用被回收，于是「真没有运行中的进程」是必然输出，差点当成判据正确的证据。这次用 `setsid` 起真进程，跑前先打印「两个都活着」。
+
+真 kill 路径验收（非 dry，真进程）：
+```
+跑前   pgrep 两个候选：924725(cwd=deploy) 924727(cwd=other)，两个都活着
+跑    [4/5] 排除 PID=924720（我的祖先）→ 旧进程 PID=924725 → kill → ✓ 已退出
+跑后   target alive? NO      decoy alive? YES      rc=0，五步全走完
+```
+
+**⑥ 一条我自己踩的语义坑，写进注释了。** `/proc` 的 starttime 是 10ms 精度，同一 tick 里起的两个进程值相同。我拿自己的 identity 去比一个刚起的 sleep，判等成功，一度以为 reused 分支坏了——其实是我把「pid 槽位的出生时刻」当成「进程的唯一指纹」用了。**这个值不能跨 pid 比较**，只在同一 pid 上比前后两次才成立。
+
+修完：`bash -n` OK，真 kill 三格过（本部署杀 / 非本部署不动 / rc=0）。
