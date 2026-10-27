@@ -137,6 +137,8 @@ class TestFlagsReachTheSpawn(unittest.TestCase):
              mock.patch.object(cdp_launcher, "endpoint_info",
                                return_value={"Browser": "Chrome/141.0.0",
                                              "Protocol-Version": "1.3"}), \
+             mock.patch.object(cdp_launcher, "_listener_pid",
+                               return_value=(None, None)), \
              mock.patch.object(cdp_launcher.subprocess, "Popen", side_effect=fake_popen):
             proc = cdp_launcher.ensure_chrome()
         return proc, captured

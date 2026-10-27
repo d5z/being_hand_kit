@@ -327,3 +327,51 @@ old   info=(560,360) 第二读=1 → dispatched css=(560.0,360.0)
 **边界**：新形状证明的是「内部一致」——同一个数乘进去再除出来，落点等于页面报的中心。它**不**
 证明页面在两次读取之间真的变过 dpr（我注入的是 getter，只证明不一致时的行为）；真机上跨屏
 拖动、改缩放多久触发一次，我没有样本。handle 路径本来就是「先乘后除」，同一注入下免疫。
+
+## 0.13.8 — 记账的对象是「端口有主的那个进程」，不是 Popen 返回的 pid
+
+**病灶（Neuromancer 2026-10-27 实测，macOS）**：Chrome 会 re-exec。`Popen` 返回的 pid 在写记录
+那一刻是活的，几秒后就没了；端口由另一个 pid 占着，launcher 已退出被 reparent。而我的所有权
+记录记的正是 Popen 的 pid ⇒ 之后每次判「这台浏览器是我起的吗」都会答「不是」⇒ close 拒绝
+⇒ **一只谁都关不掉的僵尸浏览器 + 一条永远对不上的记录**。这不是安全，这是反面。
+
+**改法**：身份换成 (端口 + profile 目录)，它能活过 re-exec。
+- `_listener_pid()`：问内核/系统谁是监听者（Linux `ss -lptnH 'sport = :PORT'`，macOS
+  `lsof -nP -iTCP:PORT -sTCP:LISTEN -t`），返回 `(pid, how)`；`(None, None)` = 「问不出来」，
+  绝不等于「没人在听」。
+- `_claim_listener(profile)`：监听者的 argv 必须点名**本安装的** profile 才算我们的一台——
+  端口是所有 hand 安装共用的，profile 才是「谁的」。
+- `record_owner`：记 listener 的 pid，同时留下 `spawn_pid` / `pid_source` / `listener_via` /
+  `listener_profile_match`。监听者找不到或 profile 对不上时**保留 spawn pid 并写明**
+  `pid_source=spawn`——一份说「我只知道 spawn pid」的记录是诚实的，一份把 spawn pid 冒充成
+  浏览器的记录才是这个字段存在的原因。
+- `owner_status`：记录的 pid 死了或 start_ticks 对不上时，不再直接判 stranger，先按 profile
+  认领监听者；认到就是 `mine` + `pid_source=listener` + 理由写明「re-exec，不是陌生人」。
+  argv 读不到（无证据）**不算同意**——不能被认成 mine。
+
+**活体验收（Linux，`tests/live/live_owner_listener.py`）**：
+
+```
+spawn           record: pid=900707 pid_source=listener spawn_pid=900707 via=ss match=True
+                （ss 独立读到的监听 pid 也是 900707）
+owner_status #1 owner=mine
+记录 pid 改成 999999（死的），profile 不动
+owner_status #2 owner=mine  pid_source=listener
+                reason="recorded pid is gone; the listener on this port carries this
+                        record's profile (browser re-exec, not a stranger)"
+profile 改成别人的
+owner_status #3 owner=stranger（不认领）
+恢复后 close    closed=1 endpoint_gone=true；记录清除，端口无监听者
+```
+
+第 4 格是关键：**记录里的 pid 已死，close 仍然成功**——改造前这里会拒绝，留下关不掉的浏览器。
+
+**验证**：`tests/test_owner_listener.py` 11 条（监听者发现 ss/lsof 两种、argv 读不到不算同意、
+别人的 profile 不认领、死 pid 认领回 mine、无监听者仍 stranger）；全量 **781 tests OK / 30.4s**
+（770 → 781）。三处旧测试补 `_listener_pid` 的显式桩：它们是 pid/start_ticks 身份测试，不该
+被本机别的浏览器干扰，也不该替监听者发现计时。
+
+**边界**：Linux 上 Chrome 不 re-exec，所以「re-exec 之后」这个状态我是**在记录层面造出来的**
+（死的 pid + 活的、带我们 profile 的监听者），不是等它自然发生。macOS 侧我只验了命令形态
+（`lsof -nP -iTCP:PORT -sTCP:LISTEN -t` 在同用户下返回 pid，`ss` 不存在），没验跑起来之后的
+认领——那要在真机上开一次浏览器。

@@ -254,6 +254,8 @@ class TestEnsureChromeEndpointProbe(unittest.TestCase):
              mock.patch("hand.perception.cdp_launcher._find_chrome", return_value="/usr/bin/chrome"), \
              mock.patch("hand.perception.cdp_launcher.subprocess.Popen") as m_popen, \
              mock.patch("hand.perception.cdp_launcher.endpoint_info", side_effect=lambda timeout=2: probes.pop(0) if probes else {"browser": "x"}), \
+             mock.patch("hand.perception.cdp_launcher._listener_pid",
+                        return_value=(None, None)), \
              mock.patch("hand.perception.cdp_launcher.time.time", side_effect=clock.time), \
              mock.patch("hand.perception.cdp_launcher.time.sleep", side_effect=sleeps.append):
             proc = cdp_launcher.ensure_chrome()

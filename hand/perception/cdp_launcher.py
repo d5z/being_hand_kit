@@ -24,6 +24,7 @@ HAND_HEADLESS=0 are explicit opt-ins. See the profile-strategy block below.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -310,24 +311,110 @@ def _proc_cmdline(pid):
         return None
 
 
-def record_owner(proc, binary=None):
+def _listener_pid(port=None, timeout=5.0):
+    """The pid actually LISTENING on `port` — the process that owns the endpoint.
+
+    Why the Popen pid is not good enough: Chrome re-execs. Measured 2026-10-27 by
+    Neuromancer (macOS, hand 0.13.5): the pid `Popen` returned was alive when the
+    record was written and gone seconds later — the port was held by a different
+    pid, and the launcher had exited and been reparented. A record built on that
+    pid describes a process that no longer exists, so every later check answers
+    "not mine" about our own browser and close refuses, leaving a browser nobody
+    can close.
+
+    Returns `(pid, how)` with `how` in {'ss', 'lsof', None}. `(None, None)` means
+    "could not find out" — never "nobody is listening".
+    """
+    port = CDP_PORT if port is None else port
+    deadline = time.time() + max(0.0, timeout)
+    while True:
+        # Linux: iproute2's ss. macOS has no ss but ships lsof. Both are asked
+        # rather than dispatching on sys.platform: a Linux box with lsof and no
+        # iproute2 is real, and so is the reverse in a container.
+        for cmd, how, pat in (
+            (["ss", "-lptnH", f"sport = :{port}"], "ss", r"pid=(\d+)"),
+            (["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], "lsof",
+             r"^(\d+)$"),
+        ):
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True,
+                                     timeout=5)
+            except Exception:
+                # A probe that cannot run is "could not find out", never a
+                # reason to fail the spawn that just succeeded.
+                continue
+            for line in (out.stdout or "").splitlines():
+                m = re.search(pat, line.strip())
+                if m:
+                    return int(m.group(1)), how
+        if time.time() >= deadline:
+            return None, None
+        time.sleep(0.2)
+
+
+def _cmdline_has(pid, needle):
+    """True/False when the argv was readable, None when it was not.
+
+    None is "no evidence either way" (macOS: another user's process), and the
+    callers must not turn it into a yes or a no."""
+    if not needle:
+        return None
+    cmd = _proc_cmdline(pid)
+    if cmd is None:
+        return None
+    return any(str(needle) in a for a in cmd)
+
+
+CLAIM_TIMEOUT = 2.0     # seconds to find the listener of a port we just heard
+
+
+def _claim_listener(profile, timeout=None):
+    """(pid, how, profile_match) for the process serving our port, or None.
+
+    The listener is accepted only when its argv names *this install's* profile
+    directory: the port is shared by every hand install on the machine, so the
+    profile — not the port, and not the pid we spawned — is what says "ours".
+
+    `profile_match is None` means the argv could not be read (unreadable
+    process); the caller decides whether that is enough, and the record says so.
+    """
+    pid, how = _listener_pid(timeout=CLAIM_TIMEOUT if timeout is None else timeout)
+    if not pid:
+        return None
+    return pid, how, _cmdline_has(pid, profile)
+
+
+def record_owner(proc, binary=None, claim_listener=True):
     """Write the spawn record: who started the browser on this port, and when.
 
     Deliberately a separate file from the session-page state: losing the page
     record must not lose the ownership fact.
 
-    Scope: one record per *machine*, not per install — two hand installs on the
-    same box both spawn onto :9222, so "mine" means "a hand on this machine
-    spawned it and its process is still the one serving the port". Finer
-    attribution would need a per-install file and buys little: either way the
-    kill decision is "not a stranger"."""
+    The pid recorded is the *listener's* (0.13.8), not `Popen`'s. When the
+    listener cannot be found or its argv does not name our profile, the spawn
+    pid is kept and `pid_source` says which one it is — a record that says
+    "spawn pid, unverified listener" is honest; one that silently claims the
+    spawn pid is the browser is the lie this field exists to prevent.
+    """
     try:
         prof = profile_dir()
     except Exception:
         prof = None
+    spawn_pid = getattr(proc, "pid", None)
+    pid, pid_source, listener_via, match = spawn_pid, "spawn", None, None
+    if claim_listener:
+        claim = _claim_listener(prof)
+        if claim:
+            lid, listener_via, match = claim
+            if match is not False:      # True, or unreadable
+                pid, pid_source = lid, "listener"
     rec = {
-        "pid": getattr(proc, "pid", None),
-        "start_ticks": _proc_start_ticks(getattr(proc, "pid", None)),
+        "pid": pid,
+        "start_ticks": _proc_start_ticks(pid),
+        "spawn_pid": spawn_pid,
+        "pid_source": pid_source,
+        "listener_via": listener_via,
+        "listener_profile_match": match,
         "cwd": os.getcwd(),
         "binary": binary,
         "profile": prof,
@@ -357,6 +444,27 @@ def clear_owner():
         pass
 
 
+def _reclaim_by_profile(rec):
+    """(pid, how) for the listener that carries this record's profile, else None.
+
+    This is the Chrome re-exec case: the browser we started is still serving the
+    port, under a pid different from the one we recorded. Identity here is
+    (port + profile directory), which survives the re-exec; the recorded pid is
+    a clue about the birth, not the identity. A listener whose argv names a
+    *different* profile is not accepted — that is another install's browser and
+    calling it "mine" is the wrongful kill this whole module exists to prevent.
+    """
+    prof = (rec or {}).get("profile")
+    if not prof:
+        return None
+    pid, how = _listener_pid(timeout=1.0)
+    if not pid:
+        return None
+    if _cmdline_has(pid, prof) is not True:
+        return None
+    return pid, how
+
+
 def owner_status():
     """Who owns the browser the endpoint is answering for?
 
@@ -364,6 +472,13 @@ def owner_status():
     'stranger'  a record exists but its process is gone or is a different one
                 (pid recycled, or the browser we started has died)
     'unknown'   no record at all — we never recorded a spawn here
+
+    0.13.8: "the recorded pid is gone" is no longer the end of the question.
+    Chrome re-execs on macOS (Neuromancer, 2026-10-27), so the pid we recorded
+    at birth routinely dies while the same browser keeps serving the port. The
+    browser's identity is the port + its profile directory; when the listener
+    carries our recorded profile, the answer is still 'mine' and the receipt
+    says the pid came from the listener rather than the record.
     """
     rec = read_owner()
     if not rec:
@@ -372,11 +487,26 @@ def owner_status():
     pid = rec.get("pid")
     alive = _pid_alive(pid) if pid else False
     if not alive:
+        claim = _reclaim_by_profile(rec)
+        if claim:
+            return {"owner": "mine", "record": rec, "pid_alive": True,
+                    "pid_source": "listener", "listener_via": claim[1],
+                    "listener_pid": claim[0],
+                    "reason": ("recorded pid is gone; the listener on this "
+                               "port carries this record's profile (browser "
+                               "re-exec, not a stranger)")}
         return {"owner": "stranger", "record": rec, "pid_alive": False,
                 "reason": "recorded process is not alive"}
     now_ticks = _proc_start_ticks(pid)
     recorded = rec.get("start_ticks")
     if recorded is not None and now_ticks is not None and now_ticks != recorded:
+        claim = _reclaim_by_profile(rec)
+        if claim:
+            return {"owner": "mine", "record": rec, "pid_alive": True,
+                    "pid_source": "listener", "listener_via": claim[1],
+                    "listener_pid": claim[0], "start_ticks_now": now_ticks,
+                    "reason": ("recorded pid was recycled; the listener on this "
+                               "port carries this record's profile")}
         return {"owner": "stranger", "record": rec, "pid_alive": True,
                 "start_ticks_now": now_ticks,
                 "reason": "pid was recycled (start time differs)"}

@@ -23,6 +23,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from hand.perception import cdp_launcher  # noqa: E402
 from hand.perception.cdp_launcher import (  # noqa: E402
     record_owner, read_owner, clear_owner, owner_status, close_refusal,
     _proc_start_ticks,
@@ -42,8 +43,16 @@ class OwnerRecordTest(unittest.TestCase):
         self.proc = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)",
              "--remote-debugging-port=9222"])
+        # These are pid/start-time identity tests: no browser is listening, and
+        # the listener-claim path (0.13.8) has its own file. Patching it here
+        # also keeps a real browser left behind by another test from being
+        # mistaken for this stand-in's.
+        self._lp = mock.patch.object(cdp_launcher, "_listener_pid",
+                                     return_value=(None, None))
+        self._lp.start()
 
     def tearDown(self):
+        self._lp.stop()
         try:
             self.proc.kill()
             self.proc.wait(timeout=5)
@@ -60,13 +69,13 @@ class OwnerRecordTest(unittest.TestCase):
         self.assertIsNone(read_owner())
 
     def test_record_of_a_live_process_is_mine(self):
-        rec = record_owner(self.proc, "/bin/true")
+        rec = record_owner(self.proc, "/bin/true", claim_listener=False)
         self.assertEqual(rec["pid"], self.proc.pid)
         self.assertEqual(rec["port"], 9222)
         self.assertEqual(owner_status()["owner"], "mine")
 
     def test_dead_pid_is_stranger(self):
-        record_owner(self.proc)
+        record_owner(self.proc, claim_listener=False)
         self.proc.kill()
         self.proc.wait(timeout=5)
         st = owner_status()
@@ -76,7 +85,7 @@ class OwnerRecordTest(unittest.TestCase):
 
     def test_recycled_pid_is_stranger(self):
         """pid alone is recyclable; pid + start ticks is the identity."""
-        record_owner(self.proc)
+        record_owner(self.proc, claim_listener=False)
         rec = read_owner()
         if rec.get("start_ticks") is None:
             self.skipTest("no /proc on this platform: identity degrades to pid-only")
@@ -91,7 +100,7 @@ class OwnerRecordTest(unittest.TestCase):
         """A pid I own is not enough: the process must be the browser on this port."""
         bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:
-            record_owner(bystander)
+            record_owner(bystander, claim_listener=False)
             st = owner_status()
             self.assertEqual(st["owner"], "stranger")
             self.assertIn("not serving", st["reason"])
@@ -105,7 +114,7 @@ class OwnerRecordTest(unittest.TestCase):
         self.assertEqual(first, _proc_start_ticks(self.proc.pid))
 
     def test_clear_owner_removes_the_fact(self):
-        record_owner(self.proc)
+        record_owner(self.proc, claim_listener=False)
         clear_owner()
         self.assertEqual(owner_status()["owner"], "unknown")
 
@@ -326,7 +335,9 @@ class MachineRecordIsolationTest(unittest.TestCase):
              mock.patch.object(cdp_launcher, "endpoint_info",
                                return_value={"Browser": "Chrome/141.0.0"}), \
              mock.patch.object(cdp_launcher.subprocess, "Popen",
-                               return_value=_Proc()):
+                               return_value=_Proc()), \
+             mock.patch.object(cdp_launcher, "_listener_pid",
+                               return_value=(None, None)):
             cdp_launcher.ensure_chrome()
 
         self.assertEqual(os.path.exists(cdp_launcher.OWNER_FILE), before,
