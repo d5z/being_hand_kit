@@ -53,7 +53,7 @@ def _fn_source():
     """把要测的两个函数段切出来，不跑整脚本。"""
     text = SYNC.read_text(encoding="utf-8")
     out = []
-    for fn in ("proc_is_listening", "proc_service_evidence"):
+    for fn in ("proc_listening_by_lsof", "proc_is_listening", "proc_service_evidence"):
         start = text.index("%s() {" % fn)
         end = text.index("\n}\n", start) + 3
         out.append(text[start:end])
@@ -76,6 +76,13 @@ class ServiceEvidenceTest(unittest.TestCase):
         with open(self.lsof, "w", encoding="utf-8") as fh:
             fh.write('#!/bin/sh\n[ -n "$FAKE_RC" ] && exit "$FAKE_RC"\ncat "$FAKE_TABLE"\n')
         os.chmod(self.lsof, 0o755)
+        # ps 假体：只服务 proc_listening_by_lsof 的归属判别（ps -o uid= -p N）
+        self.ps = os.path.join(self.tmp, "ps")
+        with open(self.ps, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\n[ -z "$FAKE_PS_UID" ] && exit 1\n'
+                     'if [ -n "$FAKE_PS_RC" ]; then exit "$FAKE_PS_RC"; fi\n'
+                     'echo "$FAKE_PS_UID"\n')
+        os.chmod(self.ps, 0o755)
         # ss 假体：不给表就吐空（proc_is_listening 会落 unknown，不影响 lsof 分支的题）
         self.ss = os.path.join(self.tmp, "ss")
         with open(self.ss, "w", encoding="utf-8") as fh:
@@ -103,6 +110,27 @@ class ServiceEvidenceTest(unittest.TestCase):
             capture_output=True, text=True, env=env)
         return r.stdout.strip()
 
+    def _ask_lsof(self, table=None, rc=None, uid=None, ps_rc=None):
+        """只问 proc_listening_by_lsof：macOS 那条 rc=1 同形两义的格子。"""
+        env = dict(os.environ)
+        env["PATH"] = self.tmp + os.pathsep + env["PATH"]
+        for var, val in (("FAKE_TABLE", table), ("FAKE_RC", rc),
+                         ("FAKE_PS_UID", uid), ("FAKE_PS_RC", ps_rc)):
+            if val is None:
+                continue
+            if var == "FAKE_TABLE":
+                path = os.path.join(self.tmp, "lsof_table.txt")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(str(val))
+                env[var] = path
+            else:
+                env[var] = str(val)
+        r = subprocess.run(
+            ["bash", "-c", '. "$1" >/dev/null 2>&1; proc_listening_by_lsof "$2"',
+             "_", self.fn, self.fake_pid],
+            capture_output=True, text=True, env=env)
+        return r.stdout.strip()
+
     def _ask(self, table=None, rc=None):
         env = dict(os.environ)
         env["PATH"] = self.tmp + os.pathsep + env["PATH"]
@@ -118,6 +146,31 @@ class ServiceEvidenceTest(unittest.TestCase):
              "_", self.fn, self.fake_pid],
             capture_output=True, text=True, env=env)
         return r.stdout.strip()
+
+    # ---- macOS：lsof rc=1 的两义（2026-10-27 真机负样本）----
+    def test_lsof_rc1_own_process_is_not(self):
+        """自家进程：rc=1 零行 ⇒ 真的没在监听 ⇒ not。"""
+        self.assertEqual(self._ask_lsof(rc=1, uid=os.getuid()), "not")
+
+    def test_lsof_rc1_other_owner_is_unknown(self):
+        """别人的 socket：rc=1 零行可能是「我读不到」（root socket 真机形状）⇒ unknown。
+
+        真机原件（Darwin uid=502）：pid 1666 uid=0、pid 269 uid=24，
+        lsof 都是 rc=1 / stdout 0 字节 / stderr 0 字节 —— 和「自家没监听」在输出上同形。
+        """
+        other = "0" if os.getuid() != 0 else "502"
+        self.assertEqual(self._ask_lsof(rc=1, uid=other), "unknown")
+
+    def test_lsof_rc1_unreadable_owner_is_unknown(self):
+        """连归属都读不到（进程没了 / ps 失败）⇒ unknown。"""
+        self.assertEqual(self._ask_lsof(rc=1, uid=None), "unknown")
+
+    def test_lsof_rc0_one_row_is_listening(self):
+        table = ("COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+                 "python3 %s alice    3u  IPv4 0x1      0t0      TCP 127.0.0.1:18923 (LISTEN)\n"
+                 % self.fake_pid)
+        # rc 不设：假体「不给 rc 就 cat 表并退 0」——设 FAKE_RC=0 会走 exit 0 分支、不吐表
+        self.assertEqual(self._ask_lsof(table=table, uid=os.getuid()), "listening")
 
     # ---- ss 侧的能力闸（2026-10-27 Neuromancer 逼出来的一格）----
     def test_ss_listeners_but_no_pid_anywhere_is_unknown(self):

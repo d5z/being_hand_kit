@@ -144,6 +144,28 @@ proc_service_evidence() {
 
 # 这个 pid 是否持有 LISTEN socket —— 服务证据（三值，不许把「判不了」写成「不是」）。
 # 2026-10-27 加：Portal 以 `python3 -` 起服务时 argv 里没有标记，只有 cwd 和「在监听」两格可用。
+proc_listening_by_lsof() {
+  _pid=$1
+  _rc=0
+  _o=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$_pid" 2>/dev/null) || _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    # lsof 的 rc=1 同时意味着两件事：「没有匹配行」和「我读不到」。
+    # macOS 真机样本（2026-10-27 Neuromancer，uid=502）：
+    #   root/system 进程的 LISTEN socket ⇒ rc=1、stdout 0 字节、stderr 0 字节，连行都不来；
+    #   自家进程确实没监听              ⇒ 也是 rc=1、零行。两者在输出上同形。
+    # 判别靠归属：自家的 socket 我没有看不见的道理，别人的才有。
+    _u=$(ps -o uid= -p "$_pid" 2>/dev/null | tr -d ' ')
+    [ -n "$_u" ] || { echo unknown; return 0; }
+    [ "$_u" = "$(id -u)" ] && { echo not; return 0; }
+    echo unknown
+    return 0
+  fi
+  _o=$(printf '%s\n' "$_o" | tail -n +2)
+  case "$_o" in "") echo not ;; *) echo listening ;; esac
+  return 0
+
+}
+
 proc_is_listening() {
   _pid=$1
   # 三值纪律：listening / not / unknown。**「读不到」不许冒充「不是」**。
@@ -168,11 +190,7 @@ proc_is_listening() {
     return 0
   fi
   if command -v lsof >/dev/null 2>&1; then
-    _rc=0
-    _o=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$_pid" 2>/dev/null) || _rc=$?
-    [ "$_rc" -eq 0 ] || { echo unknown; return 0; }
-    _o=$(printf '%s\n' "$_o" | tail -n +2)
-    case "$_o" in "") echo not ;; *) echo listening ;; esac
+    proc_listening_by_lsof "$_pid"
     return 0
   fi
   echo unknown
