@@ -99,29 +99,39 @@ proc_identity_ticks() {
 # 「或门」不能只有 LISTEN：macOS 侧 MCP 走 stdio，这辈子不监听任何端口
 #   （2026-10-27 Neuromancer 实测：lsof -a -p 10730 -iTCP 为空，ppid 直指 portal-service 本体）
 # ⇒ 只认端口的写法会把整台 stdio 部署判成 not —— 那是「本通道不适用」，不是阴性。
-# 判据：标准输入/输出是 pipe 或 socket（被父进程驱动）而不是 tty（人敲的）。
+# 判据：fd0 与 fd1 **都**是 pipe/socket——「有人在两头驱动我」才是服务。
+# 2026-10-27 Neuromancer 造出假阳：「或」会把 `sleep 92 | cat >/dev/null` 左边那个 sleep
+#   判成 stdio（fd1=PIPE 接 cat，fd0 继承 /dev/null）。单边 PIPE 只说明「有人接过我的输出」，
+#   daemon / cmd | grep / nohup … | tee 满地都是。MCP stdio server 必须两头都被驱动。
+# macOS 侧 lsof：TYPE=PIPE/… 两行都要有；rc≠0 或空输出 ⇒ unknown（靠 rc 判，不靠行数）。
 proc_service_evidence() {
   _pid=$1
   _ls=$(proc_is_listening "$_pid")
   [ "$_ls" = "listening" ] && { echo listening; return 0; }
   if [ -d "/proc/$_pid/fd" ]; then
-    _hit=""
+    _n_pipe=0
     for _n in 0 1; do
       _t=$(readlink "/proc/$_pid/fd/$_n" 2>/dev/null || true)
-      case "$_t" in pipe:*|socket:*) _hit="yes" ;; esac
+      case "$_t" in pipe:*|socket:*) _n_pipe=$((_n_pipe + 1)) ;; esac
     done
-    if [ -n "$_hit" ]; then echo stdio; return 0; fi
+    if [ "$_n_pipe" -eq 2 ]; then echo stdio; return 0; fi
     [ "$_ls" = "unknown" ] && { echo unknown; return 0; }
     echo none
     return 0
   fi
   if command -v lsof >/dev/null 2>&1; then
-    _o=$(lsof -a -p "$_pid" -d 0,1 2>/dev/null | tail -n +2 || true)
-    case "$_o" in
-      *PIPE*|*FIFO*|*unix*|*sock*) echo stdio ;;
-      "") echo unknown ;;
-      *) echo none ;;
-    esac
+    _rc=0
+    _o=$(lsof -a -p "$_pid" -d 0,1 2>/dev/null) || _rc=$?
+    [ "$_rc" -ne 0 ] && { echo unknown; return 0; }
+    _both=1
+    for _n in 0 1; do
+      # lsof 列：COMMAND PID USER FD TYPE DEVICE …；$4 形如 "0r"/"1w"
+      _t=$(printf '%s\n' "$_o" | awk -v f="$_n" 'NR>1 && index($4,f)==1 {print $5}')
+      case "$_t" in PIPE*|FIFO*|unix*|sock*) : ;; *) _both=0 ;; esac
+    done
+    [ "$_both" -eq 1 ] && { echo stdio; return 0; }
+    [ -z "$_o" ] && { echo unknown; return 0; }
+    echo none
     return 0
   fi
   echo unknown
