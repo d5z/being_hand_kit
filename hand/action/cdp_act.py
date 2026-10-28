@@ -1242,10 +1242,18 @@ def cdp_click(selector, page_sel=None):
                 _js_request_submit(ws, selector, msg_id=12)
         _clear_click_probe(ws, msg_id=13)
         tag = (info.get('tag') or '').upper()
-        if tag not in ('INPUT', 'TEXTAREA'):
+        key_events = 0
+        if tag not in ('INPUT', 'TEXTAREA') and seen['trusted'] == 0:
+            # 2026-10-28 — 这一档原本无条件跑（Neuromancer 在围炉 #34 从外面读出来的
+            # 残留，seq 3948/3949）。实锤：点击已经 trusted 落到页面上之后，这里仍然
+            # 补派一记 Enter，页面 keydown 计数 = 1；而回执写 `dispatches: 1`。
+            # 回执又只报动作不报事实 —— 和 0.13.7 修掉的三连发是同一个病，我修了
+            # 那个 if 里的两档，漏了第三档。
+            # 现在与升级同一原则：只在证据显示「点击没落到」时才补。
             # Kept for pages that submit on Enter, but never as a click
             # substitute: it dispatches keydown/keyup, not a click.
             _js_focus_enter(ws, selector, msg_id=15)
+            key_events = 1
 
         _write_last(idx)
         ev = _element_evidence(info)
@@ -1258,6 +1266,12 @@ def cdp_click(selector, page_sel=None):
             'probe': 'capture-phase listener installed before dispatch, removed after',
             'escalation': escalation,
             'dispatches': 1 + (1 if escalation != 'none' else 0),
+            # 键盘事件单独一栏：它不是 click，但页面看得见它。
+            'key_events': key_events,
+            'key_events_basis': ('trusted_clicks == 0 (click did not land)'
+                                 if key_events else
+                                 'not dispatched: the click already landed, so an '
+                                 'Enter would be a second event the page cannot refuse'),
         }
         # 0.13.8: the receipt can now be checked against the page's own opinion
         # of where the click went. `dpr` is the number this click was computed
