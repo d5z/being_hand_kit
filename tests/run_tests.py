@@ -77,6 +77,45 @@ def duplicate_registrations(modules=None):
     return sorted({n for n in reg if reg.count(n) > 1})
 
 
+SKIP_INVENTORY_HEADER = "跳过不是通过 —— 逐条列出它们为什么没跑："
+
+
+class SkipInventoryResult(unittest.TextTestResult):
+    """把每一条 skip 记下来（用例名 + 理由），供回执逐条印出。
+
+    2026-10-29：挂着的那条判据是「全绿有两条路——登记进豁免表也能全绿，但那是
+    把错误合法化；绿色须能答出是修正还是豁免」。装置能保证的部分只有两件：
+      ① 每一条跳过都带非空理由（空理由 ⇒ 红，这条是机械的）；
+      ② 跳过的清单被印出来，而不是缩成 `skipped=3` 一个数。
+    「条件性跳过（条件满足就会跑）」与「声明性豁免（本平台永不跑）」的区分，
+    这一步仍靠人读理由 —— 用关键词去猜分类只会再造一层会撒谎的判据，
+    所以这里不猜，只保证理由必须被写出来、被看见。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.skips = []   # [(test id, reason)]
+
+    def addSkip(self, test, reason):
+        self.skips.append((str(test), str(reason or "")))
+        super().addSkip(test, reason)
+
+
+def skip_inventory(skips):
+    """返回 (要印的行, 没写理由的那些)。空理由不是豁免，是沉默。"""
+    lines = [SKIP_INVENTORY_HEADER]
+    reasonless = []
+    for name, reason in skips:
+        reason = "" if reason is None else str(reason).strip()
+        if reason:
+            lines.append(f"  · {name}\n      → {reason}")
+        else:
+            reasonless.append(name)
+            lines.append(f"  ✗ {name}\n      → （没有任何理由：跳过不是通过）")
+    lines.append(f"  合计 {len(skips)} 条：{len(skips) - len(reasonless)} 带理由 / {len(reasonless)} 无理由")
+    return lines, reasonless
+
+
 def out_of_scope(files=None):
     """tests/ 子目录里的 test_*.py —— 它们不在本 runner 的分母里，但必须在回执上。
 
@@ -121,10 +160,16 @@ if __name__ == "__main__":
         problems.append(f"重复注册（同一模块出现多次，会跑两遍且 Ran 数虚高）: tests/{m}.py")
 
     suite = build_suite(problems)
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    runner = unittest.TextTestRunner(verbosity=2, resultclass=SkipInventoryResult)
+    result = runner.run(suite)
+    skip_lines, reasonless = skip_inventory(getattr(result, 'skips', []))
+    print("\n" + "=" * 70)
+    for line in skip_lines:
+        print(line)
     if problems:
         print("\n" + "=" * 70)
         print("清单与磁盘不一致 / 模块无法导入（这些不是 SKIP，是没数进去）：")
         for p in problems:
             print("  ✗ " + p)
-    sys.exit(0 if (result.wasSuccessful() and not problems) else 1)
+    ok = result.wasSuccessful() and not problems and not reasonless
+    sys.exit(0 if ok else 1)

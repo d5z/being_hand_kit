@@ -61,6 +61,40 @@ class RegistryDetectionTest(unittest.TestCase):
             modules=mods("test_a", "test_b")), [], "干净清单不许报重复")
 
 
+class SkipInventoryTest(unittest.TestCase):
+    """「跳过不是通过」这条判据要能被拨响，而不只是一句好话。
+
+    2026-10-29（挂了两周的那条：全绿有两条路——登记进豁免表也能全绿）。
+    装置能保证的只有：每条跳过都带非空理由、且被逐条印出来。
+    所以这里只测两件会被齿轮咬住的事：
+      已知好格：理由非空的跳过 → 不进 reasonless，回执里印得出理由原文
+      已知坏格：理由为空白的跳过 → 必须进 reasonless（调用方据此改 rc=1），
+                 且回执不许把它印成一条正常条目
+    """
+
+    def test_skip_with_reason_is_listed_and_not_counted_as_reasonless(self):
+        lines, reasonless = run_tests.skip_inventory([
+            ("tests.X.test_y", "Chrome not available on localhost:9222"),
+        ])
+        self.assertEqual(reasonless, [])
+        body = "\n".join(lines)
+        self.assertIn("Chrome not available", body)
+        self.assertIn("1 带理由 / 0 无理由", body)
+
+    def test_skip_without_reason_turns_red(self):
+        for empty in ("", "   ", None):
+            lines, reasonless = run_tests.skip_inventory([("tests.X.test_z", empty)])
+            self.assertEqual(reasonless, ["tests.X.test_z"],
+                             "空理由的跳过必须被点名：%r" % (empty,))
+            self.assertIn("没有任何理由", "\n".join(lines))
+            self.assertIn("0 带理由 / 1 无理由", "\n".join(lines))
+
+    def test_no_skips_is_not_an_error(self):
+        lines, reasonless = run_tests.skip_inventory([])
+        self.assertEqual(reasonless, [])
+        self.assertIn("合计 0 条", "\n".join(lines))
+
+
 class OutOfScopeTest(unittest.TestCase):
     """范围本身要有分辨力：`on disk` 说的是「tests/ 顶层」，不是「磁盘上所有」。
 
