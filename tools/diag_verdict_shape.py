@@ -69,13 +69,18 @@ DECL_KEYS = ('readers:', 'reader:', '读者:', '读者：', 'readers：')
 #   后者在 LAYERS 的 L3 清单里（:31）。
 #   错因是判据只读了「一张登记表」（MODULES），而「谁会被跑」这件事有两张表
 #   ＋一张 import 图。这正是一条「分母是那张表的长度，不是世界的长度」的活例。
+# 2026-10-29 09:0x 更新（新增 tools/zero_stamp.py 入仓：打印者 16→17、已自述 4→5）。
+#   门先响过一次并点名 ['tools/zero_stamp.py']，确认真是这次改动、不是回归，才改这里的数。
+#   附带实测一条判别力的边界：声明必须「行首键 + 同行非空」；`Readers:` 独占一行会被读成
+#   没有读者（我第一版就是这样被自己判成 ⑤ 的）。这不是 bug，是这条判据的形状——
+#   但它意味着「拆行写声明」会产出假 ⑤，写的时候得一行写完。
 # 2026-10-28 07:3x 实测快照；08:1x 更新一次（新增 tools/diag_label_fork.py 入仓，
 # 打印者 15→16、已自述 3→4，其余未变）。门响过一次、我确认真是我改的，才改这里的数。
 EXPECT = {
-    'print_files': 16,
+    'print_files': 17,
     'mechanical': 5,      # run_tests / run_production / test_owner / layer_runner / production.test_scenarios
     'live_dir': 7,        # 目录约定且尚未自述读者
-    'declared': 4,        # f22（移入 live/ + 声明）、diag_label_fork、finally_audit、diag_verdict_shape
+    'declared': 5,        # f22（移入 live/ + 声明）、diag_label_fork、finally_audit、diag_verdict_shape、zero_stamp
     'undetermined': 0,    # 处置完 ⑤ 之后应为 0；再涨就是有新装置没写读者
 }
 EXPECT_UNDETERMINED = set()   # 2026-10-28 08:0x 处置完：三个 ⑤ 类各有归属
